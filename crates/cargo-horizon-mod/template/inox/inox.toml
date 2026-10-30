@@ -1,0 +1,26 @@
+# An Inox mod (docs/inox-mods.md): blocks and items declared here, built into
+# the game as a content mod. Put your own textures in
+# assets/{id}/textures/block/<name>.png and assets/{id}/textures/item/<name>.png
+# and drop the `texture` lines below to use them.
+[mod]
+id = "{id}"
+name = "{name}"
+version = "0.1.0"
+description = ""
+authors = []
+
+[block.glowing_amethyst]
+template = "minecraft:amethyst_block"
+name = "Glowing Amethyst"
+texture = "minecraft:block/amethyst_block"
+hardness = 2.0
+light = 7
+tool = "pickaxe"
+
+[item.amethyst_wand]
+template = "minecraft:stick"
+name = "Amethyst Wand"
+texture = "minecraft:item/amethyst_shard"
+model = "handheld"
+max_stack_size = 1
+rarity = "rare"

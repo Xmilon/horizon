@@ -5,6 +5,7 @@ Two kinds of mod run in Horizon:
 | Kind | File | What it is | Where it runs |
 |---|---|---|---|
 | **Content mod** | `.hmod` | Data and assets: blocks, items, recipes, loot, tags, models, textures, structures. No code. | Read when the game starts |
+| **Inox mod** | `.imod` | Blocks and items declared in one `inox.toml`, plus textures; loaded as a content mod ([inox-mods.md](inox-mods.md)). No code. | Read when the game starts |
 | **Native mod** | `.hnmod` | A [horizon-mixins](https://github.com/horizon-rust/horizon-mixins) bundle: Rust that changes the game's own source before it is compiled. | In a game the launcher builds for the player ([native-mods.md](native-mods.md)) |
 
 Fabric and NeoForge jars do **not** run as they are: their code calls and patches Minecraft's Java classes, and
@@ -15,8 +16,8 @@ Mods are **off by default**. A fresh install has no `horizon-mods` folder and pl
 ## Playing with mods
 
 1. Install a mod from the launcher's Mods page ([mod-browser.md](mod-browser.md)), or put its files by hand in the
-   game folder (the one holding `options.txt`): a content mod's `.hmod` (or a folder holding `horizon-mod.toml`) in
-   `horizon-mods/`. Native mods go in `horizon-native-mods/`, and the launcher builds them
+   game folder (the one holding `options.txt`): a content mod's `.hmod` or an Inox mod's `.imod` (or a folder holding
+   `horizon-mod.toml` or `inox.toml`) in `horizon-mods/`. Native mods go in `horizon-native-mods/`, and the launcher builds them
    ([native-mods.md](native-mods.md)).
 2. Options > **Mods** lists them with what each may do ("May add blocks and items to your worlds") and a switch.
    They start off. The choice is kept in `horizon-mods.txt` (`mod.<id>:true`).

@@ -1402,7 +1402,11 @@ fn stamp(base: &Path, mods: &[ContentMod]) -> Result<String> {
         let source = m.content.source();
         if source.is_dir() {
             for file in &m.content.files {
-                parts.push(meta(&source.join(file))?);
+                // An Inox mod's generated files are in memory: their bytes stand for them.
+                match m.content.generated(file) {
+                    Some(bytes) => parts.push(format!("{file} {:x}", Sha256::digest(bytes))),
+                    None => parts.push(meta(&source.join(file))?),
+                }
             }
         } else {
             parts.push(meta(source)?);

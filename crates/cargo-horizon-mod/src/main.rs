@@ -9,7 +9,11 @@
 //! - `check <file> [--json]`: what the registry checks of a submission
 //!   (`.hmod`, `.hnmod`, `.hpack`, resource pack `.zip`, `.hshader`).
 //! - `registry build|review|check|list`: the registry repository's CI.
-use horizon_mods::{Capability, Content, Manifest, Package, manifest::MANIFEST};
+use horizon_mods::{
+    Capability, Content, Manifest, Package,
+    imod::{self, IMOD_MANIFEST},
+    manifest::MANIFEST,
+};
 mod check;
 mod registry;
 
@@ -32,7 +36,7 @@ fn main() -> ExitCode {
         Some("run") => run(&args[1..]),
         Some("check") => check(&args[1..]),
         Some("registry") => registry::main(&args[1..]),
-        _ => Err("usage: cargo horizon-mod new <path> [--name \"Name\"] | build | run [--game <horizon-client>] [-- <game args>] | check <file> [--kind <kind>] [--key <public key> --signature <file.minisig>] [--json] | registry build|review|check|list".into()),
+        _ => Err("usage: cargo horizon-mod new <path> [--name \"Name\"] [--template content|inox] | build | run [--game <horizon-client>] [-- <game args>] | check <file> [--kind <kind>] [--key <public key> --signature <file.minisig>] [--json] | registry build|review|check|list".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -114,12 +118,25 @@ fn new(args: &[String]) -> Result<(), String> {
         ),
         (".gitignore", include_str!("../template/gitignore")),
     ];
-    if flag(args, "--template").is_some_and(|t| t != "content") {
-        return Err(
-            "only content mods are made here: code mods are native (docs/native-mods.md)".into(),
-        );
-    }
-    for (file, text) in files {
+    // An Inox mod: the same block declared in inox.toml, and an item.
+    let inox = [
+        (IMOD_MANIFEST, include_str!("../template/inox/inox.toml")),
+        (
+            "data/{id}/recipe/glowing_amethyst.json",
+            include_str!("../template/inox/recipe.json"),
+        ),
+        (".gitignore", include_str!("../template/gitignore")),
+    ];
+    let files: &[(&str, &str)] = match flag(args, "--template") {
+        None | Some("content") => &files,
+        Some("inox") => &inox,
+        Some(_) => {
+            return Err(
+                "templates are content and inox: code mods are native (docs/native-mods.md)".into(),
+            );
+        }
+    };
+    for &(file, text) in files {
         let file = fill(file);
         let file = file.as_str();
         let to = dir.join(file);
@@ -127,9 +144,7 @@ fn new(args: &[String]) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         std::fs::write(&to, fill(text)).map_err(|e| format!("{}: {e}", to.display()))?;
     }
-    let manifest =
-        Manifest::parse(&std::fs::read_to_string(dir.join(MANIFEST)).map_err(|e| e.to_string())?)?;
-    Content::read(dir, &manifest)?;
+    Content::read(dir, &Package::read(dir)?.manifest)?;
     println!(
         "Created {} (mod id {id}). Next: cd {path} && cargo horizon-mod run",
         dir.display()
@@ -144,6 +159,9 @@ fn build() -> Result<PathBuf, String> {
 }
 
 fn build_in(root: &Path) -> Result<PathBuf, String> {
+    if root.join(IMOD_MANIFEST).is_file() {
+        return build_imod(root);
+    }
     let manifest_text = std::fs::read_to_string(root.join(MANIFEST))
         .map_err(|e| format!("{MANIFEST}: {e} (run this in a mod's folder)"))?;
     let manifest = Manifest::parse(&manifest_text)?;
@@ -169,6 +187,37 @@ fn build_in(root: &Path) -> Result<PathBuf, String> {
     // Write then rename, so a running game never reads half a file.
     let partial = path.with_extension("hmod.partial");
     let bytes = Package::write_files(&manifest_text, None, &files)?;
+    std::fs::write(&partial, bytes).map_err(|e| e.to_string())?;
+    std::fs::rename(&partial, &path).map_err(|e| e.to_string())?;
+    Ok(path)
+}
+
+/// Packs the Inox mod in `root` into `target/horizon-mod/<id>.imod`: `inox.toml` and the
+/// mod's own files in `assets/` and `data/`. The game makes the rest from `inox.toml` when it
+/// loads the mod; this checks that it can.
+fn build_imod(root: &Path) -> Result<PathBuf, String> {
+    let toml = imod::read_toml(root)?;
+    if root.join(MANIFEST).exists() || root.join("Cargo.toml").exists() {
+        return Err(format!(
+            "an Inox mod's folder holds {IMOD_MANIFEST}, not {MANIFEST} or a Cargo.toml"
+        ));
+    }
+    let manifest = Package::read(root)?.manifest;
+    let content = Content::read(root, &manifest)?;
+    // Generated files are left out: the game makes them again.
+    let mut files = Vec::new();
+    for name in content.files.iter().filter(|n| root.join(n).is_file()) {
+        files.push((
+            name.as_str(),
+            std::fs::read(root.join(name)).map_err(|e| e.to_string())?,
+        ));
+    }
+    let files: Vec<(&str, &[u8])> = files.iter().map(|(n, b)| (*n, b.as_slice())).collect();
+    let bytes = imod::write(&toml, &files)?;
+    let dir = root.join("target/horizon-mod");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{}.{}", manifest.id, imod::EXTENSION));
+    let partial = path.with_extension("imod.partial");
     std::fs::write(&partial, bytes).map_err(|e| e.to_string())?;
     std::fs::rename(&partial, &path).map_err(|e| e.to_string())?;
     Ok(path)
@@ -258,6 +307,24 @@ mod tests {
             report.text().contains("no code: content only"),
             "{}",
             report.text()
+        );
+        // The same mod as an Inox mod.
+        let inox = dir.join("wands");
+        new(&[
+            inox.display().to_string(),
+            "--template".into(),
+            "inox".into(),
+        ])
+        .unwrap();
+        let imod = build_in(&inox).unwrap();
+        assert_eq!(imod, inox.join("target/horizon-mod/wands.imod"));
+        let content = Content::read(&imod, &Package::read(&imod).unwrap().manifest).unwrap();
+        assert_eq!(content.blocks[0].id, "wands:glowing_amethyst");
+        assert_eq!(content.items[0].id, "wands:amethyst_wand");
+        assert!(
+            content
+                .files
+                .contains(&"data/wands/recipe/glowing_amethyst.json".into())
         );
         // Code is native now.
         std::fs::write(path.join("Cargo.toml"), "").unwrap();

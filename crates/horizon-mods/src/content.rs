@@ -149,10 +149,17 @@ pub struct Content {
     pub items: Vec<Item>,
     /// The namespaces it owns: the mod id, then the manifest's `namespaces`.
     pub namespaces: Vec<String>,
+    /// An Inox mod's files made from its `inox.toml` (`imod::generate`),
+    /// read before its own; empty for a `.hmod`.
+    generated: BTreeMap<String, Vec<u8>>,
 }
 
 /// Reads a mod's content files ([`Content::reader`]).
-pub enum FileReader<'a> {
+pub struct FileReader<'a> {
+    raw: RawReader<'a>,
+    generated: &'a BTreeMap<String, Vec<u8>>,
+}
+enum RawReader<'a> {
     Dir(&'a Path),
     Zip(Box<zip::ZipArchive<std::fs::File>>),
 }
@@ -160,6 +167,14 @@ impl FileReader<'_> {
     /// One content file's bytes.
     pub fn read(&mut self, name: &str) -> Result<Vec<u8>, String> {
         check_path(name)?;
+        if let Some(bytes) = self.generated.get(name) {
+            return Ok(bytes.clone());
+        }
+        self.raw.read(name)
+    }
+}
+impl RawReader<'_> {
+    fn read(&mut self, name: &str) -> Result<Vec<u8>, String> {
         let reader: Box<dyn Read + '_> = match self {
             Self::Dir(root) => {
                 Box::new(std::fs::File::open(root.join(name)).map_err(|e| format!("{name}: {e}"))?)
@@ -228,12 +243,28 @@ impl Content {
         }
         files.sort();
         files.dedup();
+        let generated = if crate::imod::is_imod(path) {
+            let (_, decl) = crate::imod::parse(&crate::imod::read_toml(path)?)?;
+            let raw: BTreeSet<String> = files.iter().cloned().collect();
+            let mut reader = raw_reader(&source)?;
+            let generated = crate::imod::generate(&decl, &raw, |name| reader.read(name))?;
+            files.extend(generated.keys().cloned());
+            files.sort();
+            files.dedup();
+            if files.len() > MAX_FILES {
+                return Err(format!("more than {MAX_FILES} content files"));
+            }
+            generated
+        } else {
+            BTreeMap::new()
+        };
         let mut content = Content {
             source,
             files,
             blocks: Vec::new(),
             items: Vec::new(),
             namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
+            generated,
         };
         content.check(manifest)?;
         Ok(content)
@@ -251,6 +282,12 @@ impl Content {
         self.files.is_empty()
     }
 
+    /// The bytes of `name` when it is a generated file (an Inox mod's, made from its
+    /// `inox.toml`), not one in the mod's folder or file.
+    pub fn generated(&self, name: &str) -> Option<&[u8]> {
+        self.generated.get(name).map(Vec::as_slice)
+    }
+
     /// One content file's bytes.
     pub fn file(&self, name: &str) -> Result<Vec<u8>, String> {
         self.reader()?.read(name)
@@ -259,9 +296,9 @@ impl Content {
     /// A reader of its content files. A packaged mod's archive is opened
     /// once for all of them (opening it reads its whole index).
     pub fn reader(&self) -> Result<FileReader<'_>, String> {
-        Ok(match &self.source {
-            Source::Dir(root) => FileReader::Dir(root),
-            Source::Zip(path) => FileReader::Zip(Box::new(open_zip(path)?)),
+        Ok(FileReader {
+            raw: raw_reader(&self.source)?,
+            generated: &self.generated,
         })
     }
 
@@ -417,6 +454,13 @@ fn check_block(file: &BlockFile) -> Result<(), String> {
         return Err("sounds names a vanilla block (minecraft:...)".into());
     }
     Ok(())
+}
+
+fn raw_reader(source: &Source) -> Result<RawReader<'_>, String> {
+    Ok(match source {
+        Source::Dir(root) => RawReader::Dir(root),
+        Source::Zip(path) => RawReader::Zip(Box::new(open_zip(path)?)),
+    })
 }
 
 fn open_zip(path: &Path) -> Result<zip::ZipArchive<std::fs::File>, String> {

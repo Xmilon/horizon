@@ -219,6 +219,12 @@ impl fmt::Display for Capability {
 impl Manifest {
     pub fn parse(text: &str) -> Result<Self, String> {
         let m: Manifest = toml::from_str(text).map_err(|e| format!("{MANIFEST}: {e}"))?;
+        m.validated()
+    }
+    /// Checks a manifest made in code (an Inox mod's, `imod::parse`) as
+    /// `parse` checks one read from `horizon-mod.toml`.
+    pub fn validated(self) -> Result<Self, String> {
+        let m = self;
         let id_ok = (1..=64).contains(&m.id.len())
             && m.id
                 .bytes()
@@ -322,6 +328,9 @@ impl Package {
     /// A `.hmod` (a zip holding `horizon-mod.toml`, `mod.wasm` and, for
     /// content, `assets/` and `data/`) or a folder holding the same.
     pub fn read(path: &Path) -> Result<Self, String> {
+        if crate::imod::is_imod(path) {
+            return Self::read_imod(path);
+        }
         let (toml, wasm) = if path.is_dir() {
             let toml = std::fs::read_to_string(path.join(MANIFEST));
             let wasm = path.join(WASM);
@@ -360,6 +369,14 @@ impl Package {
         }
         Ok(Package { manifest, wasm })
     }
+    /// An Inox mod (`.imod` or a folder holding `inox.toml`): content, no code.
+    fn read_imod(path: &Path) -> Result<Self, String> {
+        let (manifest, _) = crate::imod::parse(&crate::imod::read_toml(path)?)?;
+        Ok(Package {
+            manifest,
+            wasm: None,
+        })
+    }
     /// The `.hmod` bytes for `manifest_text` and a component.
     pub fn write(manifest_text: &str, wasm: &[u8]) -> Result<Vec<u8>, String> {
         Self::write_files(manifest_text, Some(wasm), &[])
@@ -392,7 +409,7 @@ impl Package {
     }
 }
 
-/// The `.hmod` files and mod folders in `dir`, by name.
+/// The `.hmod` and `.imod` files and mod folders in `dir`, by name.
 pub fn find(dir: &Path) -> Vec<PathBuf> {
     let Ok(read) = std::fs::read_dir(dir) else {
         return Vec::new();
@@ -400,7 +417,11 @@ pub fn find(dir: &Path) -> Vec<PathBuf> {
     let mut found: Vec<PathBuf> = read
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "hmod") || p.join(MANIFEST).is_file())
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "hmod")
+                || p.join(MANIFEST).is_file()
+                || crate::imod::is_imod(p)
+        })
         .collect();
     found.sort();
     found
