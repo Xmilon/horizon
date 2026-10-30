@@ -199,7 +199,7 @@ impl RawReader<'_> {
 pub fn clash(a: (&str, &[String]), b: (&str, &[String])) -> Option<String> {
     let shared = a.1.iter().find(|ns| b.1.contains(ns))?;
     Some(format!(
-        "mods {} and {} both use the namespace {shared}; turn one of them off",
+        "mods {} and {} both use the namespace {shared}; take one of them out of horizon-mods",
         a.0, b.0
     ))
 }
@@ -711,7 +711,7 @@ capabilities = ["registries"]
         let ruby = ["ruby".to_owned(), "gems".to_owned()];
         assert_eq!(
             clash(("t_and_t", &t_and_t), ("kaisyn", &kaisyn)).as_deref(),
-            Some("mods t_and_t and kaisyn both use the namespace kaisyn; turn one of them off")
+            Some("mods t_and_t and kaisyn both use the namespace kaisyn; take one of them out of horizon-mods")
         );
         assert_eq!(clash(("t_and_t", &t_and_t), ("ruby", &ruby)), None);
     }

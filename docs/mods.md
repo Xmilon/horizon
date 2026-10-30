@@ -11,7 +11,8 @@ Two kinds of mod run in Horizon:
 Fabric and NeoForge jars do **not** run as they are: their code calls and patches Minecraft's Java classes, and
 Horizon has none. What carries over is the data and assets inside a jar ([modpacks.md](modpacks.md)).
 
-Mods are **off by default**. A fresh install has no `horizon-mods` folder and plays exactly like vanilla 26.3.
+A mod in the folder is **on**: there is no switch in the game, a mod is installed or it isn't. A fresh install has no
+`horizon-mods` folder and plays exactly like vanilla 26.3.
 
 ## Playing with mods
 
@@ -19,12 +20,14 @@ Mods are **off by default**. A fresh install has no `horizon-mods` folder and pl
    game folder (the one holding `options.txt`): a content mod's `.hmod` or an Inox mod's `.imod` (or a folder holding
    `horizon-mod.toml` or `inox.toml`) in `horizon-mods/`. Native mods go in `horizon-native-mods/`, and the launcher builds them
    ([native-mods.md](native-mods.md)).
-2. Options > **Mods** lists them with what each may do ("May add blocks and items to your worlds") and a switch.
-   They start off. The choice is kept in `horizon-mods.txt` (`mod.<id>:true`).
-3. A content mod's blocks and items load once, when the game starts: restart the game after a switch.
+2. Start the game: every mod there loads. Options > **Mods** lists them (their description in each row's tooltip),
+   and a native mod's settings page.
+3. To stop using a mod, take its file out of the folder and restart: a content mod's blocks and items load once, when
+   the game starts.
 4. A mod that can't load shows why, in red, on its row.
+5. `horizon-mods.txt` keeps the keys players chose for mods' key bindings (`key.<id>.<name>:key.keyboard.x`).
 
-Two turned-on content mods never own the same namespace: the first by file name loads, and the other stays out with
+Two installed content mods never own the same namespace: the first by file name loads, and the other stays out with
 the reason in the log.
 
 Benchmarks (`--benchmark`) never load mods.
@@ -35,7 +38,7 @@ Benchmarks (`--benchmark`) never load mods.
 cargo install --git https://github.com/horizon-rust/horizon cargo-horizon-mod
 cargo horizon-mod new my-mod        # a content mod: manifest, one block with its model, loot and recipe
 cd my-mod
-cargo horizon-mod run               # build my-mod.hmod, then start the game with it turned on
+cargo horizon-mod run               # build my-mod.hmod, then start the game with it
 cargo horizon-mod build             # only build: target/horizon-mod/my_mod.hmod
 cargo horizon-mod check target/horizon-mod/my_mod.hmod   # the registry's checks; --json for JSON
 ```
@@ -45,7 +48,7 @@ cargo horizon-mod check target/horizon-mod/my_mod.hmod   # the registry's checks
   the game makes when it reads the content. It refuses a folder with a `Cargo.toml` (code is native now) and a
   manifest without capability `registries`.
 - `run` builds, then starts `horizon-client` (on `PATH`, or `--game PATH`, or `HORIZON_CLIENT`) with
-  `--dev-mod target/horizon-mod/<id>.hmod`, always on. Arguments after `--` go to the game. The game reads content once
+  `--dev-mod target/horizon-mod/<id>.hmod` (a mod loaded from outside `horizon-mods/`). Arguments after `--` go to the game. The game reads content once
   at start, so rebuild and run again after an edit.
 - `check <file>` runs what the registry runs: the file's size and SHA-256, its manifest and content, and a signature
   with `--key <public key> --signature <file>.minisig`. It reads `.hmod`, `.hnmod`, `.hpack`, resource pack `.zip`
@@ -119,9 +122,9 @@ namespaces = ["kaisyn", "towns_and_towers"]
 
 A listed namespace is the mod's as its id is: its `assets/` and `data/` files load, and the game reads its tags,
 recipes, names and loot. Blocks and items are still declared under `data/<id>/horizon/` only. `minecraft`, `c` and
-`horizon` cannot be listed. Two mods that are on may not own the same namespace (one's id or listed namespace being
+`horizon` cannot be listed. Two installed mods may not own the same namespace (one's id or listed namespace being
 the other's): the game keeps the first in load order and leaves the other's content out, with "mods A and B both use
-the namespace N; turn one of them off" in the log. Paths use vanilla's resource characters, at most 65,536 files, 16
+the namespace N; take one of them out of horizon-mods" in the log. Paths use vanilla's resource characters, at most 65,536 files, 16
 MiB each and 512 MiB in all. A mod whose content is refused is left out, with the reason in the log. The game reads
 this content into its block and item tables (`horizon_client::mod_content`, [modpacks.md](modpacks.md)). A tag entry
 naming an id nobody registers (a block a port left out, another mod's item) is dropped, so the rest of the tag still

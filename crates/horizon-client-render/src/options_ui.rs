@@ -1066,7 +1066,8 @@ enum Act {
     PadKey(&'static str),
     ResetPadKey(&'static str),
     ResetPadKeys,
-    ToggleMod(usize),
+    /// A row of the Mods page: its tooltip says what the mod is.
+    ModInfo(usize),
     /// Pick `s.shader_packs[i]`, or turn it off when it is the pick.
     PickShaderPack(usize),
     OpenShaderPackFolder,
@@ -1814,18 +1815,15 @@ impl OptionsUi {
                     .iter()
                     .enumerate()
                     .map(|(i, installed)| {
-                        let mut label = Text::literal(format!("{}: ", installed.title))
-                            .append(on_off(s.mods.is_on(i)));
+                        let mut label = Text::literal(installed.title.clone());
                         if installed.problem.is_some() {
                             label = label.append(tr("horizon.mods.stopped"));
                         } else if installed.dev {
                             label = label.append(tr("horizon.mods.dev"));
                         }
-                        let dead = installed.dev || installed.id.is_empty();
-                        // A native mod gets its settings page's button beside
-                        // the toggle.
+                        // A native mod gets its settings page's button beside its name.
                         if installed.native.is_some() {
-                            let toggle = button(0.0, 0.0, 150.0, label, Act::ToggleMod(i));
+                            let name = button(0.0, 0.0, 150.0, label, Act::ModInfo(i));
                             let settings = button(
                                 0.0,
                                 0.0,
@@ -1833,13 +1831,10 @@ impl OptionsUi {
                                 tr("horizon.mods.settings"),
                                 Act::ModSettings(i),
                             );
-                            Row::Buttons(
-                                if dead { inactive(toggle) } else { toggle },
-                                Some(settings),
-                            )
+                            Row::Buttons(name, Some(settings))
                         } else {
-                            let widget = button(0.0, 0.0, 310.0, label, Act::ToggleMod(i));
-                            Row::Buttons(if dead { inactive(widget) } else { widget }, None)
+                            let widget = button(0.0, 0.0, 310.0, label, Act::ModInfo(i));
+                            Row::Buttons(widget, None)
                         }
                     })
                     .collect()
@@ -2499,7 +2494,7 @@ impl OptionsUi {
                     tooltip = Some(atlas.font.split(&tr("horizon.options.unavailable"), 170.0));
                 }
                 if let WKind::Button {
-                    act: Act::ToggleMod(i),
+                    act: Act::ModInfo(i),
                     ..
                 } = &wd.kind
                     && let Some(installed) = s.mods.installed.get(*i)
@@ -2845,10 +2840,7 @@ impl OptionsUi {
                             s.controller.reset_bindings();
                             events.push(Event::Changed);
                         }
-                        Act::ToggleMod(i) => {
-                            s.mods.toggle(i);
-                            events.push(Event::Changed);
-                        }
+                        Act::ModInfo(_) => {}
                         Act::ModSettings(i) => {
                             events.push(Event::ButtonClick);
                             self.push(Page::NativeMod(i));
@@ -3585,14 +3577,23 @@ mod tests {
                 matches!(
                     w.kind,
                     WKind::Button {
-                        act: Act::ToggleMod(_),
+                        act: Act::ModInfo(_),
                         ..
                     }
                 )
             })
             .collect();
+        // Every installed mod is a row, with no switch: a click changes nothing.
         assert_eq!(rows.len(), 3);
-        for (i, row) in rows.iter().enumerate() {
+        for row in &rows {
+            let label = match &row.kind {
+                WKind::Button { label, .. } => label.plain(),
+                _ => String::new(),
+            };
+            assert!(
+                !label.contains("options.on") && !label.contains("options.off"),
+                "{label}"
+            );
             let events = ui.click(
                 &mut s,
                 &atlas,
@@ -3603,29 +3604,9 @@ mod tests {
                 false,
                 false,
             );
-            if i == 0 {
-                assert!(events.contains(&Event::Changed));
-                assert!(events.contains(&Event::ButtonClick));
-            } else {
-                assert!(events.is_empty());
-            }
+            assert!(!events.contains(&Event::Changed));
         }
-        assert!(s.mods.is_on(0));
-        assert!(s.mods.is_on(1));
-        assert!(!s.mods.is_on(2));
-        assert_eq!(s.mods.serialize(), "mod.normal:true\n");
-        let row = rows[0];
-        ui.click(
-            &mut s,
-            &atlas,
-            row.x + 1.0,
-            row.y + 1.0,
-            size,
-            [480, 240],
-            false,
-            false,
-        );
-        assert!(!s.mods.is_on(0));
+        assert_eq!(s.mods.serialize(), "");
         assert!(!ui.back(&mut s).contains(&Event::Close));
         assert_eq!(ui.page(), Page::Main);
     }

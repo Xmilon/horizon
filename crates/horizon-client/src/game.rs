@@ -16837,11 +16837,7 @@ pub fn run() -> Result<()> {
             pack_error = Some(e.to_string());
             vanilla_root.clone()
         });
-    options.resources = mods::content_root(
-        &options.resources,
-        &early_settings.mods.enabled,
-        &options.dev_mods,
-    );
+    options.resources = mods::content_root(&options.resources, &options.dev_mods);
     let loaded = load_resources(
         options.resources.clone(),
         &vanilla_root,

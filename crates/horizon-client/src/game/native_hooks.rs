@@ -392,11 +392,11 @@ impl Game<'_> {
 // Native mods use these; nothing in Horizon does.
 #[allow(dead_code)]
 impl Game<'_> {
-    /// Whether the player left mod `mod_id` on in Options > Mods. A mod
-    /// turned off does nothing (check this first in each hook) until the
-    /// launcher's next build leaves it out.
+    /// Whether mod `mod_id` runs: always, since a mod built into the game
+    /// has no switch (docs/mods.md). Kept for the bundles that ask.
     pub(super) fn native_on(&self, mod_id: &str) -> bool {
-        !self.settings.mods.disabled.contains(mod_id)
+        let _ = mod_id;
+        true
     }
     /// Playing, with nothing over the world: keys and zoom apply.
     pub(super) fn native_playing(&self) -> bool {

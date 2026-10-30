@@ -982,7 +982,7 @@ fn mods_sharing_a_namespace_are_refused() {
     let e = build(&base, &[towers, kaisyn], &out).unwrap_err();
     assert_eq!(
         e.to_string(),
-        "mods towers and kaisyn both use the namespace kaisyn; turn one of them off"
+        "mods towers and kaisyn both use the namespace kaisyn; take one of them out of horizon-mods"
     );
     let towers = folder_mod(
         &scratch.join("towers"),

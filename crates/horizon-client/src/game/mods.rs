@@ -16,13 +16,13 @@ pub(super) struct ModsState {
     stopped: Vec<String>,
 }
 
-/// `root` with the content mods that are on layered over it
-/// (docs/modpacks.md): their blocks, items, data and assets. Read once at
-/// start, before the resources load; a mod whose content is refused is left
-/// out here and its row on the Mods page says why.
+/// `root` with every installed content mod layered over it
+/// (docs/modpacks.md): their blocks, items, data and assets. A mod in the
+/// folder is loaded; there is no switch. Read once at start, before the
+/// resources load; a mod whose content is refused is left out here and its
+/// row on the Mods page says why.
 pub(super) fn content_root(
     root: &std::path::Path,
-    enabled: &std::collections::BTreeSet<String>,
     dev: &[std::path::PathBuf],
 ) -> std::path::PathBuf {
     use horizon_client::mod_content::{self, ContentMod};
@@ -37,11 +37,7 @@ pub(super) fn content_root(
             continue;
         };
         let m = &package.manifest;
-        let on = enabled.contains(&m.id) || dev.contains(path);
-        if !on
-            || !m.capabilities.contains(&Capability::Registries)
-            || mods.iter().any(|c| c.id == m.id)
-        {
+        if !m.capabilities.contains(&Capability::Registries) || mods.iter().any(|c| c.id == m.id) {
             continue;
         }
         let content = Content::read(path, m).and_then(|content| {

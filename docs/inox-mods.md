@@ -65,8 +65,8 @@ gems/
   assets/gems/textures/item/ruby.png
 ```
 
-Put the folder (or the zipped `.imod`) in the game folder's `horizon-mods/`, start the game, turn
-**Gems** on in Options > Mods, restart. `/give @s gems:ruby_block` and `/give @s gems:ruby` work, both
+Put the folder (or the zipped `.imod`) in the game folder's `horizon-mods/` and start the game: it is
+loaded, there is no switch. `/give @s gems:ruby_block` and `/give @s gems:ruby` work, both
 are in the creative inventory, the block is mined with an iron pickaxe and drops itself.
 
 ## The file
@@ -104,7 +104,7 @@ items, `creative_tabs`), a plain name means this mod's (`ruby_ingot` is `<id>:ru
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `id` | string | yes | `[a-z0-9_]`, 1 to 64 characters. The mod's namespace (`<id>:ruby`), its switch in Options > Mods (`mod.<id>` in `horizon-mods.txt`) and its log name. |
+| `id` | string | yes | `[a-z0-9_]`, 1 to 64 characters. The mod's namespace (`<id>:ruby`), its row in Options > Mods and its log name. |
 | `name` | string | yes | Shown in Options > Mods. |
 | `version` | string | yes | Shown after the name. |
 | `description` | string | no | Shown under it. |
@@ -471,22 +471,23 @@ load order; one already there isn't added twice.
 
 1. Put the `.imod` (or the mod folder) in `horizon-mods/` in the game folder (the one holding
    `options.txt`; the launcher's instances each have one).
-2. Options > **Mods** lists it with "May add blocks and items to your worlds" and a switch. Mods start
-   **off**.
-3. Turn it on and **restart**: content loads once, before the resources.
+2. Start the game: every mod in the folder loads; there is no switch. Options > **Mods** lists it.
+3. After adding, changing or taking out a mod, **restart**: content loads once, before the resources.
+   The first start with a new set of mods builds its content (about a minute and a half for Ruby on a
+   laptop); later starts reuse it.
 4. A mod that can't load shows why in red on its row, and the log says
    `Horizon: mod <id> content not loaded: <reason>`, or `Horizon: content mods not loaded: <reason>` for a
    problem found while building the content (an unknown feature in a biome modifier).
 
-While making a mod, `--dev-mod PATH` loads it always on, folder or file:
+While making a mod, `--dev-mod PATH` loads it from wherever it is, folder or file:
 
 ```sh
 horizon-client --dev-mod ./gems --creative --world Test
 cargo horizon-mod run -- --creative --world Test       # the same after a build
 ```
 
-Use a test world while you make a mod: a world saved with a mod's blocks expects that mod on, and ores
-only appear in chunks generated after the mod is on.
+Use a test world while you make a mod: a world saved with a mod's blocks expects that mod installed, and
+ores only appear in chunks generated after the mod is installed.
 
 ## How it loads
 

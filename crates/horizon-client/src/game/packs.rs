@@ -14,7 +14,6 @@ use horizon_client::{
     text::{Style, Text},
 };
 use std::{
-    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -180,10 +179,9 @@ impl Game<'_> {
         if self.ui.vanilla_root.as_os_str().is_empty() {
             self.ui.vanilla_root = vanilla.clone();
         }
-        let (selected, server, mods, dev_mods) = (
+        let (selected, server, dev_mods) = (
             self.settings.resource_packs.clone(),
             self.server_packs.active.clone(),
-            self.settings.mods.enabled.clone(),
             self.options.dev_mods.clone(),
         );
         let (assets, res, context) = (
@@ -194,7 +192,7 @@ impl Game<'_> {
         let (unicode, japanese) = (self.settings.force_unicode, self.settings.japanese_glyphs);
         self.pack_reload = Some(PackReload::spawn(kind, move |progress| {
             stage_pack(
-                &vanilla, &selected, &server, &mods, &dev_mods, &assets, &res, &context, unicode,
+                &vanilla, &selected, &server, &dev_mods, &assets, &res, &context, unicode,
                 japanese, progress,
             )
             .map_err(|e| e.to_string())
@@ -316,7 +314,6 @@ pub(super) fn stage_pack(
     vanilla_root: &Path,
     selected: &[String],
     server: &[Pack],
-    mods_enabled: &BTreeSet<String>,
     dev_mods: &[PathBuf],
     assets: &Arc<Assets>,
     res: &Resources,
@@ -326,7 +323,7 @@ pub(super) fn stage_pack(
     progress: &super::Progress,
 ) -> horizon_client::Result<StagedPack> {
     let root = startup_root(vanilla_root, selected, server)?;
-    let root = super::mods::content_root(&root, mods_enabled, dev_mods);
+    let root = super::mods::content_root(&root, dev_mods);
     progress.set(1);
     let render = Arc::new(assets.reload(&root)?);
     let mut atlas = HudAtlas::build_over(&root, vanilla_root)?;
