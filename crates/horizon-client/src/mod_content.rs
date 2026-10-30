@@ -1222,7 +1222,11 @@ fn link(target: &Path, at: &Path) -> std::io::Result<()> {
         }
         Ok(())
     } else {
-        fs::copy(target, at).map(|_| ())
+        // A hard link costs no time or space and needs no rights (symbolic
+        // links do on Windows); copying the whole base root took minutes on a
+        // first start. Another volume gets a copy. `Overlay::write` replaces a
+        // file instead of writing into it, so the base is never changed.
+        fs::hard_link(target, at).or_else(|_| fs::copy(target, at).map(|_| ()))
     }
 }
 
