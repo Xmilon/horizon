@@ -75,11 +75,12 @@ impl ArmorStandAssets {
         }
         let mut equipment = HashMap::new();
         let mut trim_overrides = HashMap::new();
-        // Vanilla's equipment assets, then the content mods' (`<ns>:<name>`).
+        // EquipmentAssetManager reads every namespace: vanilla's and the content mods'.
         let namespaces = std::iter::once("minecraft".to_owned())
             .chain(horizon_client::mod_content::namespaces(root));
-        for ns in namespaces {
-            let Ok(entries) = std::fs::read_dir(root.join(format!("assets/{ns}/equipment"))) else {
+        for namespace in namespaces {
+            let Ok(entries) = std::fs::read_dir(root.join(format!("assets/{namespace}/equipment")))
+            else {
                 continue;
             };
             for e in entries.flatten() {
@@ -93,6 +94,7 @@ impl ArmorStandAssets {
                     continue;
                 };
                 let Ok(v) = v else { continue };
+                let id = format!("{namespace}:{name}");
                 let mut kinds = HashMap::new();
                 for kind in ["humanoid", "humanoid_leggings", "wings"] {
                     // Every layer of the kind: leather's overlay is layer 1.
@@ -101,18 +103,16 @@ impl ArmorStandAssets {
                         .into_iter()
                         .flatten()
                         .map(|layer| {
-                            // A texture id: vanilla's sprites are named without
-                            // `minecraft:`, a mod's keep their namespace.
-                            let tex = layer["texture"].as_str().unwrap_or(name);
-                            let (tex_ns, tex) = tex.split_once(':').unwrap_or((&ns, tex));
+                            let tex = layer["texture"].as_str().unwrap_or(&id);
+                            let (tex_namespace, tex) =
+                                tex.split_once(':').unwrap_or(("minecraft", tex));
+                            let sprite = match tex_namespace {
+                                "minecraft" => format!("entity/equipment/{kind}/{tex}"),
+                                other => format!("{other}:entity/equipment/{kind}/{tex}"),
+                            };
                             let undyed = layer["dyeable"]["color_when_undyed"]
                                 .as_i64()
                                 .map(|c| c as u32 & 0xFF_FFFF);
-                            let sprite = format!("entity/equipment/{kind}/{tex}");
-                            let sprite = match tex_ns {
-                                "minecraft" => sprite,
-                                other => format!("{other}:{sprite}"),
-                            };
                             (sprite, undyed)
                         })
                         .collect();
@@ -120,8 +120,8 @@ impl ArmorStandAssets {
                         kinds.insert(kind.to_owned(), layers);
                     }
                 }
-                trim_overrides.insert(format!("{ns}:{name}"), TrimOverride::list(&v));
-                equipment.insert(format!("{ns}:{name}"), kinds);
+                trim_overrides.insert(id.clone(), TrimOverride::list(&v));
+                equipment.insert(id, kinds);
             }
         }
         Self {
