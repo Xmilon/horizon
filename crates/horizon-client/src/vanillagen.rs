@@ -197,6 +197,10 @@ impl VanillaTerrain {
                 "Horizon: {} placed features cannot run and will be skipped",
                 unsupported.len()
             );
+            // Which ones and why: a content mod's feature can be among them.
+            for (name, why) in &unsupported {
+                log::info!("Horizon: placed feature {name} skipped: {why}");
+            }
             if !dir.join("blocks/block-properties.nbt").exists() {
                 log::warn!(
                     "Horizon: the worldgen bundle lacks the block behavior exports (worldgen/blocks/*.nbt); \

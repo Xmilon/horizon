@@ -75,7 +75,13 @@ impl ArmorStandAssets {
         }
         let mut equipment = HashMap::new();
         let mut trim_overrides = HashMap::new();
-        if let Ok(entries) = std::fs::read_dir(root.join("assets/minecraft/equipment")) {
+        // Vanilla's equipment assets, then the content mods' (`<ns>:<name>`).
+        let namespaces = std::iter::once("minecraft".to_owned())
+            .chain(horizon_client::mod_content::namespaces(root));
+        for ns in namespaces {
+            let Ok(entries) = std::fs::read_dir(root.join(format!("assets/{ns}/equipment"))) else {
+                continue;
+            };
             for e in entries.flatten() {
                 let path = e.path();
                 let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -95,22 +101,27 @@ impl ArmorStandAssets {
                         .into_iter()
                         .flatten()
                         .map(|layer| {
-                            let tex = layer["texture"]
-                                .as_str()
-                                .unwrap_or(name)
-                                .trim_start_matches("minecraft:");
+                            // A texture id: vanilla's sprites are named without
+                            // `minecraft:`, a mod's keep their namespace.
+                            let tex = layer["texture"].as_str().unwrap_or(name);
+                            let (tex_ns, tex) = tex.split_once(':').unwrap_or((&ns, tex));
                             let undyed = layer["dyeable"]["color_when_undyed"]
                                 .as_i64()
                                 .map(|c| c as u32 & 0xFF_FFFF);
-                            (format!("entity/equipment/{kind}/{tex}"), undyed)
+                            let sprite = format!("entity/equipment/{kind}/{tex}");
+                            let sprite = match tex_ns {
+                                "minecraft" => sprite,
+                                other => format!("{other}:{sprite}"),
+                            };
+                            (sprite, undyed)
                         })
                         .collect();
                     if !layers.is_empty() {
                         kinds.insert(kind.to_owned(), layers);
                     }
                 }
-                trim_overrides.insert(format!("minecraft:{name}"), TrimOverride::list(&v));
-                equipment.insert(format!("minecraft:{name}"), kinds);
+                trim_overrides.insert(format!("{ns}:{name}"), TrimOverride::list(&v));
+                equipment.insert(format!("{ns}:{name}"), kinds);
             }
         }
         Self {

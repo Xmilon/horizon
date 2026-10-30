@@ -1081,3 +1081,69 @@ fn a_replacing_mod_tag_reaches_the_root() {
     );
     let _ = fs::remove_dir_all(&scratch);
 }
+
+#[test]
+fn biome_modifiers_add_features_to_the_biomes_they_name() {
+    let j = |text: &str| -> J { serde_json::from_str(text).unwrap() };
+    // The bundles hold each entry's file as text.
+    let bundle = |entries: &[(&str, &str)]| -> J {
+        J::Obj(
+            entries
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), J::Str((*v).to_owned())))
+                .collect(),
+        )
+    };
+    let mut biomes = bundle(&[
+        (
+            "minecraft:plains",
+            r#"{"features": [[], [], [], [], [], [], ["minecraft:ore_iron"]]}"#,
+        ),
+        ("minecraft:desert", r#"{"features": [["minecraft:lake"]]}"#),
+        ("minecraft:the_void", r#"{"features": []}"#),
+    ]);
+    let tags = bundle(&[
+        (
+            "minecraft:is_overworld",
+            r##"{"values": ["#minecraft:is_dry", "minecraft:plains"]}"##,
+        ),
+        (
+            "minecraft:is_dry",
+            r#"{"values": [{"id": "minecraft:desert"}, "mod:gone"]}"#,
+        ),
+    ]);
+    let placed = bundle(&[("ruby:ruby_ore", "{}")]);
+    let text = r##"{"type": "neoforge:add_features", "biomes": "#minecraft:is_overworld",
+                    "features": "ruby:ruby_ore", "step": "underground_ores"}"##;
+    let add = AddFeatures::read("data/ruby/neoforge/biome_modifier/ore.json", text)
+        .unwrap()
+        .unwrap();
+    add_features(&mut biomes, &tags, &placed, &[add]).unwrap();
+    let features = |id: &str| match biomes.get(id) {
+        Some(J::Str(t)) => j(t).get("features").cloned().unwrap(),
+        _ => unreachable!(),
+    };
+    assert_eq!(
+        features("minecraft:plains"),
+        j(r#"[[], [], [], [], [], [], ["minecraft:ore_iron", "ruby:ruby_ore"]]"#)
+    );
+    // Short step lists grow to the step; biomes the selector misses keep theirs.
+    assert_eq!(
+        features("minecraft:desert"),
+        j(r#"[["minecraft:lake"], [], [], [], [], [], ["ruby:ruby_ore"]]"#)
+    );
+    assert_eq!(features("minecraft:the_void"), j("[]"));
+    // Other modifier types are left for a warning; mistakes fail.
+    assert!(
+        AddFeatures::read("f", r#"{"type": "neoforge:remove_features"}"#)
+            .unwrap()
+            .is_none()
+    );
+    let bad_step =
+        r#"{"type": "neoforge:add_features", "biomes": "a:b", "features": "a:c", "step": "ores"}"#;
+    assert!(AddFeatures::read("f", bad_step).is_err());
+    let unknown = r#"{"type": "neoforge:add_features", "biomes": "minecraft:plains", "features": "a:none", "step": "lakes"}"#;
+    let unknown = AddFeatures::read("f", unknown).unwrap().unwrap();
+    let e = add_features(&mut biomes, &tags, &placed, &[unknown]).unwrap_err();
+    assert!(e.to_string().contains("a:none is not defined"), "{e}");
+}

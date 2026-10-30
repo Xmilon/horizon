@@ -86,6 +86,14 @@ pub struct InoxFile {
     /// Items by name: `[item.ruby]` is `<id>:ruby`.
     #[serde(default)]
     pub item: BTreeMap<String, ItemDecl>,
+    /// Ore veins by name: `[ore.ruby_ore]` is the configured and placed
+    /// feature `<id>:ruby_ore`, added to the biomes it names.
+    #[serde(default)]
+    pub ore: BTreeMap<String, OreDecl>,
+    /// Armour sets by name: `[armor.ruby]` makes `<id>:ruby_helmet`,
+    /// `_chestplate`, `_leggings` and `_boots`, and the equipment asset `<id>:ruby`.
+    #[serde(default)]
+    pub armor: BTreeMap<String, ArmorDecl>,
 }
 
 /// `[mod]`: who the mod is, as Options > Mods lists it.
@@ -136,6 +144,9 @@ pub struct BlockDecl {
     pub tool: Option<String>,
     /// The tool tier it needs: `stone`, `iron` or `diamond`.
     pub tier: Option<String>,
+    /// Block tags it joins (`minecraft:beacon_base_blocks`).
+    #[serde(default)]
+    pub tags: Vec<String>,
 }
 
 /// An item: a vanilla template's behaviour with its own look, name and numbers.
@@ -153,10 +164,122 @@ pub struct ItemDecl {
     pub max_stack_size: Option<u8>,
     /// `common`, `uncommon`, `rare` or `epic`.
     pub rarity: Option<String>,
+    /// Uses before it breaks (`minecraft:max_damage`).
+    pub durability: Option<u32>,
+    /// Attack damage and attack speed as the tooltip shows them (an iron
+    /// sword's are 6 and 1.6): the main hand's `minecraft:attribute_modifiers`.
+    /// Both or neither, since they replace the template's modifiers.
+    pub attack_damage: Option<f64>,
+    pub attack_speed: Option<f64>,
+    /// What repairs it in an anvil: an item id or a `#` item tag (`minecraft:repairable`).
+    pub repair: Option<String>,
+    /// How well it enchants (`minecraft:enchantable`; iron tools 14, iron armour 9).
+    pub enchantability: Option<u32>,
+    /// Makes it a food (`minecraft:food` and `minecraft:consumable`).
+    pub food: Option<FoodDecl>,
+    /// Item tags it joins (`minecraft:swords`, `c:gems`).
+    #[serde(default)]
+    pub tags: Vec<String>,
     /// Data components set (`minecraft:max_damage`) or removed (`!minecraft:repairable`).
     #[serde(default)]
     pub components: BTreeMap<String, Value>,
 }
+
+/// `food` of an item: what eating it gives.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FoodDecl {
+    /// Hunger points (half drumsticks) it fills.
+    pub nutrition: u32,
+    /// Saturation points it gives (a golden apple's are 9.6, bread's 6.0).
+    pub saturation: f32,
+    /// Edible with a full hunger bar.
+    #[serde(default)]
+    pub always_eat: bool,
+    /// Seconds to eat it (1.6 by default).
+    pub eat_seconds: Option<f32>,
+    /// Effects it gives.
+    #[serde(default)]
+    pub effects: Vec<EffectDecl>,
+}
+
+/// An effect a food gives.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EffectDecl {
+    /// A vanilla effect (`minecraft:speed`).
+    pub id: String,
+    pub seconds: f32,
+    /// 1 is level I (the default).
+    pub level: Option<u8>,
+    /// 0 to 1, the chance it is given (1 by default).
+    pub chance: Option<f32>,
+}
+
+/// An ore vein: where and how often a block replaces stone underground.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct OreDecl {
+    /// The block it places in stone: a block of this mod by name, or an id.
+    pub block: String,
+    /// The block it places in deepslate, tuff and the like; none by default
+    /// (the vein then skips deepslate, as emerald ore's does).
+    pub deepslate_block: Option<String>,
+    /// Blocks in a vein, 1 to 64 (iron's is 9, diamond's 4 to 12).
+    pub size: u32,
+    /// Veins tried per chunk.
+    pub count: u32,
+    /// The lowest and highest Y a vein starts at.
+    pub min_y: i32,
+    pub max_y: i32,
+    /// How heights spread: `uniform` (default) or `triangle` (most veins
+    /// in the middle of the range, as iron's and diamond's).
+    pub shape: Option<String>,
+    /// 0 to 1: the chance a block of the vein touching air is skipped
+    /// (0 by default; diamond's 0.5 hides it from caves).
+    pub discard_on_air: Option<f32>,
+    /// The biomes it generates in: an id, a `#` biome tag or a list of them.
+    /// `#minecraft:is_overworld` by default.
+    pub biomes: Option<Value>,
+}
+
+/// An armour set: four pieces copying iron armour with their own numbers,
+/// textures and equipment asset.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ArmorDecl {
+    /// The set's name before each piece's (`Ruby` makes `Ruby Helmet`);
+    /// the set's name in title case by default.
+    pub name: Option<String>,
+    /// The durability multiplier, as vanilla's armour materials have it
+    /// (iron 15, diamond 33, netherite 37): a helmet lasts 11 times it, a
+    /// chestplate 16, leggings 15, boots 13.
+    pub durability: u32,
+    /// Armour points of the helmet, chestplate, leggings and boots (iron's
+    /// are `[2, 6, 5, 2]`, diamond's `[3, 8, 6, 3]`).
+    pub defense: [u32; 4],
+    /// Armour toughness of each piece (diamond 2, netherite 3).
+    pub toughness: Option<f64>,
+    /// Knockback resistance of each piece, 0 to 1 (netherite 0.1).
+    pub knockback_resistance: Option<f64>,
+    /// What repairs it: an item id or a `#` item tag.
+    pub repair: Option<String>,
+    pub enchantability: Option<u32>,
+    /// The sound of putting a piece on (`minecraft:item.armor.equip_iron` by default).
+    pub equip_sound: Option<String>,
+    pub rarity: Option<String>,
+    /// The pieces to make, all four by default.
+    pub pieces: Option<Vec<String>>,
+}
+
+/// An armour piece: its name suffix, the iron piece it copies, its slot,
+/// vanilla's durability factor and its armour tag.
+const PIECES: [(&str, &str, u32, &str); 4] = [
+    ("helmet", "head", 11, "head_armor"),
+    ("chestplate", "chest", 16, "chest_armor"),
+    ("leggings", "legs", 15, "leg_armor"),
+    ("boots", "feet", 13, "foot_armor"),
+];
 
 fn yes() -> bool {
     true
@@ -183,13 +306,24 @@ pub fn parse(text: &str) -> Result<(Manifest, InoxFile), String> {
     let manifest = manifest
         .validated()
         .map_err(|e| e.replace(MANIFEST, IMOD_MANIFEST))?;
-    for name in file.block.keys().chain(file.item.keys()) {
+    let names = file.block.keys().chain(file.item.keys());
+    for name in names.chain(file.ore.keys()).chain(file.armor.keys()) {
         check_name(name)?;
     }
     if let Some(n) = file.block.keys().find(|n| file.item.contains_key(*n)) {
         return Err(format!(
             "{IMOD_MANIFEST}: {n} is both a block and an item (a block's item has its name)"
         ));
+    }
+    for (set, armor) in &file.armor {
+        for piece in armor_pieces(set, armor)? {
+            let n = format!("{set}_{piece}");
+            if file.block.contains_key(&n) || file.item.contains_key(&n) {
+                return Err(format!(
+                    "{IMOD_MANIFEST}: armor {set} makes {n}, which is also declared"
+                ));
+            }
+        }
     }
     Ok((manifest, file))
 }
@@ -240,6 +374,296 @@ fn pretty(v: &Value) -> Vec<u8> {
     let mut out = serde_json::to_vec_pretty(v).unwrap_or_default();
     out.push(b'\n');
     out
+}
+
+/// The pieces an armour set makes, checked.
+fn armor_pieces<'a>(set: &str, armor: &'a ArmorDecl) -> Result<Vec<&'a str>, String> {
+    let all = PIECES.map(|p| p.0);
+    let pieces: Vec<&str> = match &armor.pieces {
+        Some(list) => list.iter().map(String::as_str).collect(),
+        None => all.to_vec(),
+    };
+    match pieces.iter().find(|p| !all.contains(p)) {
+        Some(p) => Err(format!(
+            "{IMOD_MANIFEST}: armor {set}: piece {p:?} is helmet, chestplate, leggings or boots"
+        )),
+        None if pieces.is_empty() => Err(format!("{IMOD_MANIFEST}: armor {set}: no pieces")),
+        None => Ok(pieces),
+    }
+}
+
+/// A block or item reference in `inox.toml`: a name of this mod's, or an id.
+fn full_id(id: &str, name: &str) -> String {
+    if name.contains(':') {
+        name.to_owned()
+    } else {
+        format!("{id}:{name}")
+    }
+}
+
+/// A tag id's file: `minecraft:swords` is `data/minecraft/tags/<kind>/swords.json`.
+fn tag_file(kind: &str, tag: &str, what: &str) -> Result<String, String> {
+    let (ns, path) = tag
+        .strip_prefix('#')
+        .unwrap_or(tag)
+        .split_once(':')
+        .ok_or_else(|| format!("{what}: tag {tag:?} is <namespace>:<path>"))?;
+    Ok(format!("data/{ns}/tags/{kind}/{path}.json"))
+}
+
+/// The components an item's keys make (`durability`, `attack_damage`...),
+/// with the ones it sets itself in `components`. A component set both ways is
+/// refused.
+fn item_components(i: &ItemDecl, what: &str) -> Result<BTreeMap<String, Value>, String> {
+    let mut made: BTreeMap<String, Value> = BTreeMap::new();
+    if let Some(d) = i.durability {
+        if d == 0 {
+            return Err(format!("{what}: durability is 1 or more"));
+        }
+        made.insert("minecraft:max_damage".into(), d.into());
+    }
+    match (i.attack_damage, i.attack_speed) {
+        (Some(damage), Some(speed)) => {
+            if !damage.is_finite() || !speed.is_finite() || damage < 0.0 || speed <= 0.0 {
+                return Err(format!(
+                    "{what}: attack_damage is 0 or more and attack_speed more than 0"
+                ));
+            }
+            // The player's own 1 damage and 4 attacks a second come first.
+            made.insert(
+                "minecraft:attribute_modifiers".into(),
+                json!([
+                    { "type": "minecraft:attack_damage", "id": "minecraft:base_attack_damage",
+                      "amount": damage - 1.0, "operation": "add_value", "slot": "mainhand" },
+                    { "type": "minecraft:attack_speed", "id": "minecraft:base_attack_speed",
+                      "amount": speed - 4.0, "operation": "add_value", "slot": "mainhand" }
+                ]),
+            );
+        }
+        (None, None) => {}
+        _ => {
+            return Err(format!(
+                "{what}: set attack_damage and attack_speed together"
+            ));
+        }
+    }
+    if let Some(r) = &i.repair {
+        made.insert("minecraft:repairable".into(), json!({ "items": r }));
+    }
+    if let Some(e) = i.enchantability {
+        made.insert("minecraft:enchantable".into(), json!({ "value": e }));
+    }
+    if let Some(f) = &i.food {
+        if !f.saturation.is_finite() || f.saturation < 0.0 {
+            return Err(format!("{what}: food saturation is 0 or more"));
+        }
+        let seconds = f.eat_seconds.unwrap_or(1.6);
+        if !seconds.is_finite() || seconds < 0.0 {
+            return Err(format!("{what}: food eat_seconds is 0 or more"));
+        }
+        made.insert(
+            "minecraft:food".into(),
+            json!({ "nutrition": f.nutrition, "saturation": f.saturation,
+                    "can_always_eat": f.always_eat }),
+        );
+        let mut effects = Vec::new();
+        for e in &f.effects {
+            let chance = e.chance.unwrap_or(1.0);
+            if !(0.0..=1.0).contains(&chance) || !e.seconds.is_finite() || e.seconds <= 0.0 {
+                return Err(format!(
+                    "{what}: effect {}: seconds is more than 0 and chance 0 to 1",
+                    e.id
+                ));
+            }
+            let level = e.level.unwrap_or(1);
+            if level == 0 {
+                return Err(format!("{what}: effect {}: level is 1 or more", e.id));
+            }
+            effects.push(json!({
+                "type": "minecraft:apply_effects",
+                "effects": [{ "id": e.id, "duration": (e.seconds * 20.0).round() as u32,
+                              "amplifier": level - 1, "show_icon": true }],
+                "probability": chance
+            }));
+        }
+        made.insert(
+            "minecraft:consumable".into(),
+            json!({ "consume_seconds": seconds, "animation": "eat",
+                    "sound": "minecraft:entity.generic.eat", "has_consume_particles": true,
+                    "on_consume_effects": effects }),
+        );
+    }
+    for (key, value) in &i.components {
+        let kind = key.strip_prefix('!').unwrap_or(key);
+        if made.contains_key(kind) {
+            return Err(format!(
+                "{what}: component {key} is also set by one of its keys (durability, attack_damage, repair, enchantability, food)"
+            ));
+        }
+        made.insert(key.clone(), value.clone());
+    }
+    Ok(made)
+}
+
+/// An armour set's pieces as item declarations, and its equipment asset.
+fn armor_items(
+    id: &str,
+    set: &str,
+    a: &ArmorDecl,
+) -> Result<(Vec<(String, ItemDecl)>, Value), String> {
+    let what = format!("armor {id}:{set}");
+    if a.durability == 0 {
+        return Err(format!("{what}: durability is 1 or more"));
+    }
+    let toughness = a.toughness.unwrap_or(0.0);
+    let knockback = a.knockback_resistance.unwrap_or(0.0);
+    if !toughness.is_finite() || toughness < 0.0 || !(0.0..=1.0).contains(&knockback) {
+        return Err(format!(
+            "{what}: toughness is 0 or more and knockback_resistance 0 to 1"
+        ));
+    }
+    let title_name = a.name.clone().unwrap_or_else(|| title(set));
+    let pieces = armor_pieces(set, a)?;
+    let mut items = Vec::new();
+    let mut leggings = false;
+    let mut others = false;
+    for (i, &(piece, slot, factor, tag)) in PIECES.iter().enumerate() {
+        if !pieces.contains(&piece) {
+            continue;
+        }
+        if piece == "leggings" {
+            leggings = true;
+        } else {
+            others = true;
+        }
+        let modifier = |kind: &str, amount: f64| {
+            json!({ "type": kind, "id": format!("minecraft:armor.{piece}"), "amount": amount,
+                    "operation": "add_value", "slot": slot })
+        };
+        let mut modifiers = vec![modifier("minecraft:armor", f64::from(a.defense[i]))];
+        if toughness > 0.0 {
+            modifiers.push(modifier("minecraft:armor_toughness", toughness));
+        }
+        if knockback > 0.0 {
+            modifiers.push(modifier("minecraft:knockback_resistance", knockback));
+        }
+        let mut components = BTreeMap::new();
+        components.insert(
+            "minecraft:attribute_modifiers".to_owned(),
+            Value::from(modifiers),
+        );
+        components.insert(
+            "minecraft:equippable".to_owned(),
+            json!({ "slot": slot, "asset_id": format!("{id}:{set}"),
+                    "equip_sound": a.equip_sound.as_deref()
+                        .unwrap_or("minecraft:item.armor.equip_iron") }),
+        );
+        let decl = ItemDecl {
+            template: format!("minecraft:iron_{piece}"),
+            name: Some(format!("{title_name} {}", title(piece))),
+            rarity: a.rarity.clone(),
+            durability: Some(factor * a.durability),
+            repair: a.repair.clone(),
+            enchantability: a.enchantability,
+            tags: vec![
+                format!("minecraft:{tag}"),
+                "minecraft:trimmable_armor".into(),
+            ],
+            components,
+            ..ItemDecl::default()
+        };
+        items.push((format!("{set}_{piece}"), decl));
+    }
+    let layer = json!([{ "texture": format!("{id}:{set}") }]);
+    let mut layers = serde_json::Map::new();
+    if others {
+        layers.insert("humanoid".into(), layer.clone());
+    }
+    if leggings {
+        layers.insert("humanoid_leggings".into(), layer);
+    }
+    Ok((items, json!({ "layers": layers })))
+}
+
+/// An ore's configured feature, placed feature and biome modifier.
+fn ore_files(file: &InoxFile, name: &str, o: &OreDecl) -> Result<Vec<(String, Value)>, String> {
+    let id = file.meta.id.as_str();
+    let what = format!("ore {id}:{name}");
+    let block = |b: &str| -> Result<String, String> {
+        if !b.contains(':') && !file.block.contains_key(b) {
+            return Err(format!("{what}: {b} is not a block of this mod"));
+        }
+        Ok(full_id(id, b))
+    };
+    if !(1..=64).contains(&o.size) {
+        return Err(format!("{what}: size is 1 to 64"));
+    }
+    if o.count == 0 || o.min_y > o.max_y {
+        return Err(format!(
+            "{what}: count is 1 or more and min_y at most max_y"
+        ));
+    }
+    let discard = o.discard_on_air.unwrap_or(0.0);
+    if !(0.0..=1.0).contains(&discard) {
+        return Err(format!("{what}: discard_on_air is 0 to 1"));
+    }
+    // 26.3's ore: the config's fields at the top, each target's state as a string.
+    let target = |tag: &str, b: String| {
+        json!({ "target": { "predicate_type": "minecraft:tag_match", "tag": tag },
+                "state": b })
+    };
+    let mut targets = vec![target("minecraft:stone_ore_replaceables", block(&o.block)?)];
+    if let Some(d) = &o.deepslate_block {
+        targets.push(target("minecraft:deepslate_ore_replaceables", block(d)?));
+    }
+    let (min, max) = (
+        json!({ "absolute": o.min_y }),
+        json!({ "absolute": o.max_y }),
+    );
+    let height = match o.shape.as_deref().unwrap_or("uniform") {
+        "uniform" => {
+            json!({ "type": "minecraft:uniform", "min_inclusive": min, "max_inclusive": max })
+        }
+        "triangle" => {
+            json!({ "type": "minecraft:trapezoid", "min_inclusive": min, "max_inclusive": max })
+        }
+        s => return Err(format!("{what}: shape {s:?} is uniform or triangle")),
+    };
+    let biomes = o
+        .biomes
+        .clone()
+        .unwrap_or_else(|| "#minecraft:is_overworld".into());
+    let biomes_ok = match &biomes {
+        Value::String(_) => true,
+        Value::Array(a) => !a.is_empty() && a.iter().all(Value::is_string),
+        _ => false,
+    };
+    if !biomes_ok {
+        return Err(format!("{what}: biomes is an id, a #tag or a list of them"));
+    }
+    let feature = format!("{id}:{name}");
+    Ok(vec![
+        (
+            format!("data/{id}/worldgen/configured_feature/{name}.json"),
+            json!({ "type": "minecraft:ore", "size": o.size,
+                    "discard_chance_on_air_exposure": discard, "targets": targets }),
+        ),
+        (
+            format!("data/{id}/worldgen/placed_feature/{name}.json"),
+            json!({ "feature": feature,
+                    "placement": [
+                        { "type": "minecraft:count", "count": o.count },
+                        { "type": "minecraft:in_square" },
+                        { "type": "minecraft:height_range", "height": height },
+                        { "type": "minecraft:biome" }
+                    ] }),
+        ),
+        (
+            format!("data/{id}/neoforge/biome_modifier/{name}.json"),
+            json!({ "type": "neoforge:add_features", "biomes": biomes,
+                    "features": feature, "step": "underground_ores" }),
+        ),
+    ])
 }
 
 /// What `generate` writes, before merging with the mod's own files.
@@ -368,8 +792,36 @@ pub fn generate(
                 .or_default()
                 .push(format!("{id}:{name}"));
         }
+        for tag in &b.tags {
+            let tag = tag_file("block", tag, &what)?;
+            out.tags
+                .entry(tag)
+                .or_default()
+                .push(format!("{id}:{name}"));
+        }
     }
-    for (name, i) in &file.item {
+    for (name, o) in &file.ore {
+        out.files.extend(ore_files(file, name, o)?);
+    }
+    let mut items: Vec<(String, ItemDecl)> = file
+        .item
+        .iter()
+        .map(|(n, i)| (n.clone(), i.clone()))
+        .collect();
+    for (set, a) in &file.armor {
+        let (pieces, asset) = armor_items(id, set, a)?;
+        out.files
+            .insert(format!("assets/{id}/equipment/{set}.json"), asset.clone());
+        for kind in ["humanoid", "humanoid_leggings"] {
+            if asset["layers"].get(kind).is_some() {
+                let texture = format!("assets/{id}/textures/entity/equipment/{kind}/{set}.png");
+                need(Some(texture), &format!("armor {id}:{set}"))?;
+            }
+        }
+        items.extend(pieces);
+    }
+    for (name, i) in &items {
+        let name = name.as_str();
         let what = format!("item {id}:{name}");
         let mut decl = serde_json::Map::new();
         decl.insert("template".into(), i.template.clone().into());
@@ -379,9 +831,19 @@ pub fn generate(
         if let Some(r) = &i.rarity {
             decl.insert("rarity".into(), r.clone().into());
         }
-        if !i.components.is_empty() {
-            let c = i.components.clone().into_iter().collect();
-            decl.insert("components".into(), Value::Object(c));
+        let components = item_components(i, &what)?;
+        if !components.is_empty() {
+            decl.insert(
+                "components".into(),
+                Value::Object(components.into_iter().collect()),
+            );
+        }
+        for tag in &i.tags {
+            let tag = tag_file("item", tag, &what)?;
+            out.tags
+                .entry(tag)
+                .or_default()
+                .push(format!("{id}:{name}"));
         }
         out.files.insert(
             format!("data/{id}/horizon/item/{name}.json"),
@@ -653,5 +1115,194 @@ components = { "minecraft:max_damage" = 900 }
     fn names_become_titles() {
         assert_eq!(title("ruby_block"), "Ruby Block");
         assert_eq!(title("x"), "X");
+    }
+
+    const GEAR: &str = r#"
+[mod]
+id = "gear"
+name = "Gear"
+version = "1"
+
+[block.gem_ore]
+template = "minecraft:iron_ore"
+texture = "minecraft:block/stone"
+tags = ["c:ores"]
+
+[ore.gem_ore]
+block = "gem_ore"
+deepslate_block = "minecraft:deepslate_iron_ore"
+size = 8
+count = 5
+min_y = -32
+max_y = 48
+shape = "triangle"
+
+[item.gem]
+template = "minecraft:diamond"
+texture = "minecraft:item/diamond"
+tags = ["c:gems"]
+
+[item.gem_sword]
+template = "minecraft:iron_sword"
+texture = "minecraft:item/iron_sword"
+model = "handheld"
+durability = 900
+attack_damage = 7
+attack_speed = 1.6
+repair = "gear:gem"
+tags = ["minecraft:swords"]
+
+[item.gem_apple]
+template = "minecraft:apple"
+texture = "minecraft:item/apple"
+food = { nutrition = 6, saturation = 12.0, always_eat = true, effects = [
+  { id = "minecraft:speed", seconds = 30, level = 2 },
+] }
+
+[armor.gem]
+durability = 25
+defense = [3, 7, 6, 3]
+toughness = 1.0
+repair = "gear:gem"
+"#;
+
+    fn gear_textures() -> BTreeSet<String> {
+        let mut t = raw(&[
+            "assets/gear/textures/entity/equipment/humanoid/gem.png",
+            "assets/gear/textures/entity/equipment/humanoid_leggings/gem.png",
+        ]);
+        for p in ["helmet", "chestplate", "leggings", "boots"] {
+            t.insert(format!("assets/gear/textures/item/gem_{p}.png"));
+        }
+        t
+    }
+
+    #[test]
+    fn ores_make_features_and_a_biome_modifier() {
+        let (_, file) = parse(GEAR).unwrap();
+        let files = generate(&file, &gear_textures(), |_| unreachable!()).unwrap();
+        let configured = json_of(&files, "data/gear/worldgen/configured_feature/gem_ore.json");
+        assert_eq!(configured["type"], "minecraft:ore");
+        assert_eq!(configured["size"], 8);
+        let targets = &configured["targets"];
+        assert_eq!(targets[0]["state"], "gear:gem_ore");
+        assert_eq!(
+            targets[1]["target"]["tag"],
+            "minecraft:deepslate_ore_replaceables"
+        );
+        let placed = json_of(&files, "data/gear/worldgen/placed_feature/gem_ore.json");
+        assert_eq!(placed["feature"], "gear:gem_ore");
+        assert_eq!(placed["placement"][0]["count"], 5);
+        assert_eq!(
+            placed["placement"][2]["height"]["type"],
+            "minecraft:trapezoid"
+        );
+        assert_eq!(
+            placed["placement"][2]["height"]["min_inclusive"]["absolute"],
+            -32
+        );
+        assert_eq!(
+            json_of(&files, "data/gear/neoforge/biome_modifier/gem_ore.json"),
+            json!({ "type": "neoforge:add_features", "biomes": "#minecraft:is_overworld",
+                    "features": "gear:gem_ore", "step": "underground_ores" })
+        );
+        assert_eq!(
+            json_of(&files, "data/c/tags/block/ores.json")["values"][0],
+            "gear:gem_ore"
+        );
+    }
+
+    #[test]
+    fn items_get_stats_food_and_tags() {
+        let (_, file) = parse(GEAR).unwrap();
+        let files = generate(&file, &gear_textures(), |_| unreachable!()).unwrap();
+        let sword = json_of(&files, "data/gear/horizon/item/gem_sword.json");
+        let c = &sword["components"];
+        assert_eq!(c["minecraft:max_damage"], 900);
+        assert_eq!(c["minecraft:attribute_modifiers"][0]["amount"], 6.0);
+        assert!(
+            (c["minecraft:attribute_modifiers"][1]["amount"]
+                .as_f64()
+                .unwrap()
+                + 2.4)
+                .abs()
+                < 1e-9
+        );
+        assert_eq!(c["minecraft:repairable"]["items"], "gear:gem");
+        assert_eq!(
+            json_of(&files, "data/minecraft/tags/item/swords.json")["values"][0],
+            "gear:gem_sword"
+        );
+        let apple = json_of(&files, "data/gear/horizon/item/gem_apple.json");
+        let c = &apple["components"];
+        assert_eq!(c["minecraft:food"]["nutrition"], 6);
+        assert_eq!(c["minecraft:food"]["can_always_eat"], true);
+        let effect = &c["minecraft:consumable"]["on_consume_effects"][0]["effects"][0];
+        assert_eq!(effect["duration"], 600);
+        assert_eq!(effect["amplifier"], 1);
+    }
+
+    #[test]
+    fn armor_sets_make_four_pieces_and_an_equipment_asset() {
+        let (_, file) = parse(GEAR).unwrap();
+        let files = generate(&file, &gear_textures(), |_| unreachable!()).unwrap();
+        let chest = json_of(&files, "data/gear/horizon/item/gem_chestplate.json");
+        assert_eq!(chest["template"], "minecraft:iron_chestplate");
+        let c = &chest["components"];
+        assert_eq!(c["minecraft:max_damage"], 16 * 25);
+        assert_eq!(c["minecraft:equippable"]["slot"], "chest");
+        assert_eq!(c["minecraft:equippable"]["asset_id"], "gear:gem");
+        let modifiers = c["minecraft:attribute_modifiers"].as_array().unwrap();
+        assert_eq!(modifiers[0]["amount"], 7.0);
+        assert_eq!(modifiers[1]["type"], "minecraft:armor_toughness");
+        assert_eq!(
+            json_of(&files, "assets/gear/equipment/gem.json"),
+            json!({ "layers": { "humanoid": [{ "texture": "gear:gem" }],
+                                "humanoid_leggings": [{ "texture": "gear:gem" }] } })
+        );
+        let lang = json_of(&files, "assets/gear/lang/en_us.json");
+        assert_eq!(lang["item.gear.gem_leggings"], "Gem Leggings");
+        assert_eq!(
+            json_of(&files, "data/minecraft/tags/item/leg_armor.json")["values"][0],
+            "gear:gem_leggings"
+        );
+        // The armour's textures are checked like any other.
+        let mut missing = gear_textures();
+        missing.remove("assets/gear/textures/entity/equipment/humanoid/gem.png");
+        let e = generate(&file, &missing, |_| unreachable!()).unwrap_err();
+        assert!(
+            e.contains("entity/equipment/humanoid/gem.png is missing"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn stat_and_ore_mistakes_are_refused() {
+        let with = |extra: &str| {
+            let text = format!("[mod]\nid = \"m\"\nname = \"M\"\nversion = \"1\"\n{extra}");
+            parse(&text).and_then(|(_, f)| generate(&f, &raw(&[]), |_| unreachable!()))
+        };
+        let item = "[item.s]\ntemplate = \"minecraft:iron_sword\"\nmodel = \"none\"\n";
+        assert!(
+            with(&format!("{item}attack_damage = 7"))
+                .unwrap_err()
+                .contains("together")
+        );
+        assert!(
+            with(&format!(
+                "{item}durability = 9\ncomponents = {{ \"minecraft:max_damage\" = 3 }}"
+            ))
+            .unwrap_err()
+            .contains("also set")
+        );
+        let ore = "[ore.o]\nblock = \"nope\"\nsize = 4\ncount = 2\nmin_y = 0\nmax_y = 10";
+        assert!(with(ore).unwrap_err().contains("not a block of this mod"));
+        let ore =
+            "[ore.o]\nblock = \"minecraft:stone\"\nsize = 99\ncount = 2\nmin_y = 0\nmax_y = 10";
+        assert!(with(ore).unwrap_err().contains("size"));
+        let armor = "[armor.a]\ndurability = 5\ndefense = [1, 2, 3, 4]\npieces = [\"gloves\"]";
+        assert!(with(armor).unwrap_err().contains("gloves"));
+        let clash = "[armor.a]\ndurability = 5\ndefense = [1, 2, 3, 4]\n[item.a_boots]\ntemplate = \"minecraft:stick\"";
+        assert!(with(clash).unwrap_err().contains("also declared"));
     }
 }

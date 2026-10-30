@@ -153,6 +153,26 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 /// A packed atlas image: sprite name, size and RGBA pixels.
 type PackedImage = (String, u32, u32, Vec<u8>);
+/// Content mods' armour textures, `assets/<ns>/textures/entity/equipment/...`,
+/// as the sprites `<ns>:entity/equipment/...` their equipment assets name.
+fn mod_equipment_sprites(root: &Path) -> Vec<PackedImage> {
+    let mut out = Vec::new();
+    for ns in horizon_items::content_namespaces::namespaces(root) {
+        let textures = root.join(format!("assets/{ns}/textures"));
+        let mut files = Vec::new();
+        walk(&textures.join("entity/equipment"), &mut files);
+        for path in files {
+            let Ok(rel) = path.strip_prefix(&textures) else {
+                continue;
+            };
+            let rel = rel.with_extension("").to_string_lossy().replace('\\', "/");
+            if let Ok((w, h, pixels)) = decode(&path) {
+                out.push((format!("{ns}:{rel}"), w, h, pixels));
+            }
+        }
+    }
+    out
+}
 /// A frame of an animated strip at `x, y`, nearest-resampled to the longer
 /// side of the frame: array layers are square, as `Sprites::load` keeps them
 /// for the world's sprite arrays.
@@ -527,6 +547,7 @@ impl HudAtlas {
             images.push(image);
         }
         if full {
+            images.extend(mod_equipment_sprites(root));
             let (more, more_animated) = atlas_sprites(root, &images);
             images.extend(more);
             animated.extend(more_animated);
