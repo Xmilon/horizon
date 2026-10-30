@@ -711,7 +711,9 @@ capabilities = ["registries"]
         let ruby = ["ruby".to_owned(), "gems".to_owned()];
         assert_eq!(
             clash(("t_and_t", &t_and_t), ("kaisyn", &kaisyn)).as_deref(),
-            Some("mods t_and_t and kaisyn both use the namespace kaisyn; take one of them out of horizon-mods")
+            Some(
+                "mods t_and_t and kaisyn both use the namespace kaisyn; take one of them out of horizon-mods"
+            )
         );
         assert_eq!(clash(("t_and_t", &t_and_t), ("ruby", &ruby)), None);
     }
