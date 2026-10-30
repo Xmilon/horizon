@@ -94,6 +94,18 @@ pub struct InoxFile {
     /// `_chestplate`, `_leggings` and `_boots`, and the equipment asset `<id>:ruby`.
     #[serde(default)]
     pub armor: BTreeMap<String, ArmorDecl>,
+    /// Tool sets by name: `[tools.ruby]` makes `<id>:ruby_sword`, `_pickaxe`,
+    /// `_axe`, `_shovel` and `_hoe`.
+    #[serde(default)]
+    pub tools: BTreeMap<String, ToolsDecl>,
+    /// Tags by registry, then name: `[tag.item.gems]` is the item tag
+    /// `<id>:gems`, `[tag.block."minecraft:beacon_base_blocks"]` adds to vanilla's.
+    #[serde(default)]
+    pub tag: BTreeMap<String, BTreeMap<String, TagDecl>>,
+    /// Creative inventory tabs by name: `[tab.ruby]` is the tab `<id>:ruby`.
+    /// Without any, the mod gets one tab holding all its items.
+    #[serde(default)]
+    pub tab: BTreeMap<String, TabDecl>,
 }
 
 /// `[mod]`: who the mod is, as Options > Mods lists it.
@@ -147,6 +159,9 @@ pub struct BlockDecl {
     /// Block tags it joins (`minecraft:beacon_base_blocks`).
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Other creative tabs its item is also in (`minecraft:building_blocks`).
+    #[serde(default)]
+    pub creative_tabs: Vec<String>,
 }
 
 /// An item: a vanilla template's behaviour with its own look, name and numbers.
@@ -180,6 +195,9 @@ pub struct ItemDecl {
     /// Item tags it joins (`minecraft:swords`, `c:gems`).
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Other creative tabs it is also in (`minecraft:combat`).
+    #[serde(default)]
+    pub creative_tabs: Vec<String>,
     /// Data components set (`minecraft:max_damage`) or removed (`!minecraft:repairable`).
     #[serde(default)]
     pub components: BTreeMap<String, Value>,
@@ -270,7 +288,81 @@ pub struct ArmorDecl {
     pub rarity: Option<String>,
     /// The pieces to make, all four by default.
     pub pieces: Option<Vec<String>>,
+    /// Other creative tabs the pieces are also in (`minecraft:combat`).
+    #[serde(default)]
+    pub creative_tabs: Vec<String>,
 }
+
+/// A tool set: a sword, pickaxe, axe, shovel and hoe copying a vanilla tier's,
+/// with their own numbers.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ToolsDecl {
+    /// The set's name before each tool's (`Ruby` makes `Ruby Pickaxe`).
+    pub name: Option<String>,
+    /// The vanilla tier whose blocks they can mine and whose tools they copy:
+    /// `wood`, `stone`, `iron`, `gold`, `diamond` or `netherite`.
+    pub tier: String,
+    /// Uses before a tool breaks (iron 250, diamond 1561, netherite 2031).
+    pub durability: u32,
+    /// Mining speed on the blocks a tool is for (iron 6, diamond 8, netherite 9, gold 12).
+    pub speed: f32,
+    /// The tier's attack damage bonus (wood and gold 0, stone 1, iron 2,
+    /// diamond 3, netherite 4): an iron sword deals 4 + 2.
+    pub damage: f64,
+    /// What repairs them: an item id or a `#` item tag (the tier's by default).
+    pub repair: Option<String>,
+    pub enchantability: Option<u32>,
+    pub rarity: Option<String>,
+    /// The tools to make, all five by default.
+    pub pieces: Option<Vec<String>>,
+    /// Other creative tabs the tools are also in (`minecraft:tools_and_utilities`).
+    #[serde(default)]
+    pub creative_tabs: Vec<String>,
+}
+
+/// A tag: its values (ids, names of this mod's things, `#` tags), added to
+/// what others put in it, or replacing it.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TagDecl {
+    pub values: Vec<String>,
+    /// Drops what vanilla and the mods before put in it.
+    #[serde(default)]
+    pub replace: bool,
+}
+
+/// A creative inventory tab of the mod's own, on the pages after vanilla's.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct TabDecl {
+    /// Its title; the mod's name by default.
+    pub name: Option<String>,
+    /// The item on its button; its first item by default.
+    pub icon: Option<String>,
+    /// What it holds, in order; every item of the mod by default.
+    pub items: Option<Vec<String>>,
+}
+
+/// A tool: its name, the blocks it is fast on (none for the sword), its
+/// item tag, and the attack damage over the tier's bonus and the attack
+/// speed as the tooltip shows them.
+const TOOLS: [(&str, Option<&str>, &str, f64, f64); 5] = [
+    ("sword", None, "swords", 4.0, 1.6),
+    ("pickaxe", Some("mineable/pickaxe"), "pickaxes", 2.0, 1.2),
+    ("axe", Some("mineable/axe"), "axes", 7.0, 0.9),
+    ("shovel", Some("mineable/shovel"), "shovels", 2.5, 1.0),
+    ("hoe", Some("mineable/hoe"), "hoes", 1.0, 1.0),
+];
+/// A tier: its name in `inox.toml`, and in vanilla's item and tag ids.
+const TIERS: [(&str, &str, &str); 6] = [
+    ("wood", "wooden", "wooden"),
+    ("stone", "stone", "stone"),
+    ("iron", "iron", "iron"),
+    ("gold", "golden", "gold"),
+    ("diamond", "diamond", "diamond"),
+    ("netherite", "netherite", "netherite"),
+];
 
 /// An armour piece: its name suffix, the iron piece it copies, its slot,
 /// vanilla's durability factor and its armour tag.
@@ -307,7 +399,12 @@ pub fn parse(text: &str) -> Result<(Manifest, InoxFile), String> {
         .validated()
         .map_err(|e| e.replace(MANIFEST, IMOD_MANIFEST))?;
     let names = file.block.keys().chain(file.item.keys());
-    for name in names.chain(file.ore.keys()).chain(file.armor.keys()) {
+    let sets = file.armor.keys().chain(file.tools.keys());
+    for name in names
+        .chain(file.ore.keys())
+        .chain(sets)
+        .chain(file.tab.keys())
+    {
         check_name(name)?;
     }
     if let Some(n) = file.block.keys().find(|n| file.item.contains_key(*n)) {
@@ -321,6 +418,19 @@ pub fn parse(text: &str) -> Result<(Manifest, InoxFile), String> {
             if file.block.contains_key(&n) || file.item.contains_key(&n) {
                 return Err(format!(
                     "{IMOD_MANIFEST}: armor {set} makes {n}, which is also declared"
+                ));
+            }
+        }
+    }
+    for (set, tools) in &file.tools {
+        for piece in tool_pieces(set, tools)? {
+            let n = format!("{set}_{piece}");
+            let armor = file.armor.iter().any(|(a, d)| {
+                armor_pieces(a, d).is_ok_and(|p| p.iter().any(|p| format!("{a}_{p}") == n))
+            });
+            if file.block.contains_key(&n) || file.item.contains_key(&n) || armor {
+                return Err(format!(
+                    "{IMOD_MANIFEST}: tools {set} makes {n}, which is also declared"
                 ));
             }
         }
@@ -414,7 +524,7 @@ fn tag_file(kind: &str, tag: &str, what: &str) -> Result<String, String> {
 /// The components an item's keys make (`durability`, `attack_damage`...),
 /// with the ones it sets itself in `components`. A component set both ways is
 /// refused.
-fn item_components(i: &ItemDecl, what: &str) -> Result<BTreeMap<String, Value>, String> {
+fn item_components(id: &str, i: &ItemDecl, what: &str) -> Result<BTreeMap<String, Value>, String> {
     let mut made: BTreeMap<String, Value> = BTreeMap::new();
     if let Some(d) = i.durability {
         if d == 0 {
@@ -448,7 +558,10 @@ fn item_components(i: &ItemDecl, what: &str) -> Result<BTreeMap<String, Value>, 
         }
     }
     if let Some(r) = &i.repair {
-        made.insert("minecraft:repairable".into(), json!({ "items": r }));
+        made.insert(
+            "minecraft:repairable".into(),
+            json!({ "items": full_ref(id, r) }),
+        );
     }
     if let Some(e) = i.enchantability {
         made.insert("minecraft:enchantable".into(), json!({ "value": e }));
@@ -503,6 +616,93 @@ fn item_components(i: &ItemDecl, what: &str) -> Result<BTreeMap<String, Value>, 
         made.insert(key.clone(), value.clone());
     }
     Ok(made)
+}
+
+/// The tools a set makes, checked.
+fn tool_pieces<'a>(set: &str, tools: &'a ToolsDecl) -> Result<Vec<&'a str>, String> {
+    let all = TOOLS.map(|t| t.0);
+    let pieces: Vec<&str> = match &tools.pieces {
+        Some(list) => list.iter().map(String::as_str).collect(),
+        None => all.to_vec(),
+    };
+    match pieces.iter().find(|p| !all.contains(p)) {
+        Some(p) => Err(format!(
+            "{IMOD_MANIFEST}: tools {set}: piece {p:?} is sword, pickaxe, axe, shovel or hoe"
+        )),
+        None if pieces.is_empty() => Err(format!("{IMOD_MANIFEST}: tools {set}: no pieces")),
+        None => Ok(pieces),
+    }
+}
+
+/// A tag value: a `#` tag, an id, or a name of this mod's.
+fn full_ref(id: &str, r: &str) -> String {
+    match r.strip_prefix('#') {
+        Some(tag) => format!("#{}", full_id(id, tag)),
+        None => full_id(id, r),
+    }
+}
+
+/// A tool set's tools as item declarations.
+fn tool_items(id: &str, set: &str, t: &ToolsDecl) -> Result<Vec<(String, ItemDecl)>, String> {
+    let what = format!("tools {id}:{set}");
+    let Some(&(_, prefix, tag_tier)) = TIERS.iter().find(|x| x.0 == t.tier) else {
+        return Err(format!(
+            "{what}: tier {:?} is wood, stone, iron, gold, diamond or netherite",
+            t.tier
+        ));
+    };
+    if t.durability == 0 || !t.speed.is_finite() || t.speed <= 0.0 {
+        return Err(format!(
+            "{what}: durability is 1 or more and speed more than 0"
+        ));
+    }
+    if !t.damage.is_finite() || t.damage < 0.0 {
+        return Err(format!("{what}: damage is 0 or more"));
+    }
+    let title_name = t.name.clone().unwrap_or_else(|| title(set));
+    let pieces = tool_pieces(set, t)?;
+    let mut items = Vec::new();
+    for &(piece, mineable, tag, damage, speed) in &TOOLS {
+        if !pieces.contains(&piece) {
+            continue;
+        }
+        // The hoe deals no tier bonus but swings faster with it, as vanilla's.
+        let (attack, swing) = match piece {
+            "hoe" => (damage, (speed + t.damage).min(4.0)),
+            _ => (damage + t.damage, speed),
+        };
+        let mut components = BTreeMap::new();
+        if let Some(blocks) = mineable {
+            components.insert(
+                "minecraft:tool".to_owned(),
+                json!({ "rules": [
+                    { "blocks": format!("#minecraft:incorrect_for_{tag_tier}_tool"),
+                      "correct_for_drops": false },
+                    { "blocks": format!("#minecraft:{blocks}"), "correct_for_drops": true,
+                      "speed": t.speed }
+                ], "damage_per_block": 1 }),
+            );
+        }
+        items.push((
+            format!("{set}_{piece}"),
+            ItemDecl {
+                template: format!("minecraft:{prefix}_{piece}"),
+                name: Some(format!("{title_name} {}", title(piece))),
+                model: Some("handheld".into()),
+                rarity: t.rarity.clone(),
+                durability: Some(t.durability),
+                attack_damage: Some(attack),
+                attack_speed: Some(swing),
+                repair: t.repair.clone(),
+                enchantability: t.enchantability,
+                tags: vec![format!("minecraft:{tag}")],
+                creative_tabs: t.creative_tabs.clone(),
+                components,
+                ..ItemDecl::default()
+            },
+        ));
+    }
+    Ok(items)
 }
 
 /// An armour set's pieces as item declarations, and its equipment asset.
@@ -564,6 +764,7 @@ fn armor_items(
             rarity: a.rarity.clone(),
             durability: Some(factor * a.durability),
             repair: a.repair.clone(),
+            creative_tabs: a.creative_tabs.clone(),
             enchantability: a.enchantability,
             tags: vec![
                 format!("minecraft:{tag}"),
@@ -674,6 +875,8 @@ struct Out {
     lang: BTreeMap<String, String>,
     /// Tag file -> values.
     tags: BTreeMap<String, Vec<String>>,
+    /// Tag files that replace what came before (`replace = true`).
+    replace: BTreeSet<String>,
 }
 
 /// The files `file`'s declarations make, merged with the mod's own `raw`
@@ -820,6 +1023,83 @@ pub fn generate(
         }
         items.extend(pieces);
     }
+    for (set, t) in &file.tools {
+        items.extend(tool_items(id, set, t)?);
+    }
+    for (kind, tags) in &file.tag {
+        let kind_ok = !kind.is_empty()
+            && kind
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"_/".contains(&b));
+        if !kind_ok {
+            return Err(format!(
+                "{IMOD_MANIFEST}: tag registry {kind:?} is a registry name (block, item, worldgen/biome...)"
+            ));
+        }
+        for (name, t) in tags {
+            let what = format!("tag {kind} {name}");
+            let path = tag_file(kind, &full_id(id, name), &what)?;
+            if t.replace {
+                out.replace.insert(path.clone());
+            }
+            let values = t.values.iter().map(|v| full_ref(id, v));
+            out.tags.entry(path).or_default().extend(values);
+        }
+    }
+    // Creative tabs: the mod's own (one with everything when it declares none),
+    // and its things' places in other tabs.
+    let mut all_items: Vec<String> = file
+        .block
+        .iter()
+        .filter(|(_, b)| b.item)
+        .map(|(n, _)| format!("{id}:{n}"))
+        .collect();
+    all_items.extend(items.iter().map(|(n, _)| format!("{id}:{n}")));
+    let mut tabs = file.tab.clone();
+    if tabs.is_empty() {
+        tabs.insert(id.to_owned(), TabDecl::default());
+    }
+    for (name, t) in &tabs {
+        let listed = t
+            .items
+            .as_ref()
+            .map(|list| list.iter().map(|i| full_id(id, i)).collect::<Vec<_>>());
+        let mut tab = json!({
+            "title": t.name.clone().unwrap_or_else(|| file.meta.name.clone()),
+            "items": listed.unwrap_or_else(|| all_items.clone()),
+        });
+        if let Some(icon) = &t.icon {
+            tab["icon"] = full_id(id, icon).into();
+        }
+        out.files
+            .insert(format!("data/{id}/horizon/creative_tab/{name}.json"), tab);
+    }
+    let mut added: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let placed = file
+        .block
+        .iter()
+        .map(|(n, b)| (n, &b.creative_tabs))
+        .chain(items.iter().map(|(n, i)| (n, &i.creative_tabs)));
+    for (name, targets) in placed {
+        for t in targets {
+            added
+                .entry(full_id(id, t))
+                .or_default()
+                .push(format!("{id}:{name}"));
+        }
+    }
+    for (target, held) in added {
+        let file_name = format!("add_to_{}", target.replace([':', '/'], "_"));
+        if tabs.contains_key(&file_name) {
+            return Err(format!(
+                "{IMOD_MANIFEST}: tab {file_name} is a name Inox uses"
+            ));
+        }
+        out.files.insert(
+            format!("data/{id}/horizon/creative_tab/{file_name}.json"),
+            json!({ "horizon:add_to": target, "items": held }),
+        );
+    }
     for (name, i) in &items {
         let name = name.as_str();
         let what = format!("item {id}:{name}");
@@ -831,7 +1111,7 @@ pub fn generate(
         if let Some(r) = &i.rarity {
             decl.insert("rarity".into(), r.clone().into());
         }
-        let components = item_components(i, &what)?;
+        let components = item_components(id, i, &what)?;
         if !components.is_empty() {
             decl.insert(
                 "components".into(),
@@ -907,6 +1187,9 @@ pub fn generate(
             return Err(format!("{path}: a tag holds a values list"));
         };
         list.extend(values.into_iter().map(Value::from));
+        if out.replace.contains(&path) {
+            tag["replace"] = true.into();
+        }
         files.insert(path, pretty(&tag));
     }
     Ok(files)
@@ -1304,5 +1587,154 @@ repair = "gear:gem"
         assert!(with(armor).unwrap_err().contains("gloves"));
         let clash = "[armor.a]\ndurability = 5\ndefense = [1, 2, 3, 4]\n[item.a_boots]\ntemplate = \"minecraft:stick\"";
         assert!(with(clash).unwrap_err().contains("also declared"));
+    }
+
+    const KIT: &str = r##"
+[mod]
+id = "kit"
+name = "Kit"
+version = "1"
+
+[block.gem_block]
+template = "minecraft:iron_block"
+texture = "minecraft:block/stone"
+creative_tabs = ["minecraft:building_blocks"]
+
+[item.gem]
+template = "minecraft:diamond"
+texture = "minecraft:item/diamond"
+
+[tools.gem]
+tier = "iron"
+durability = 800
+speed = 7.0
+damage = 2.5
+repair = "gem"
+creative_tabs = ["minecraft:tools_and_utilities"]
+
+[tag.item.gems]
+values = ["gem", "minecraft:diamond", "#c:gems"]
+
+[tag.block."minecraft:beacon_base_blocks"]
+values = ["gem_block"]
+
+[tag."worldgen/biome".gem_lands]
+values = ["minecraft:plains"]
+replace = true
+"##;
+
+    fn kit_textures() -> BTreeSet<String> {
+        ["sword", "pickaxe", "axe", "shovel", "hoe"]
+            .iter()
+            .map(|t| format!("assets/kit/textures/item/gem_{t}.png"))
+            .collect()
+    }
+
+    #[test]
+    fn tool_sets_make_five_tools_of_a_tier() {
+        let (_, file) = parse(KIT).unwrap();
+        let files = generate(&file, &kit_textures(), |_| unreachable!()).unwrap();
+        let pickaxe = json_of(&files, "data/kit/horizon/item/gem_pickaxe.json");
+        assert_eq!(pickaxe["template"], "minecraft:iron_pickaxe");
+        let c = &pickaxe["components"];
+        assert_eq!(c["minecraft:max_damage"], 800);
+        assert_eq!(c["minecraft:repairable"]["items"], "kit:gem");
+        let rules = &c["minecraft:tool"]["rules"];
+        assert_eq!(rules[0]["blocks"], "#minecraft:incorrect_for_iron_tool");
+        assert_eq!(rules[1]["blocks"], "#minecraft:mineable/pickaxe");
+        assert_eq!(rules[1]["speed"], 7.0);
+        // Shown 2 + 2.5 = 4.5: the modifier is that less the player's own 1.
+        assert_eq!(c["minecraft:attribute_modifiers"][0]["amount"], 3.5);
+        let sword = json_of(&files, "data/kit/horizon/item/gem_sword.json");
+        assert!(sword["components"].get("minecraft:tool").is_none());
+        assert_eq!(
+            sword["components"]["minecraft:attribute_modifiers"][0]["amount"],
+            5.5
+        );
+        let hoe = json_of(&files, "data/kit/horizon/item/gem_hoe.json");
+        let speed = hoe["components"]["minecraft:attribute_modifiers"][1]["amount"].as_f64();
+        assert_eq!(speed, Some(3.5 - 4.0));
+        assert_eq!(
+            json_of(&files, "data/minecraft/tags/item/axes.json")["values"][0],
+            "kit:gem_axe"
+        );
+        assert_eq!(
+            json_of(&files, "assets/kit/models/item/gem_shovel.json")["parent"],
+            "minecraft:item/handheld"
+        );
+        assert_eq!(
+            json_of(&files, "assets/kit/lang/en_us.json")["item.kit.gem_hoe"],
+            "Gem Hoe"
+        );
+    }
+
+    #[test]
+    fn tags_are_declared_in_any_registry() {
+        let (_, file) = parse(KIT).unwrap();
+        let files = generate(&file, &kit_textures(), |_| unreachable!()).unwrap();
+        assert_eq!(
+            json_of(&files, "data/kit/tags/item/gems.json"),
+            json!({ "values": ["kit:gem", "minecraft:diamond", "#c:gems"] })
+        );
+        assert_eq!(
+            json_of(&files, "data/minecraft/tags/block/beacon_base_blocks.json")["values"],
+            json!(["kit:gem_block"])
+        );
+        assert_eq!(
+            json_of(&files, "data/kit/tags/worldgen/biome/gem_lands.json"),
+            json!({ "values": ["minecraft:plains"], "replace": true })
+        );
+    }
+
+    #[test]
+    fn mods_get_a_creative_tab_and_places_in_others() {
+        let (_, file) = parse(KIT).unwrap();
+        let files = generate(&file, &kit_textures(), |_| unreachable!()).unwrap();
+        let tab = json_of(&files, "data/kit/horizon/creative_tab/kit.json");
+        assert_eq!(tab["title"], "Kit");
+        let items = tab["items"].as_array().unwrap();
+        assert_eq!(items[0], "kit:gem_block");
+        assert_eq!(items[1], "kit:gem");
+        assert_eq!(items.len(), 7);
+        assert_eq!(
+            json_of(
+                &files,
+                "data/kit/horizon/creative_tab/add_to_minecraft_tools_and_utilities.json"
+            ),
+            json!({ "horizon:add_to": "minecraft:tools_and_utilities",
+                    "items": ["kit:gem_sword", "kit:gem_pickaxe", "kit:gem_axe", "kit:gem_shovel", "kit:gem_hoe"] })
+        );
+        assert_eq!(
+            json_of(
+                &files,
+                "data/kit/horizon/creative_tab/add_to_minecraft_building_blocks.json"
+            )["items"],
+            json!(["kit:gem_block"])
+        );
+        // Tabs of its own replace the default one.
+        let text = format!(
+            "{KIT}\n[tab.gear]\nname = \"Gear\"\nicon = \"gem\"\nitems = [\"gem\", \"gem_sword\"]\n"
+        );
+        let (_, file) = parse(&text).unwrap();
+        let files = generate(&file, &kit_textures(), |_| unreachable!()).unwrap();
+        assert!(!files.contains_key("data/kit/horizon/creative_tab/kit.json"));
+        assert_eq!(
+            json_of(&files, "data/kit/horizon/creative_tab/gear.json"),
+            json!({ "title": "Gear", "icon": "kit:gem", "items": ["kit:gem", "kit:gem_sword"] })
+        );
+    }
+
+    #[test]
+    fn tool_and_tag_mistakes_are_refused() {
+        let with = |extra: &str| {
+            let text = format!("[mod]\nid = \"m\"\nname = \"M\"\nversion = \"1\"\n{extra}");
+            parse(&text).and_then(|(_, f)| generate(&f, &raw(&[]), |_| unreachable!()))
+        };
+        let tools = "[tools.t]\ntier = \"copper\"\ndurability = 9\nspeed = 2.0\ndamage = 1.0";
+        assert!(with(tools).unwrap_err().contains("tier"));
+        let clash = "[tools.t]\ntier = \"iron\"\ndurability = 9\nspeed = 2.0\ndamage = 1.0\n[item.t_axe]\ntemplate = \"minecraft:stick\"";
+        assert!(with(clash).unwrap_err().contains("also declared"));
+        let tag = "[tag.\"Item\".x]\nvalues = []";
+        assert!(with(tag).unwrap_err().contains("registry"));
     }
 }

@@ -352,9 +352,9 @@ impl Content {
                 blocks.push((block, name.clone()));
             } else if let Some(item) = parse("item") {
                 items.push((item, name.clone()));
-            } else {
+            } else if parse("creative_tab").is_none() {
                 return Err(format!(
-                    "{name}: data/{id}/horizon/ holds block/*.json and item/*.json only"
+                    "{name}: data/{id}/horizon/ holds block/*.json, item/*.json and creative_tab/*.json only"
                 ));
             }
         }

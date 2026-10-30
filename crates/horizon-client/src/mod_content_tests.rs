@@ -1147,3 +1147,66 @@ fn biome_modifiers_add_features_to_the_biomes_they_name() {
     let e = add_features(&mut biomes, &tags, &placed, &[unknown]).unwrap_err();
     assert!(e.to_string().contains("a:none is not defined"), "{e}");
 }
+
+#[test]
+fn mods_tabs_join_the_creative_inventory_on_their_own_pages() {
+    let j = |text: &str| -> J { serde_json::from_str(text).unwrap() };
+    let mut doc = j(r#"{"tabs": [
+        {"id": "minecraft:combat", "type": "CATEGORY", "items": ["{count:1,id:\"minecraft:iron_sword\"}"]},
+        {"id": "minecraft:search", "type": "SEARCH", "items": [], "lines": [], "tags": []}
+    ]}"#);
+    let known = Known {
+        blocks: Default::default(),
+        items: ["ruby:ruby", "ruby:ruby_sword"].map(String::from).into(),
+        biomes: Default::default(),
+        biome_tags: Default::default(),
+        tag_files: Default::default(),
+    };
+    let tab = |id: &str, text: &str| CreativeTab {
+        id: id.into(),
+        file: serde_json::from_str(text).unwrap(),
+    };
+    let mut tabs = vec![tab(
+        "ruby:ruby",
+        r#"{"title": "Ruby", "items": ["ruby:ruby", "ruby:gone"]}"#,
+    )];
+    for i in 0..11 {
+        tabs.push(tab(&format!("more:t{i}"), r#"{"items": []}"#));
+    }
+    tabs.push(tab(
+        "ruby:add_to_minecraft_combat",
+        r#"{"horizon:add_to": "minecraft:combat", "items": ["ruby:ruby_sword"]}"#,
+    ));
+    let names = BTreeMap::from([("item.ruby.ruby".to_owned(), "Ruby Gem".to_owned())]);
+    let mut warnings = Vec::new();
+    creative_tabs(&mut doc, &tabs, &known, &names, &mut warnings).unwrap();
+    let Some(J::Arr(list)) = doc.get("tabs") else {
+        unreachable!()
+    };
+    let field = |i: usize, key: &str| list[i].get(key).cloned().unwrap();
+    assert_eq!(field(2, "id"), J::Str("ruby:ruby".into()));
+    assert_eq!(field(2, "page"), j("1"));
+    assert_eq!(field(2, "row"), J::Str("TOP".into()));
+    assert_eq!(
+        field(2, "icon"),
+        J::Str(r#"{count:1,id:"ruby:ruby"}"#.into())
+    );
+    assert_eq!(field(2, "items"), j(r#"["{count:1,id:\"ruby:ruby\"}"]"#));
+    // The sixth tab of a page opens its bottom row; the twelfth a new page.
+    assert_eq!(
+        (field(7, "row"), field(7, "column")),
+        (J::Str("BOTTOM".into()), j("0"))
+    );
+    assert_eq!((field(13, "page"), field(13, "column")), (j("2"), j("0")));
+    assert_eq!(
+        field(0, "items"),
+        j(r#"["{count:1,id:\"minecraft:iron_sword\"}", "{count:1,id:\"ruby:ruby_sword\"}"]"#)
+    );
+    assert_eq!(
+        field(1, "items"),
+        j(r#"["{count:1,id:\"ruby:ruby\"}", "{count:1,id:\"ruby:ruby_sword\"}"]"#)
+    );
+    assert_eq!(field(1, "lines"), j(r#"[["ruby gem"], ["ruby sword"]]"#));
+    assert_eq!(field(1, "tags"), j("[[], []]"));
+    assert!(warnings[0].contains("ruby:gone"), "{warnings:?}");
+}

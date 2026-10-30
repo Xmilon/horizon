@@ -23,6 +23,10 @@ pub struct Tab {
     /// `CreativeModeTab.Type.HOTBAR`: the saved toolbars, filled when the
     /// tab is selected (`set_saved_hotbars`).
     pub hotbar: bool,
+    /// The page of tabs it is on: vanilla's are on 0, content mods' after
+    /// (`creative-inventory.json`'s `page`, written by `mod_content`). The
+    /// saved toolbars, search and inventory tabs are on every page.
+    pub page: u32,
 }
 impl Tab {
     /// The tab without its stacks.
@@ -37,7 +41,12 @@ impl Tab {
             search: self.search,
             inventory: self.inventory,
             hotbar: self.hotbar,
+            page: self.page,
         }
+    }
+    /// On every page: the saved toolbars, search and the inventory.
+    pub fn on_every_page(&self) -> bool {
+        self.search || self.inventory || self.hotbar
     }
 }
 /// A tab as exported, built with permissions: `operator` marks the stacks a
@@ -66,6 +75,8 @@ pub struct Creative {
     /// permissions put in them.
     pub tabs: Vec<Tab>,
     pub selected: usize,
+    /// The page of tabs shown (`Tab::page`).
+    pub page: u32,
     /// Scroll position 0..1 (scrollOffs).
     pub scroll: f32,
     /// The scrollbar is held (scrolling): dragging moves it.
@@ -288,6 +299,7 @@ impl Creative {
                     search: kind == "SEARCH",
                     inventory: kind == "INVENTORY",
                     hotbar: kind == "HOTBAR",
+                    page: t["page"].as_u64().unwrap_or(0) as u32,
                 },
                 category: kind == "CATEGORY",
                 operator,
@@ -327,6 +339,7 @@ impl Creative {
                     search: kind == "SEARCH",
                     inventory: kind == "INVENTORY",
                     hotbar: false,
+                    page: 0,
                 },
                 category: false,
             });
@@ -349,6 +362,7 @@ impl Creative {
         let mut creative = Self {
             tabs: Vec::new(),
             selected: 0,
+            page: 0,
             scroll: 0.0,
             scrolling: false,
             search: {
@@ -445,6 +459,52 @@ impl Creative {
             .or_else(|| items.iter().position(|s| s.item == stack.item))
     }
     /// The tabs without their stacks: what the screen draws of them each frame.
+    /// The pages of tabs: 1 with vanilla's alone.
+    pub fn pages(&self) -> u32 {
+        self.tabs.iter().map(|t| t.page).max().unwrap_or(0) + 1
+    }
+    /// Whether tab `i` is on the page shown: only those are drawn and clicked.
+    pub fn shows(&self, i: usize) -> bool {
+        self.tabs
+            .get(i)
+            .is_some_and(|t| t.on_every_page() || t.page == self.page)
+    }
+    /// Turns to `page` (wrapping round), selecting its first tab unless the
+    /// selected one is on every page, as NeoForge's page buttons do.
+    pub fn show_page(&mut self, page: i64) {
+        let pages = i64::from(self.pages());
+        let page = page.rem_euclid(pages) as u32;
+        self.page = page;
+        if self.tab().on_every_page() {
+            return;
+        }
+        if let Some(i) = (0..self.tabs.len())
+            .find(|&i| self.tabs[i].page == page && !self.tabs[i].on_every_page())
+        {
+            self.select(i);
+        }
+    }
+    /// The previous and next page buttons, 20x20, relative to the screen
+    /// origin: above the top row of tabs, at its two ends.
+    pub const PAGE_BUTTONS: [(f32, f32); 2] = [(0.0, -50.0), (Self::WIDTH - 20.0, -50.0)];
+    /// The page button under `mouse` (relative to the screen origin): -1 for
+    /// the previous page, 1 for the next; none with one page.
+    pub fn page_button_at(&self, mouse: (f32, f32)) -> Option<i64> {
+        if self.pages() < 2 {
+            return None;
+        }
+        let inside = |(x, y): (f32, f32)| {
+            mouse.0 >= x && mouse.0 < x + 20.0 && mouse.1 >= y && mouse.1 < y + 20.0
+        };
+        let [previous, next] = Self::PAGE_BUTTONS;
+        if inside(previous) {
+            Some(-1)
+        } else if inside(next) {
+            Some(1)
+        } else {
+            None
+        }
+    }
     pub fn tab_headers(&self) -> Vec<Tab> {
         self.tabs.iter().map(Tab::header).collect()
     }
@@ -452,11 +512,17 @@ impl Creative {
         &self.tabs[self.selected.min(self.tabs.len() - 1)]
     }
     /// selectTab: a different tab empties the search box; the scrollbar goes to the top.
+    /// A tab of another page turns to it.
     pub fn select(&mut self, tab: usize) {
         if tab != self.selected {
             self.search.set_value("");
         }
         self.selected = tab;
+        if let Some(t) = self.tabs.get(tab)
+            && !t.on_every_page()
+        {
+            self.page = t.page;
+        }
         self.scroll = 0.0;
         if self.tab().search {
             self.search.focused = true;
@@ -1448,6 +1514,41 @@ mod tests {
     }
 
     #[test]
+    fn content_mods_tabs_are_on_pages_of_their_own() {
+        let raw = serde_json::json!({ "tabs": [
+            { "id": "minecraft:building_blocks", "type": "CATEGORY", "row": "TOP", "column": 0,
+              "items": ["{count:1,id:\"minecraft:stone\"}"] },
+            { "id": "minecraft:search", "type": "SEARCH", "row": "TOP", "column": 6, "items": [] },
+            { "id": "ruby:ruby", "type": "CATEGORY", "row": "TOP", "column": 0, "page": 1,
+              "title": "Ruby", "items": ["{count:1,id:\"ruby:ruby_ingot\"}"] },
+            { "id": "gems:gems", "type": "CATEGORY", "row": "BOTTOM", "column": 0, "page": 1,
+              "items": ["{count:1,id:\"minecraft:diamond\"}"] },
+        ]});
+        let mut c = Creative::from_json(&raw).unwrap();
+        assert_eq!(c.pages(), 2);
+        assert_eq!(
+            (0..4).map(|i| c.shows(i)).collect::<Vec<_>>(),
+            [true, true, false, false]
+        );
+        assert_eq!(c.page_button_at((25.0, -40.0)), None);
+        assert_eq!(c.page_button_at((5.0, -40.0)), Some(-1));
+        assert_eq!(c.page_button_at((Creative::WIDTH - 5.0, -40.0)), Some(1));
+        // The next page selects its first tab; search stays on every page.
+        c.show_page(1);
+        assert_eq!((c.page, c.selected), (1, 2));
+        assert_eq!(
+            (0..4).map(|i| c.shows(i)).collect::<Vec<_>>(),
+            [false, true, true, true]
+        );
+        c.select(1);
+        c.show_page(2);
+        assert_eq!((c.page, c.selected), (0, 1));
+        // Selecting a tab of another page turns to it.
+        c.select(3);
+        assert_eq!(c.page, 1);
+    }
+
+    #[test]
     fn unselected_tabs_want_the_hand_strictly_inside() {
         let tab = |top, column| Tab {
             id: String::new(),
@@ -1459,6 +1560,7 @@ mod tests {
             search: false,
             inventory: false,
             hotbar: false,
+            page: 0,
         };
         // Top row, second column: the button spans x 27..53, y -28..4.
         let t = tab(true, 1);

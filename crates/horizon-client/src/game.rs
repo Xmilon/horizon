@@ -12100,7 +12100,7 @@ impl Game<'_> {
         );
         // Unselected tabs behind the panel, then the panel, then the selected tab.
         for (i, t) in tabs.iter().enumerate() {
-            if i != selected {
+            if i != selected && self.creative_screen.shows(i) {
                 let (tx, ty) = Creative::tab_position(t);
                 batch.sprite(&self.gui.atlas, &tab_sprite(t, false), ox + tx, oy + ty);
                 let mouse = (self.cursor.0 - ox, self.cursor.1 - oy);
@@ -12124,8 +12124,14 @@ impl Game<'_> {
             batch.rect_uv(ox, oy, Creative::WIDTH, Creative::HEIGHT, r, u32::MAX);
         }
         let (tx, ty) = Creative::tab_position(tab);
-        batch.sprite(&self.gui.atlas, &tab_sprite(tab, true), ox + tx, oy + ty);
-        for t in &tabs {
+        if self.creative_screen.shows(selected) {
+            batch.sprite(&self.gui.atlas, &tab_sprite(tab, true), ox + tx, oy + ty);
+        }
+        self.draw_creative_pages(batch, (ox, oy));
+        for (i, t) in tabs.iter().enumerate() {
+            if !self.creative_screen.shows(i) {
+                continue;
+            }
             let (tx, ty) = Creative::tab_position(t);
             let stack = ItemStack {
                 item: Arc::from(t.icon.as_str()),
@@ -12245,9 +12251,10 @@ impl Game<'_> {
                 oy + Creative::SCROLL_Y + self.creative_screen.scroller_offset(),
             );
         }
-        for t in &tabs {
+        for (i, t) in tabs.iter().enumerate() {
             let (tx, ty) = Creative::tab_position(t);
-            if self.cursor.0 >= ox + tx
+            if self.creative_screen.shows(i)
+                && self.cursor.0 >= ox + tx
                 && self.cursor.0 < ox + tx + 26.0
                 && self.cursor.1 >= oy + ty
                 && self.cursor.1 < oy + ty + 32.0
@@ -12290,6 +12297,57 @@ impl Game<'_> {
         }
         self.draw_inventory_effects(batch, (ox, oy), Creative::WIDTH as i32);
     }
+    /// The page buttons and "page / pages" above the tabs, when content mods add
+    /// pages of tabs (as NeoForge draws them).
+    fn draw_creative_pages(&self, batch: &mut HudBatch, (ox, oy): (f32, f32)) {
+        let screen = &self.creative_screen;
+        if screen.pages() < 2 {
+            return;
+        }
+        let atlas = &self.gui.atlas;
+        let mouse = (self.cursor.0 - ox, self.cursor.1 - oy);
+        for ((x, y), label) in Creative::PAGE_BUTTONS.into_iter().zip(["<", ">"]) {
+            let hovered = mouse.0 >= x && mouse.0 < x + 20.0 && mouse.1 >= y && mouse.1 < y + 20.0;
+            let edge = if hovered {
+                rgba(255, 255, 255, 255)
+            } else {
+                rgba(0, 0, 0, 255)
+            };
+            batch.fill(atlas, ox + x, oy + y, 20.0, 20.0, edge);
+            batch.fill(
+                atlas,
+                ox + x + 1.0,
+                oy + y + 1.0,
+                18.0,
+                18.0,
+                rgba(111, 111, 111, 255),
+            );
+            let w = HudBatch::text_width(atlas, label);
+            batch.text(
+                atlas,
+                label,
+                ox + x + (20.0 - w) / 2.0,
+                oy + y + 6.0,
+                u32::MAX,
+                true,
+            );
+            if hovered {
+                horizon_client::widgets::request_cursor(
+                    horizon_client::widgets::Cursor::PointingHand,
+                );
+            }
+        }
+        let text = format!("{} / {}", screen.page + 1, screen.pages());
+        let w = HudBatch::text_width(atlas, &text);
+        batch.text(
+            atlas,
+            &text,
+            ox + (Creative::WIDTH - w) / 2.0,
+            oy - 44.0,
+            u32::MAX,
+            true,
+        );
+    }
     fn creative_trash_hovered(batch: &HudBatch, cursor: (f32, f32)) -> bool {
         let (ox, oy) = Self::creative_origin(batch);
         let (x, y) = Creative::TRASH_POSITION;
@@ -12309,10 +12367,23 @@ impl Game<'_> {
         let batch = HudBatch::new(size);
         let (ox, oy) = Self::creative_origin(&batch);
         let (cx, cy) = self.cursor;
+        if let Some(turn) = self.creative_screen.page_button_at((cx - ox, cy - oy)) {
+            let page = i64::from(self.creative_screen.page) + turn;
+            self.creative_screen.show_page(page);
+            self.refresh_saved_hotbars();
+            self.inv_drag = None;
+            self.last_inv_click = None;
+            return;
+        }
         let tabs = self.creative_screen.tabs.clone();
         for (i, t) in tabs.iter().enumerate() {
             let (tx, ty) = Creative::tab_position(t);
-            if cx >= ox + tx && cx < ox + tx + 26.0 && cy >= oy + ty && cy < oy + ty + 32.0 {
+            if self.creative_screen.shows(i)
+                && cx >= ox + tx
+                && cx < ox + tx + 26.0
+                && cy >= oy + ty
+                && cy < oy + ty + 32.0
+            {
                 select_creative_tab(&mut self.creative_screen, &mut self.inv_clicks, i);
                 self.refresh_saved_hotbars();
                 self.inv_drag = None;

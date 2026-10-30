@@ -851,6 +851,149 @@ impl Addition {
     }
 }
 
+/// The creative inventory's tabs (`creative.rs`).
+const CREATIVE: &str = "creative-inventory.json";
+/// Content mods' tabs per page: the top row's five category columns and the
+/// bottom row's six; the saved toolbars, search and inventory are on every page.
+const TABS_PER_PAGE: usize = 11;
+
+/// A mod's creative tab file, `data/<ns>/horizon/creative_tab/<name>.json`:
+/// a tab of its own, `<ns>:<name>`, or with `horizon:add_to` its items for
+/// another tab (vanilla's, another mod's).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TabFile {
+    title: Option<String>,
+    icon: Option<String>,
+    items: Vec<String>,
+    #[serde(rename = "horizon:add_to")]
+    add_to: Option<String>,
+}
+struct CreativeTab {
+    id: String,
+    file: TabFile,
+}
+
+/// An item stack as `creative-inventory.json` writes one.
+fn stack_snbt(item: &str) -> J {
+    J::Str(format!("{{count:1,id:\"{item}\"}}"))
+}
+
+/// The mods' tabs into the creative inventory `doc`: each tab of its own on
+/// the pages after vanilla's, eleven a page in the mods' order, then the
+/// additions to tabs, then every item of the mods' tabs in the search tab
+/// (searched by its English `names`). An item nobody has is left out.
+fn creative_tabs(
+    doc: &mut J,
+    tabs: &[CreativeTab],
+    known: &Known,
+    names: &BTreeMap<String, String>,
+    warnings: &mut Vec<String>,
+) -> Result<()> {
+    let Some(J::Arr(list)) = doc.get_mut("tabs") else {
+        return Err(format!("{CREATIVE}: no tabs").into());
+    };
+    fn keep(tab: &CreativeTab, known: &Known, warnings: &mut Vec<String>) -> Vec<String> {
+        let (have, gone): (Vec<String>, Vec<String>) = tab
+            .file
+            .items
+            .iter()
+            .cloned()
+            .partition(|i| known.items.contains(i));
+        if !gone.is_empty() {
+            warnings.push(format!(
+                "creative tab {}: {} are no items; left out",
+                tab.id,
+                gone.join(", ")
+            ));
+        }
+        have
+    }
+    let mut searched: Vec<String> = Vec::new();
+    let own = tabs.iter().filter(|t| t.file.add_to.is_none());
+    for (i, tab) in own.enumerate() {
+        let items = keep(tab, known, warnings);
+        let icon = tab
+            .file
+            .icon
+            .clone()
+            .or_else(|| items.first().cloned())
+            .unwrap_or_else(|| "minecraft:stone".into());
+        let slot = i % TABS_PER_PAGE;
+        let (row, column) = if slot < 5 {
+            ("TOP", slot)
+        } else {
+            ("BOTTOM", slot - 5)
+        };
+        let title = tab.file.title.clone().unwrap_or_else(|| tab.id.clone());
+        searched.extend(items.iter().cloned());
+        list.push(J::Obj(vec![
+            ("id".into(), J::Str(tab.id.clone())),
+            ("type".into(), J::Str("CATEGORY".into())),
+            ("row".into(), J::Str(row.into())),
+            ("column".into(), J::Num((column as u64).into())),
+            (
+                "page".into(),
+                J::Num(((1 + i / TABS_PER_PAGE) as u64).into()),
+            ),
+            ("title".into(), J::Str(title)),
+            ("icon".into(), stack_snbt(&icon)),
+            ("visible".into(), J::Bool(true)),
+            (
+                "items".into(),
+                J::Arr(items.iter().map(|i| stack_snbt(i)).collect()),
+            ),
+        ]));
+    }
+    for tab in tabs.iter().filter(|t| t.file.add_to.is_some()) {
+        let target = tab.file.add_to.as_deref().unwrap_or_default();
+        let items = keep(tab, known, warnings);
+        let found = list
+            .iter_mut()
+            .find(|t| t.get("id") == Some(&J::Str(target.into())));
+        let Some(J::Arr(into)) = found.and_then(|t| t.get_mut("items")) else {
+            warnings.push(format!(
+                "creative tab {}: no tab {target} to add to",
+                tab.id
+            ));
+            continue;
+        };
+        into.extend(items.iter().map(|i| stack_snbt(i)));
+        searched.extend(items);
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    searched.retain(|i| seen.insert(i.clone()));
+    let search = list
+        .iter_mut()
+        .find(|t| t.get("type") == Some(&J::Str("SEARCH".into())));
+    if let Some(search) = search {
+        // Items, their tooltip lines and tags go by index: keep them in step.
+        let name = |item: &str| {
+            let (ns, path) = item.split_once(':').unwrap_or(("minecraft", item));
+            names
+                .get(&format!("item.{ns}.{path}"))
+                .or_else(|| names.get(&format!("block.{ns}.{path}")))
+                .cloned()
+                .unwrap_or_else(|| path.replace('_', " "))
+                .to_lowercase()
+        };
+        let lines = search.get("lines").is_some();
+        let tags = search.get("tags").is_some();
+        for item in &searched {
+            if let Some(J::Arr(items)) = search.get_mut("items") {
+                items.push(stack_snbt(item));
+            }
+            if lines && let Some(J::Arr(l)) = search.get_mut("lines") {
+                l.push(J::Arr(vec![J::Str(name(item))]));
+            }
+            if tags && let Some(J::Arr(t)) = search.get_mut("tags") {
+                t.push(J::Arr(Vec::new()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The worldgen loader's bundle of biomes (id -> the biome file's text).
 const BIOMES: &str = "worldgen/biomes.json";
 /// Where a mod keeps NeoForge's biome modifiers, under `data/<ns>/`.
@@ -1319,11 +1462,33 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
     let mut worldgen: BTreeMap<&str, Vec<(String, String)>> = BTreeMap::new();
     let mut additions: BTreeMap<&str, Vec<Addition>> = BTreeMap::new();
     let mut biome_adds: Vec<AddFeatures> = Vec::new();
+    let mut creative: Vec<CreativeTab> = Vec::new();
+    // The mods' English names, for the creative search.
+    let mut names: BTreeMap<String, String> = BTreeMap::new();
     for m in mods {
         let declarations = format!("data/{}/horizon/", m.id);
+        let tab_files = format!("{declarations}creative_tab/");
         let mut reader = m.content.reader()?;
         for file in &m.content.files {
             let bytes = reader.read(file)?;
+            if let Some(name) = file
+                .strip_prefix(&tab_files)
+                .and_then(|n| n.strip_suffix(".json"))
+            {
+                let tab: TabFile =
+                    serde_json::from_slice(&bytes).map_err(|e| format!("{file}: {e}"))?;
+                creative.push(CreativeTab {
+                    id: format!("{}:{name}", m.id),
+                    file: tab,
+                });
+                continue;
+            }
+            if file.starts_with("assets/")
+                && file.ends_with("/lang/en_us.json")
+                && let Ok(map) = serde_json::from_slice::<BTreeMap<String, String>>(&bytes)
+            {
+                names.extend(map);
+            }
             let is_tag = file.starts_with("data/") && file.contains("/tags/");
             if is_tag && file.ends_with(".json") {
                 let doc: J = serde_json::from_slice(&bytes).map_err(|e| format!("{file}: {e}"))?;
@@ -1445,6 +1610,11 @@ pub fn build(base: &Path, mods: &[ContentMod], out: &Path) -> Result<Vec<String>
                 .map_err(|e| format!("{bundle}: {e}"))?;
         }
         overlay.write(bundle, &serde_json::to_vec(&doc)?)?;
+    }
+    if !creative.is_empty() && base.join(CREATIVE).exists() {
+        let mut doc = read_json(&base.join(CREATIVE))?;
+        creative_tabs(&mut doc, &creative, &known, &names, &mut warnings)?;
+        overlay.write(CREATIVE, &serde_json::to_vec(&doc)?)?;
     }
     // Biome modifiers, once the features and biome tags they name are in.
     if !biome_adds.is_empty() && base.join(BIOMES).exists() {

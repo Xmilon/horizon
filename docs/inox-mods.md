@@ -1,10 +1,10 @@
 # Inox mods (`.imod`)
 
-Inox is Horizon's built-in mod loader for **content**: blocks, items, tools and weapons, food, armour sets
-and ore generation. A mod is one `inox.toml` that declares them, plus the mod's textures and any vanilla
+Inox is Horizon's built-in mod loader for **content**: blocks, items, tool sets and weapons, food, armour
+sets, ore generation, tags and creative inventory tabs. A mod is one `inox.toml` that declares them, plus the mod's textures and any vanilla
 data files it wants (recipes, advancements...). The game reads it at start, writes the vanilla files a
 content mod would need (declarations, blockstates, models, item definitions, names, loot tables, tags,
-worldgen features, equipment assets), and registers everything through the same loader as `.hmod`
+worldgen features, equipment assets, creative tabs), and registers everything through the same loader as `.hmod`
 content mods ([mods.md](mods.md), [modpacks.md](modpacks.md)). No code runs and nothing is compiled: an
 `.imod` is as safe as a resource pack.
 
@@ -14,7 +14,9 @@ new when used, a new entity, a fluid) comes later; see [What comes next](#what-c
 - [Quick start](#quick-start)
 - [The file](#the-file)
 - [`inox.toml` reference](#inoxtoml-reference): [`[mod]`](#mod), [`[block.<name>]`](#blockname),
-  [`[item.<name>]`](#itemname), [`[ore.<name>]`](#orename), [`[armor.<name>]`](#armorname)
+  [`[item.<name>]`](#itemname), [`[ore.<name>]`](#orename), [`[armor.<name>]`](#armorname),
+  [`[tools.<name>]`](#toolsname), [`[tag.<registry>.<name>]`](#tagregistryname), [`[tab.<name>]`](#tabname)
+- [The creative inventory](#the-creative-inventory): tabs, pages, search
 - [What Inox writes](#what-inox-writes), and how your own files win or merge
 - [Textures and models](#textures-and-models), [armour textures](#armour-textures)
 - [Recipes, tags, loot and anything else](#recipes-tags-loot-and-anything-else)
@@ -91,8 +93,12 @@ scripts is fine).
 ## `inox.toml` reference
 
 Unknown keys are errors everywhere, so a typo fails the load instead of being silently ignored. Names
-(`<name>` in `[block.<name>]`, `[item.<name>]`, `[ore.<name>]`, `[armor.<name>]`) are `[a-z0-9_]`, 1 to 64
-characters.
+(`<name>` in `[block.<name>]`, `[item.<name>]`, `[ore.<name>]`, `[armor.<name>]`, `[tools.<name>]`,
+`[tab.<name>]`) are `[a-z0-9_]`, 1 to 64 characters.
+
+Wherever `inox.toml` names a block, item or tag (`repair`, `drops`, `[ore]`'s `block`, tag values, tab
+items, `creative_tabs`), a plain name means this mod's (`ruby_ingot` is `<id>:ruby_ingot`), an id with
+`:` means itself (`minecraft:stick`), and `#` marks a tag (`#c:ingots`).
 
 ### `[mod]`
 
@@ -130,6 +136,7 @@ The block's id is `<id>:<name>`.
 | `tool` | `pickaxe` \| `axe` \| `shovel` \| `hoe` | none | Adds it to `minecraft:mineable/<tool>`: that tool mines it fast. |
 | `tier` | `stone` \| `iron` \| `diamond` | none | Adds it to `minecraft:needs_<tier>_tool`. With `requires_tool` (an ore template has it), lower tiers break it without drops. |
 | `tags` | list of tag ids | none | Block tags it joins: `minecraft:beacon_base_blocks`, `c:ores`, `<id>:...`. Vanilla's, the convention `c:` ones and your own. |
+| `creative_tabs` | list of tab ids | none | Other creative tabs its item is also in, at their end: `minecraft:building_blocks`, `minecraft:natural_blocks`, another mod's or one of yours. It is always in the mod's own tab. |
 
 ### `[item.<name>]`
 
@@ -150,6 +157,7 @@ it).
 | `enchantability` | integer | template's | How well it enchants (`minecraft:enchantable`): iron tools 14, diamond 10, gold 22. |
 | `food` | table | none | Makes it edible: see below. |
 | `tags` | list of tag ids | none | Item tags it joins. A sword should join `minecraft:swords` (Sharpness, Looting and the like look for it); an ingot `c:ingots`. |
+| `creative_tabs` | list of tab ids | none | Other creative tabs it is also in: `minecraft:combat`, `minecraft:ingredients`, `minecraft:food_and_drinks`, `minecraft:tools_and_utilities`... |
 | `components` | table | none | Any other data component set or removed, in 26.3's data component patch form: `"minecraft:max_damage" = 900` sets one, `"!minecraft:repairable" = {}` removes one. Only component types some vanilla item has; not `max_stack_size` or `rarity` (use the keys above), nor one a key above already sets. |
 
 `food`:
@@ -233,11 +241,120 @@ draws it on players and armour stands.
 | `equip_sound` | sound id | `minecraft:item.armor.equip_iron` | Played when a piece is put on. |
 | `rarity` | string | template's | |
 | `pieces` | list | all four | Some of `helmet`, `chestplate`, `leggings`, `boots`. |
+| `creative_tabs` | list of tab ids | none | Other creative tabs the pieces are also in (`minecraft:combat`). |
 
 Each piece joins `minecraft:<slot>_armor` (`head_armor`, `chest_armor`, `leg_armor`, `foot_armor`: what
 Protection, Thorns and the like look for) and `minecraft:trimmable_armor`. Its textures:
 `assets/<id>/textures/item/<name>_<piece>.png` for the item, and the [armour textures](#armour-textures)
 for the body.
+
+### `[tools.<name>]`
+
+A tool set: `<id>:<name>_sword`, `_pickaxe`, `_axe`, `_shovel` and `_hoe`, each copying the vanilla
+tool of `tier` with the set's numbers. What a tool does on right click (an axe stripping logs, a hoe
+tilling) follows the vanilla item's id where the game ties it to one, as for any copy (see `[item]`). Its textures are `assets/<id>/textures/item/<name>_<tool>.png`; the tools are held like
+vanilla's (`handheld`).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `tier` | `wood` \| `stone` \| `iron` \| `gold` \| `diamond` \| `netherite` | required | What the tools can mine with drops (`minecraft:incorrect_for_<tier>_tool`), and the vanilla tools they copy. |
+| `durability` | integer | required | Uses before a tool breaks: wood 59, stone 131, iron 250, gold 32, diamond 1561, netherite 2031. |
+| `speed` | number | required | Mining speed on the blocks a tool is for: wood 2, stone 4, iron 6, diamond 8, netherite 9, gold 12. |
+| `damage` | number | required | The tier's attack damage bonus: wood and gold 0, stone 1, iron 2, diamond 3, netherite 4. |
+| `name` | string | `<name>` in title case | The set's name before each tool's: `Ruby` makes "Ruby Pickaxe". |
+| `repair` | item or `#`tag | the tier's | What repairs them. |
+| `enchantability` | integer | the tier's | Wood 15, stone 5, iron 14, gold 22, diamond 10, netherite 15. |
+| `rarity` | string | the tier's | |
+| `pieces` | list | all five | Some of `sword`, `pickaxe`, `axe`, `shovel`, `hoe`. |
+| `creative_tabs` | list of tab ids | none | Other tabs the tools are also in (`minecraft:tools_and_utilities`, `minecraft:combat`). |
+
+From `damage`, the tools' attack is vanilla's: a sword deals 4 + `damage` at 1.6 attacks a second, a
+pickaxe 2 + `damage` at 1.2, an axe 7 + `damage` at 0.9, a shovel 2.5 + `damage` at 1.0, and a hoe 1 at
+1 + `damage` (at most 4). Each tool joins its vanilla tag (`minecraft:swords`, `pickaxes`, `axes`,
+`shovels`, `hoes`), so the enchantments for it apply. A single tool with other numbers is an
+`[item]` copying a vanilla one, with `durability`, `attack_damage`, `attack_speed` and a
+`minecraft:tool` component.
+
+```toml
+[tools.ruby]
+tier = "iron"
+durability = 900
+speed = 7.0
+damage = 2.5
+repair = "ruby_ingot"
+creative_tabs = ["minecraft:tools_and_utilities"]
+```
+
+### `[tag.<registry>.<name>]`
+
+A tag of any registry: `block`, `item`, `fluid`, `entity_type`, `worldgen/biome`, `damage_type`,
+`enchantment`... `<name>` is a tag of this mod by name (`[tag.item.gems]` is `<id>:gems`) or any tag by
+id, quoted (`[tag.item."c:gems/ruby"]`, `[tag.block."minecraft:beacon_base_blocks"]`). A registry with a
+`/` is quoted too (`[tag."worldgen/biome".ruby_lands]`).
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `values` | list | required | What it holds: names of this mod's things, ids, and `#` tags (whose values it includes). |
+| `replace` | bool | `false` | Drop what vanilla and the mods loaded before put in it, as a data pack's `"replace": true`. |
+
+```toml
+[tag.item."c:ingots/ruby"]
+values = ["ruby_ingot"]
+
+[tag.item.ruby_gear]                  # ruby:ruby_gear
+values = ["ruby_sword", "ruby_helmet", "#ruby:ruby_tools"]
+```
+
+Tags merge as a data pack's do: every mod's values for one tag come after vanilla's, in load order
+([mods.md](mods.md)). The `tags` key of a block or item is a shorthand for adding that one thing to a
+tag; `[tag]` holds many, makes new tags, and reaches the other registries. Tags may be added to only in
+the mod's own namespaces, `minecraft` and `c` (the fence of [mods.md](mods.md)). A block or item tag
+value nobody registers is dropped, so the rest of the tag still loads.
+
+### `[tab.<name>]`
+
+A creative inventory tab of the mod's own, `<id>:<name>`. A mod that declares none gets one anyway,
+named after the mod and holding all its items (blocks first, then items, armour and tools), so its
+things are always in the creative inventory and its search.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `name` | string | the mod's name | The tab's title. |
+| `icon` | item | its first item | The item on its button. |
+| `items` | list | every item of the mod | What it holds, in order: this mod's items by name, or any item by id. |
+
+```toml
+[tab.ruby]
+name = "Ruby"
+icon = "ruby_ingot"
+items = ["ruby_ore", "ruby_block", "ruby_ingot", "ruby_sword"]
+```
+
+## The creative inventory
+
+Vanilla's tabs fill all fourteen places round the creative inventory, so content mods' tabs go on
+**pages** after vanilla's, as NeoForge puts them: arrows above the tabs turn the page, with
+"page / pages" between them, eleven mod tabs a page (the top row's first five places and the bottom
+row's first six), in the order the mods load and then the order of their tabs. The saved toolbars,
+search and inventory tabs are on every page. A controller's tab buttons go through every page's tabs.
+
+Every item in a mod's tabs is also in the search tab, found by its English name. `creative_tabs` puts an
+item in vanilla's tabs (or another mod's) as well, after their own items.
+
+A `.hmod` (or an `.imod` writing its own) declares tabs with files in `data/<id>/horizon/creative_tab/`:
+
+```json
+// data/<id>/horizon/creative_tab/<name>.json: the tab <id>:<name>
+{ "title": "Ruby", "icon": "ruby:ruby_ingot", "items": ["ruby:ruby_ore", "ruby:ruby_ingot"] }
+```
+
+```json
+// data/<id>/horizon/creative_tab/<anything>.json: items for another tab
+{ "horizon:add_to": "minecraft:combat", "items": ["ruby:ruby_sword"] }
+```
+
+An item nobody has is left out of a tab with a warning in the log, as is an addition to a tab nobody
+has.
 
 ## What Inox writes
 
@@ -259,6 +376,10 @@ For each declaration, the files a hand-made content mod would hold. `<id>` is th
 | ore | `data/<id>/worldgen/configured_feature/<n>.json` | `minecraft:ore`: `size`, `discard_chance_on_air_exposure`, the targets |
 | | `data/<id>/worldgen/placed_feature/<n>.json` | `count`, `in_square`, `height_range` (`uniform` or `trapezoid`), `biome` |
 | | `data/<id>/neoforge/biome_modifier/<n>.json` | `neoforge:add_features`, step `underground_ores` |
+| tool set | the item files above for each tool | template `minecraft:<tier>_<tool>`; `max_damage`, `attribute_modifiers` (attack damage and speed), `minecraft:tool` (fast on `mineable/<tool>`, no drops on `incorrect_for_<tier>_tool`), `repairable`, `enchantable`; tag `minecraft:<tool>s` |
+| `[tag]` | `data/<ns>/tags/<registry>/<path>.json` | values (and `replace`) |
+| `[tab]`, or none | `data/<id>/horizon/creative_tab/<name>.json` | `title`, `icon`, `items` |
+| `creative_tabs` | `data/<id>/horizon/creative_tab/add_to_<ns>_<path>.json` | `horizon:add_to` and the items for that tab |
 | armour set | the item files above for each piece | template `minecraft:iron_<piece>`; `max_damage`, `attribute_modifiers` (`armor`, `armor_toughness`, `knockback_resistance`), `equippable` (slot, `asset_id` `<id>:<n>`, sound), `repairable`, `enchantable` |
 | | `assets/<id>/equipment/<n>.json` | layers `humanoid` and `humanoid_leggings` → texture `<id>:<n>` |
 | every block and item | `assets/<id>/lang/en_us.json` | `block.<id>.<n>` / `item.<id>.<n>` = name |
@@ -388,14 +509,20 @@ so the game needs no Inox-specific code:
    components with the mod's patch, tags merge, assets and data join the root, features join
    `worldgen/features.json` and `worldgen/placed_features.json`. Then `mod_content::add_features`
    applies every mod's biome modifiers to `worldgen/biomes.json`, once the features and biome tags are in.
-5. Armour: `ArmorStandAssets::load` (`game/armor_stands.rs`) reads the equipment assets of `minecraft`
+5. Creative tabs: `mod_content::creative_tabs` adds each mod tab file to `creative-inventory.json`
+   with its `page`, `row` and `column`, appends the `horizon:add_to` items to their tabs, and puts every
+   tab item in the search tab (its `items`, `lines` and `tags` kept in step). `creative.rs` reads `page`
+   (`Tab::page`); `Creative::shows`, `show_page` and `page_button_at` hide the other pages' tabs and turn
+   pages; `game.rs` draws the arrows (`draw_creative_pages`) and clicks them (`click_creative`).
+6. Armour: `ArmorStandAssets::load` (`game/armor_stands.rs`) reads the equipment assets of `minecraft`
    and of every content mod's namespace, and the GUI atlas (`hud.rs`, `mod_equipment_sprites`) packs the
    mods' `textures/entity/equipment/` as `<ns>:entity/equipment/...` sprites, so the layers draw.
 
 `cargo horizon-mod new --template inox`, `build` (writes `target/horizon-mod/<id>.imod` with
 `inox.toml` and your own files; generated files are made again by the game) and `run` handle Inox mods.
-Tests: `cargo test -p horizon-mods imod`, `cargo test -p cargo-horizon-mod`, and
-`cargo test -p horizon-client --lib mod_content::tests::biome_modifiers`.
+Tests: `cargo test -p horizon-mods imod`, `cargo test -p cargo-horizon-mod`,
+`cargo test -p horizon-client --lib mod_content::tests` (biome modifiers, creative tabs) and
+`cargo test -p horizon-client --lib creative::tests::content_mods_tabs`.
 
 ## Rules and limits
 
@@ -426,6 +553,10 @@ The load fails with the first problem, in Options > Mods and the log:
 | `drops itself but has no item (item = false): set drops` | `drops = "none"` or an item id. |
 | `tool "sword" is pickaxe, axe, shovel or hoe` | |
 | `set attack_damage and attack_speed together` | Write both. |
+| `tools ...: tier "copper" is wood, stone, iron, gold, diamond or netherite` | |
+| `tools ruby makes ruby_axe, which is also declared` | Rename the set or the item. |
+| `tag registry "Item" is a registry name` | Lowercase registry names: `item`, `worldgen/biome`. |
+| `creative tab ruby:ruby: ruby:x are no items; left out` (log) | A tab names an item nobody has. |
 | `component minecraft:max_damage is also set by one of its keys` | Use the key (`durability`) or the component, not both. |
 | `ore gems:ruby_ore: ruby_ore is not a block of this mod` | Declare the block, or give a full id. |
 | `ore ...: size is 1 to 64`, `count is 1 or more and min_y at most max_y` | Range checks. |
@@ -439,7 +570,8 @@ The load fails with the first problem, in Options > Mods and the log:
 
 The Ruby mod (in `Horizon Minecraft Mods/ruby/`, beside the fork) has an ore with a deepslate variant
 that generates in the overworld, ingots smelted from it, a storage block, a sword, a full armour set and
-a custom food, the Ruby Apple:
+a custom food, the Ruby Apple, a creative tab of its own, places in vanilla's tabs and the convention
+tags:
 
 ```text
 ruby/
@@ -454,11 +586,17 @@ ruby/
 ```
 
 ```toml
+# Ruby: an Inox mod (docs/inox-mods.md in the Horizon fork).
+# Ore in the overworld, smelted into ingots, a storage block, a sword, a full
+# armour set and the Ruby Apple. Recipes are in data/ruby/recipe/.
 [mod]
 id = "ruby"
 name = "Ruby"
 version = "1.0.0"
 description = "Ruby ore, ingots, a ruby block, sword and armour, and the Ruby Apple."
+authors = ["Xmilon"]
+
+# --- Blocks -------------------------------------------------------------
 
 [block.ruby_ore]
 template = "minecraft:iron_ore"
@@ -467,6 +605,7 @@ hardness = 3.5
 tool = "pickaxe"
 tier = "iron"
 tags = ["c:ores"]
+creative_tabs = ["minecraft:natural_blocks"]
 
 [block.deepslate_ruby_ore]
 template = "minecraft:deepslate_iron_ore"
@@ -476,6 +615,7 @@ sounds = "minecraft:deepslate"
 tool = "pickaxe"
 tier = "iron"
 tags = ["c:ores"]
+creative_tabs = ["minecraft:natural_blocks"]
 
 [block.ruby_block]
 template = "minecraft:iron_block"
@@ -486,7 +626,11 @@ sounds = "minecraft:amethyst_block"
 tool = "pickaxe"
 tier = "iron"
 tags = ["minecraft:beacon_base_blocks"]
+creative_tabs = ["minecraft:building_blocks"]
 
+# --- Ore generation -------------------------------------------------------
+
+# Between iron and diamond: a little rarer than iron, mostly around Y -8.
 [ore.ruby_ore]
 block = "ruby_ore"
 deepslate_block = "deepslate_ruby_ore"
@@ -497,11 +641,14 @@ max_y = 40
 shape = "triangle"
 discard_on_air = 0.3
 
+# --- Items ----------------------------------------------------------------
+
 [item.ruby_ingot]
 template = "minecraft:iron_ingot"
 name = "Ruby Ingot"
 rarity = "uncommon"
 tags = ["c:ingots", "minecraft:beacon_payment_items"]
+creative_tabs = ["minecraft:ingredients"]
 
 [item.ruby_sword]
 template = "minecraft:diamond_sword"
@@ -513,7 +660,9 @@ attack_speed = 1.6
 repair = "ruby:ruby_ingot"
 enchantability = 12
 tags = ["minecraft:swords"]
+creative_tabs = ["minecraft:combat"]
 
+# The custom item: a golden-apple-like snack that heals and strengthens.
 [item.ruby_apple]
 template = "minecraft:golden_apple"
 name = "Ruby Apple"
@@ -523,7 +672,11 @@ food = { nutrition = 6, saturation = 12.0, always_eat = true, effects = [
   { id = "minecraft:strength", seconds = 30 },
   { id = "minecraft:fire_resistance", seconds = 60 },
 ] }
+creative_tabs = ["minecraft:food_and_drinks"]
 
+# --- Armour ---------------------------------------------------------------
+
+# Between iron (15, [2, 6, 5, 2]) and diamond (33, [3, 8, 6, 3]).
 [armor.ruby]
 name = "Ruby"
 durability = 25
@@ -532,18 +685,40 @@ toughness = 1.0
 repair = "ruby:ruby_ingot"
 enchantability = 12
 rarity = "uncommon"
+creative_tabs = ["minecraft:combat"]
+
+# --- Creative tab and tags -----------------------------------------------------
+
+# Its own tab, after vanilla's (without [tab], Inox makes one with every item).
+[tab.ruby]
+name = "Ruby"
+icon = "ruby_ingot"
+items = ["ruby_ore", "deepslate_ruby_ore", "ruby_block", "ruby_ingot", "ruby_sword",
+  "ruby_helmet", "ruby_chestplate", "ruby_leggings", "ruby_boots", "ruby_apple"]
+
+# The convention tags other mods look for (as on NeoForge and Fabric).
+[tag.item."c:ingots/ruby"]
+values = ["ruby_ingot"]
+
+[tag.block."c:ores/ruby"]
+values = ["ruby_ore", "deepslate_ruby_ore"]
+
+[tag.block."c:storage_blocks/ruby"]
+values = ["ruby_block"]
 ```
 
-Try it: `/give @s ruby:ruby_sword`, `/give @s ruby:ruby_chestplate`, `/give @s ruby:ruby_apple`, or dig
-around Y -8 in a new world for ruby ore. Smelt the ore for ingots.
+Try it: open the creative inventory and turn to page 2 for the Ruby tab, search "ruby", or
+`/give @s ruby:ruby_sword`; dig around Y -8 in a new world for ruby ore and smelt it for ingots.
 
 ## What comes next
 
 Inox is meant to grow into a full loader, step by step, each step built into the game rather than
 patched in:
 
-1. **Now:** blocks, items, tools, food, armour and ore generation declared in data (this page).
-2. More worldgen shorthands (trees, flowers, nether and end ores), recipe shorthands, mob armour.
+1. **Now:** blocks, items, tool sets, food, armour, ore generation, tags and creative tabs declared in
+   data (this page).
+2. More worldgen shorthands (trees, flowers, nether and end ores), data generation (recipes made from
+   the declarations), mob armour.
 3. Behaviour hooks for declared blocks and items (use, break, attack, place), called by the game itself.
 4. Code in `.imod`s: a sandboxed runtime again (the removed WebAssembly runtime is the starting point),
    with a registry API instead of templates.
