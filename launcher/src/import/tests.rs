@@ -148,6 +148,13 @@ fn an_export_comes_back_as_an_instance_and_nothing_escapes_its_folder() {
     );
     put(&home.join("saves/Base/region/r.0.0.mca"), b"region");
     put(&home.join("saves/Base/level.dat"), b"not nbt");
+    for f in [
+        "horizon-mods/ruby.imod",
+        "horizon-mods/ruby_folder/inox.toml",
+        "horizon-mods-disabled/emerald.imod",
+    ] {
+        put(&home.join(f), b"mod bytes");
+    }
     let made = dir.join("instances");
     for format in [Format::Mrpack, Format::Zip] {
         let out = dir.join(format!("Shared.{}", format.extension()));
@@ -157,6 +164,9 @@ fn an_export_comes_back_as_an_instance_and_nothing_escapes_its_folder() {
             "options.txt",
             "resourcepacks/Glass.zip",
             "horizon-mods/coords/horizon-mod.toml",
+            "horizon-mods/ruby.imod",
+            "horizon-mods/ruby_folder/inox.toml",
+            "horizon-mods-disabled/emerald.imod",
             "saves/Base/region/r.0.0.mca",
         ] {
             assert_eq!(

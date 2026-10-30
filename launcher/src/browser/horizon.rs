@@ -523,7 +523,15 @@ fn trust_label(trust: Trust) -> &'static str {
 /// The game folder path a registry project's file goes to.
 fn relative(kind: Kind, id: &str, file_name: &str) -> Result<String, String> {
     match kind {
-        Kind::Mod => Ok(format!("{}/{id}.hmod", java::MODS_DIR)),
+        Kind::Mod => Ok(format!(
+            "{}/{id}.{}",
+            java::MODS_DIR,
+            if file_name.ends_with(".imod") {
+                "imod"
+            } else {
+                "hmod"
+            }
+        )),
         Kind::ResourcePack => Ok(format!("resourcepacks/{file_name}")),
         Kind::Shader => Ok(format!("shaderpacks/{file_name}")),
         Kind::Modpack => Err("A modpack installs as its own profile (pack::install).".into()),
@@ -630,7 +638,16 @@ fn install_version(
     if old.as_ref().is_some_and(|o| o.version == v.version) {
         return Ok(old.expect("checked"));
     }
-    let target = home.join(&relative);
+    let enabled = old.as_ref().is_none_or(|_| java::is_enabled(home, &p.id));
+    let target = if !native && project.kind == Kind::Mod && !enabled {
+        home.join(crate::backend::DISABLED_MODS).join(
+            Path::new(&relative)
+                .file_name()
+                .ok_or("Mod has no file name")?,
+        )
+    } else {
+        home.join(&relative)
+    };
     let taken_by = list.entries.iter().find(|e| !ours(e) && e.file == relative);
     let folder_mod = home.join(java::MODS_DIR).join(&p.id);
     if let Some(other) = taken_by {
@@ -675,10 +692,27 @@ fn install_version(
         .as_ref()
         .filter(|o| o.file != relative && !stays(native, &o.file))
     {
-        let _ = fs::remove_file(home.join(&old.file));
+        let old_path = if !enabled && old.file.starts_with("horizon-mods/") {
+            home.join(crate::backend::DISABLED_MODS).join(
+                Path::new(&old.file)
+                    .file_name()
+                    .ok_or("Old mod has no file name")?,
+            )
+        } else {
+            home.join(&old.file)
+        };
+        fs::remove_file(&old_path)
+            .or_else(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| format!("{}: {e}", old_path.display()))?;
     }
     if project.kind == Kind::Mod {
-        java::set_enabled(home, &p.id, true)?;
+        java::set_enabled(home, &p.id, enabled)?;
     }
     let entry = installed::Entry {
         source: SourceId::Horizon,
@@ -709,7 +743,7 @@ fn install_version(
 /// keeps its `.hmod` until the player builds the game with the new version. The game runs it
 /// meanwhile and skips it once the native one is built in; removing the mod removes both.
 fn stays(native: bool, old: &str) -> bool {
-    native && old.ends_with(".hmod")
+    native && (old.ends_with(".hmod") || old.ends_with(".imod"))
 }
 
 /// The mod id of an installed mod (`horizon-mods/<id>`, `horizon-mods/<id>.hmod` or
@@ -719,7 +753,11 @@ pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
         return rest.strip_prefix('/')?.strip_suffix(".hnmod");
     }
     let rest = entry.file.strip_prefix(java::MODS_DIR)?.strip_prefix('/')?;
-    Some(rest.strip_suffix(".hmod").unwrap_or(rest))
+    Some(
+        rest.strip_suffix(".hmod")
+            .or_else(|| rest.strip_suffix(".imod"))
+            .unwrap_or(rest),
+    )
 }
 
 /// Turns the registry's files that were taken down off in the game folder `home`, and says

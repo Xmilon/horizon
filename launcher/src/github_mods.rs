@@ -265,6 +265,7 @@ fn assets(release: &serde_json::Value, link: &Link) -> (Option<Asset>, Option<St
         })
     });
     let hmod = named(".hmod")
+        .chain(named(".imod"))
         .find_map(|a| a["name"].as_str().map(str::to_owned))
         .filter(|_| hnmod.is_none());
     (hnmod, hmod)
@@ -553,7 +554,7 @@ pub fn fetch(found: &Resolved) -> Result<Vec<Packed>, String> {
     if mods.is_empty() {
         return Err(match &found.content_only {
             Some(file) => format!(
-                "{} ships {file}, a content mod: installing .hmod files from GitHub is not supported yet.",
+                "{} ships {file}, a content mod: installing content packages from GitHub is not supported yet.",
                 found.label()
             ),
             None => format!(

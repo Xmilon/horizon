@@ -60,6 +60,7 @@ fn native_registry_entries_are_mods_that_say_they_run_native_code() {
         Some("veinminer")
     );
     assert_eq!(mod_id(&entry("horizon-mods/zoom.hmod")), Some("zoom"));
+    assert_eq!(mod_id(&entry("horizon-mods/ruby.imod")), Some("ruby"));
 }
 
 #[test]
@@ -123,8 +124,7 @@ fn installs_checked_turns_on_and_removes() {
     assert_eq!(done[0].verdict.as_deref(), Some("Verified"));
     assert!(done[0].checksum.starts_with("SHA-256:e1135345"));
     assert!(home.join("horizon-mods/coords_hud.hmod").is_file());
-    let list = fs::read_to_string(home.join("horizon-mods.txt")).unwrap();
-    assert_eq!(list, "mod.coords_hud:true\n");
+    assert!(java::is_enabled(&home, "coords_hud"));
     assert_eq!(
         fs::read_dir(home.join("mod-browser/downloads"))
             .unwrap()
@@ -144,10 +144,8 @@ fn installs_checked_turns_on_and_removes() {
     });
     let said = turn_off_revoked(&revoked, &home);
     assert_eq!(said, ["Coordinates HUD was taken down and is off: Test."]);
-    assert_eq!(
-        fs::read_to_string(home.join("horizon-mods.txt")).unwrap(),
-        ""
-    );
+    assert!(!java::is_enabled(&home, "coords_hud"));
+    assert!(home.join("horizon-mods-disabled/coords_hud.hmod").is_file());
 
     installed::remove(&home, "coords_hud").unwrap();
     assert!(!home.join("horizon-mods/coords_hud.hmod").exists());
@@ -158,6 +156,7 @@ fn installs_checked_turns_on_and_removes() {
 #[test]
 fn a_mod_that_turned_native_keeps_its_hmod_until_removed() {
     assert!(stays(true, "horizon-mods/coords_hud.hmod"));
+    assert!(stays(true, "horizon-mods/ruby.imod"));
     assert!(!stays(false, "horizon-mods/coords_hud.hmod"));
     assert!(!stays(true, "horizon-native-mods/coords_hud.hnmod"));
     let index = sample();
@@ -169,7 +168,14 @@ fn a_mod_that_turned_native_keeps_its_hmod_until_removed() {
     list.save(&home).unwrap();
     fs::create_dir_all(home.join("horizon-native-mods")).unwrap();
     fs::write(home.join("horizon-native-mods/coords_hud.hnmod"), "").unwrap();
+    fs::create_dir_all(home.join(crate::backend::DISABLED_MODS)).unwrap();
+    fs::write(
+        home.join("horizon-mods-disabled/coords_hud.imod"),
+        "old content",
+    )
+    .unwrap();
     installed::remove(&home, "coords_hud").unwrap();
+    assert!(!home.join("horizon-mods-disabled/coords_hud.imod").exists());
     assert!(!home.join("horizon-native-mods/coords_hud.hnmod").exists());
     assert!(!home.join("horizon-mods/coords_hud.hmod").exists());
     fs::remove_dir_all(&home).unwrap();
@@ -331,4 +337,51 @@ fn ratings_keep_only_what_is_well_formed() {
         rate_url("zoom"),
         "https://playhorizon.dev/api/mods/auth/login?back=/mods/zoom"
     );
+}
+
+#[test]
+fn inox_registry_files_keep_their_extension_and_mod_id() {
+    assert_eq!(
+        relative(Kind::Mod, "ruby", "ruby-1.imod").unwrap(),
+        "horizon-mods/ruby.imod"
+    );
+}
+
+#[test]
+fn an_inox_registry_archive_is_checked_installed_and_disabled() {
+    let home = scratch("inox-registry");
+    let file = home.join("coords_hud-0.1.0.imod");
+    fs::write(
+        &file,
+        horizon_mods::imod::write(
+            "[mod]\nid = \"coords_hud\"\nname = \"Coordinates\"\nversion = \"0.1.0\"\n",
+            &[],
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let mut index = sample();
+    index.projects.truncate(1);
+    let p = &mut index.projects[0];
+    p.key = None;
+    let v = &mut p.versions[0];
+    v.api = "0.2".into();
+    v.side = Some(horizon_mods::Side::Both);
+    v.api_level = None;
+    v.capabilities = vec![horizon_mods::Capability::Registries];
+    v.file.name = "coords_hud-0.1.0.imod".into();
+    v.file.url = "https://example.org/coords_hud-0.1.0.imod".into();
+    v.file.size = fs::metadata(&file).unwrap().len();
+    v.file.sha256 = index::sha256_file(&file).unwrap();
+    v.file.signature = None;
+    let mut index = Index::parse(&serde_json::to_string(&index).unwrap()).unwrap();
+    index.projects[0].versions[0].file.url = format!("file://{}", file.display());
+    let done = install_from(&index, true, None, &hud(&index), &home, &|_, _| {}).unwrap();
+    assert_eq!(done[0].file, "horizon-mods/coords_hud.imod");
+    assert!(java::is_enabled(&home, "coords_hud"));
+    java::set_enabled(&home, "coords_hud", false).unwrap();
+    assert!(home.join("horizon-mods-disabled/coords_hud.imod").is_file());
+    installed::remove(&home, "coords_hud").unwrap();
+    assert!(!home.join("horizon-mods-disabled/coords_hud.imod").exists());
+    fs::remove_dir_all(home).unwrap();
 }

@@ -19,9 +19,14 @@ pub struct ModList {
 }
 
 /// One installed mod as the Mods page shows it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Installed {
     pub id: String,
+    pub version: String,
+    pub authors: Vec<String>,
+    pub file: String,
+    pub kind: String,
+    pub additions: Vec<String>,
     /// `Name 1.0` (the file name when the manifest is unreadable).
     pub title: String,
     pub description: String,
@@ -87,13 +92,44 @@ impl ModList {
         if self.keys.is_empty() && !path.exists() {
             return;
         }
-        let _ = fs::write(path, self.serialize());
+        // The launcher owns native build selection; saving game keys must preserve it.
+        let selection: String = fs::read_to_string(&path)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.trim_start().starts_with("mod."))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        let _ = fs::write(path, selection + &self.serialize());
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_keys_preserves_launcher_build_selection_without_exposing_switches() {
+        let dir =
+            std::env::temp_dir().join(format!("horizon-native-selection-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(FILE),
+            "mod.native:true\nmod.other:false\nkey.native.action:key.keyboard.x\n",
+        )
+        .unwrap();
+        let mut list = ModList::load(&dir);
+        list.keys
+            .entry("native".into())
+            .or_default()
+            .insert("action".into(), "key.keyboard.z".into());
+        list.save(&dir);
+        assert_eq!(
+            fs::read_to_string(dir.join(FILE)).unwrap(),
+            "mod.native:true\nmod.other:false\nkey.native.action:key.keyboard.z\n"
+        );
+        assert!(!list.serialize().contains("mod."));
+        fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn keeps_only_the_keys_players_chose() {

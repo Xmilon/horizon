@@ -92,6 +92,7 @@ impl Game<'_> {
         let mut paths = horizon_mods::find(&dir);
         paths.retain(|p| !self.mods.dev.contains(p));
         paths.extend(self.mods.dev.iter().cloned());
+        let mut owners: Vec<(String, Vec<String>)> = Vec::new();
         self.settings.mods.installed = paths
             .iter()
             .map(|path| {
@@ -103,24 +104,123 @@ impl Game<'_> {
                             id: String::new(),
                             title: file.into_owned(),
                             description: String::new(),
+                            file: path.display().to_string(),
                             problem: Some(format!("Can't be read: {e}")),
                             dev: false,
                             native: None,
+                            ..Default::default()
                         };
                     }
                 };
                 let m = &package.manifest;
-                let problem = package.wasm.is_some().then(|| STOPPED.to_owned());
+                let mut problem = package.wasm.is_some().then(|| STOPPED.to_owned());
+                let mut additions = Vec::new();
+                if m.capabilities
+                    .contains(&horizon_mods::Capability::Registries)
+                {
+                    match horizon_mods::Content::read(path, m) {
+                        Ok(c) => {
+                            if owners.iter().any(|(id, _)| id == &m.id) {
+                                problem = Some(format!("Duplicate mod id: {}", m.id));
+                            } else if let Some(e) = owners.iter().find_map(|(id, namespaces)| {
+                                horizon_mods::content::clash(
+                                    (id, namespaces),
+                                    (&m.id, &c.namespaces),
+                                )
+                            }) {
+                                problem = Some(e);
+                            } else {
+                                owners.push((m.id.clone(), c.namespaces.clone()));
+                            }
+
+                            additions.push(format!(
+                                "Blocks ({}): {}",
+                                c.blocks.len(),
+                                c.blocks
+                                    .iter()
+                                    .map(|b| b.id.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                            additions.push(format!(
+                                "Items ({}): {}",
+                                c.items.len(),
+                                c.items
+                                    .iter()
+                                    .map(|i| i.id.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ));
+                            for (label, marker) in
+                                [("Tags", "/tags/"), ("Tabs", "/horizon/creative_tab/")]
+                            {
+                                let files: Vec<_> = c
+                                    .files
+                                    .iter()
+                                    .filter(|f| f.starts_with("data/") && f.contains(marker))
+                                    .cloned()
+                                    .collect();
+                                additions.push(format!(
+                                    "{label} ({}): {}",
+                                    files.len(),
+                                    files.join(", ")
+                                ));
+                            }
+                        }
+                        Err(e) => problem = Some(e),
+                    }
+                }
                 Installed {
                     id: m.id.clone(),
                     title: format!("{} {}", m.name, m.version),
                     description: m.description.clone(),
+                    version: m.version.clone(),
+                    authors: m.authors.clone(),
+                    file: path.display().to_string(),
+                    kind: if path.extension().is_some_and(|e| e == "imod")
+                        || path.join("inox.toml").is_file()
+                    {
+                        "Inox"
+                    } else {
+                        "Content"
+                    }
+                    .into(),
+                    additions,
                     problem,
                     dev: self.mods.dev.contains(path),
                     native: None,
                 }
             })
             .collect();
+        for (id, title, version, authors, description) in [
+            (
+                "minecraft",
+                "Minecraft",
+                horizon_core::version::VERSION_ID,
+                "Mojang Studios",
+                "Minecraft: Java Edition",
+            ),
+            (
+                "horizon",
+                "Horizon",
+                env!("CARGO_PKG_VERSION"),
+                "Horizon contributors",
+                "Minecraft rewritten in Rust",
+            ),
+        ] {
+            self.settings.mods.installed.push(Installed {
+                id: id.into(),
+                title: title.into(),
+                version: version.into(),
+                authors: vec![authors.into()],
+                description: description.into(),
+                kind: "Built-in".into(),
+                file: std::env::current_exe()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+                ..Default::default()
+            });
+        }
         // A mod with a native version built in says so instead, and isn't news.
         self.list_native_mods();
         let installed = &self.settings.mods.installed;

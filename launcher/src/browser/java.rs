@@ -110,8 +110,17 @@ pub fn check_project(
     Ok((version, check))
 }
 
-/// Whether mod `id` is on in `horizon-mods.txt`.
+/// Content mods load from the active folder; native mods use the build selection.
 pub fn is_enabled(home: &Path, id: &str) -> bool {
+    if let Some(m) = crate::backend::local_mods(home).iter().find(|m| {
+        m.id == id
+            && !home
+                .join(crate::native_mods::INSTALLED)
+                .join(format!("{id}.hnmod"))
+                .exists()
+    }) {
+        return m.enabled;
+    }
     let key = format!("mod.{id}");
     fs::read_to_string(home.join(MODS_LIST))
         .unwrap_or_default()
@@ -120,8 +129,16 @@ pub fn is_enabled(home: &Path, id: &str) -> bool {
         .any(|(k, v)| k.trim() == key && v.trim() == "true")
 }
 
-/// Turns mod `id` on (or off) in `horizon-mods.txt`, keeping the other lines.
+/// Moves content mods between folders; native mods keep their build-selection lines.
 pub fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
+    if !home
+        .join(crate::native_mods::INSTALLED)
+        .join(format!("{id}.hnmod"))
+        .exists()
+        && crate::backend::set_local_mod_enabled(home, id, on)?
+    {
+        return Ok(());
+    }
     let path = home.join(MODS_LIST);
     let text = fs::read_to_string(&path).unwrap_or_default();
     let key = format!("mod.{id}");
@@ -291,6 +308,9 @@ pub fn remove(home: &Path, entry: &Entry) -> Result<(), String> {
     let Some(id) = entry.file.strip_prefix("horizon-mods/") else {
         return Err(format!("{} isn't in {MODS_DIR}/.", entry.file));
     };
+    if crate::backend::local_mods(home).iter().any(|m| m.id == id) {
+        return crate::backend::remove_local_mod(home, id);
+    }
     match fs::remove_dir_all(home.join(&entry.file)) {
         Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}

@@ -269,7 +269,13 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
         .lookup(name)
         .cloned()
         .ok_or_else(|| format!("{name} wasn't installed by the browser."))?;
-    if entry.kind == Kind::Mod && entry.source != SourceId::Horizon {
+    if entry.kind == Kind::Mod
+        && entry.file.starts_with("horizon-mods/")
+        && super::horizon::mod_id(&entry)
+            .is_some_and(|id| crate::backend::local_mods(home).iter().any(|m| m.id == id))
+    {
+        crate::backend::remove_local_mod(home, super::horizon::mod_id(&entry).expect("checked"))?;
+    } else if entry.kind == Kind::Mod && entry.source != SourceId::Horizon {
         super::java::remove(home, &entry)?;
     } else {
         match fs::remove_file(home.join(&entry.file)) {
@@ -281,7 +287,20 @@ pub fn remove(home: &Path, name: &str) -> Result<Entry, String> {
     if let Some(id) = super::horizon::mod_id(&entry).filter(|_| entry.source == SourceId::Horizon) {
         // The `.hmod` a mod that turned native left behind (horizon::install_version).
         if entry.file.ends_with(".hnmod") {
-            let _ = fs::remove_file(home.join(super::java::MODS_DIR).join(format!("{id}.hmod")));
+            for dir in [super::java::MODS_DIR, crate::backend::DISABLED_MODS] {
+                for ext in ["hmod", "imod"] {
+                    let path = home.join(dir).join(format!("{id}.{ext}"));
+                    fs::remove_file(&path)
+                        .or_else(|e| {
+                            if e.kind() == std::io::ErrorKind::NotFound {
+                                Ok(())
+                            } else {
+                                Err(e)
+                            }
+                        })
+                        .map_err(|e| format!("{}: {e}", path.display()))?;
+                }
+            }
         }
         super::java::set_enabled(home, id, false)?;
     }

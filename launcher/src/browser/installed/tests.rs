@@ -294,10 +294,7 @@ fn java_mods_are_ported_turned_on_refused_on_clashes_and_removed() {
     );
     assert!(entry.namespaces.contains(&"ruby".to_owned()));
     assert!(home.join("horizon-mods/ruby/horizon-mod.toml").is_file());
-    assert_eq!(
-        fs::read_to_string(home.join("horizon-mods.txt")).unwrap(),
-        "mod.ruby:true\n"
-    );
+    assert!(super::super::java::is_enabled(&home, "ruby"));
     // The jar isn't kept, its check is.
     assert!(!home
         .join("mod-browser/checks-1/.downloads/ruby-1.zip")
@@ -310,10 +307,7 @@ fn java_mods_are_ported_turned_on_refused_on_clashes_and_removed() {
     let removed = remove(&home, "ruby").unwrap();
     assert_eq!(removed.kind, Kind::Mod);
     assert!(!home.join("horizon-mods/ruby").exists());
-    assert_eq!(
-        fs::read_to_string(home.join("horizon-mods.txt")).unwrap(),
-        ""
-    );
+    assert!(!super::super::java::is_enabled(&home, "ruby"));
     fs::remove_dir_all(&home).unwrap();
 }
 

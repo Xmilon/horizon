@@ -1,6 +1,6 @@
 # Horizon mods
 
-Two kinds of mod run in Horizon:
+Three kinds of mod run in Horizon:
 
 | Kind | File | What it is | Where it runs |
 |---|---|---|---|
@@ -20,11 +20,11 @@ A mod in the folder is **on**: there is no switch in the game, a mod is installe
    game folder (the one holding `options.txt`): a content mod's `.hmod` or an Inox mod's `.imod` (or a folder holding
    `horizon-mod.toml` or `inox.toml`) in `horizon-mods/`. Native mods go in `horizon-native-mods/`, and the launcher builds them
    ([native-mods.md](native-mods.md)).
-2. Start the game: every mod there loads. Options > **Mods** lists them (their description in each row's tooltip),
-   and a native mod's settings page.
-3. To stop using a mod, take its file out of the folder and restart: a content mod's blocks and items load once, when
-   the game starts.
-4. A mod that can't load shows why, in red, on its row.
+2. Start the game: every mod there loads. Options > **Mods** has a searchable list and a details pane,
+   with a **Config** button for a native mod's settings page.
+3. To stop using a content or Inox mod, disable it from the launcher and restart. Its file moves to
+   `horizon-mods-disabled/`; enabling it moves it back. Native selection applies at build time.
+4. A mod that can't load shows why, in red, in its details.
 5. `horizon-mods.txt` keeps the keys players chose for mods' key bindings (`key.<id>.<name>:key.keyboard.x`).
 
 Two installed content mods never own the same namespace: the first by file name loads, and the other stays out with
@@ -232,3 +232,23 @@ Horizon's own mods are native. They live in
 The game keeps the parts that must be fast, such as drawing the minimap's map, and a native mod picks the options
 ([extras.md](extras.md)). Far View is not a mod any more: its distance and detail are Graphics > LOD Distance and Far
 Detail ([graphics.md](graphics.md)).
+
+## Managing installed mods
+
+The launcher accepts `.imod`, `.hmod` and folders containing `inox.toml` or
+`horizon-mod.toml`. Use `horizon-launcher mods install <path>` to install a local
+content mod into the selected Horizon instance, and `mods list` to list local mods
+alongside browser installs. `mods remove <id>` removes an installed local mod.
+
+`horizon-launcher mods disable <id>` moves content and Inox mods from
+`horizon-mods/` to `horizon-mods-disabled/`; `mods enable <id>` moves them back.
+A conflicting destination is refused without overwriting it. Restart the game to
+apply the change. Native mods keep their build-time selection and require rebuilding.
+Instance exports and imports preserve enabled and disabled mod folders.
+
+In the game, **Options > Mods** lists Minecraft, Horizon and installed content,
+Inox and native mods. Search by name or id, then select a mod to inspect its
+version, authors, description, file, kind, added content and any problems (in red).
+Native mods provide a **Config** button for their existing settings page.
+**Open Mods Folder** opens the active folder. There are no in-game enable switches;
+every content mod in `horizon-mods/` loads when the game starts.

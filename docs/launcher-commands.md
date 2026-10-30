@@ -777,7 +777,7 @@ MCP: `modpack_remove`, needs `confirm: true`.
 
 ## `horizon-launcher mods list`
 
-What the browser installed in an instance (the default).
+Local mods and what the browser installed in an instance (the default).
 
     horizon-launcher mods list
 
@@ -813,7 +813,7 @@ MCP: `mods_check`.
 
 ## `horizon-launcher mods install`
 
-Install a pack and what it needs into an instance, by its id or slug (checksums checked); a Java mod is ported into horizon-mods and turned on (a Java instance gets the jar made for its version and loader in mods/); a modpack is imported as an instance of its own; a data pack goes into the world `--world` names.
+Install a local .imod, .hmod or mod folder, or a pack and what it needs by id or slug (checksums checked); a Java mod is ported into horizon-mods and turned on (a Java instance gets the jar made for its version and loader in mods/); a modpack is imported as an instance of its own; a data pack goes into the world `--world` names.
 
     horizon-launcher mods install <PROJECT>
 
@@ -866,7 +866,7 @@ MCP: none: the player's switch.
 
 ## `horizon-launcher mods remove`
 
-Remove a pack the browser installed.
+Remove a local mod or a pack the browser installed.
 
     horizon-launcher mods remove <PROJECT>
 
@@ -877,7 +877,7 @@ MCP: `mods_remove`, needs `confirm: true`.
 
 ## `horizon-launcher mods enable`
 
-Turn on a mod the browser installed (horizon-mods.txt, as the game's Options > Mods does; in a Java instance, its file loses `.disabled`).
+Turn on an installed mod (moves content and Inox files into horizon-mods; in a Java instance, its file loses `.disabled`).
 
     horizon-launcher mods enable <PROJECT>
 
@@ -888,7 +888,7 @@ MCP: `mods_enable`.
 
 ## `horizon-launcher mods disable`
 
-Turn off a mod the browser installed; it stays installed (in a Java instance, as `<file>.disabled`).
+Turn off an installed mod: content and Inox files move to horizon-mods-disabled/; Java files become `<file>.disabled`; native selection applies at build time.
 
     horizon-launcher mods disable <PROJECT>
 

@@ -1190,6 +1190,9 @@ pub struct OptionsUi {
     pub languages: Vec<LanguageInfo>,
     language_choice: Option<String>,
     language_search: ui::EditBox,
+    selected_mod: usize,
+    mod_list_scroll: f32,
+    mod_text_heights: (u32, std::collections::BTreeMap<String, f32>),
     pub(crate) settings_search: ui::EditBox,
     /// Packs: the packs found and the selection the screen opens with.
     pub pack_infos: Vec<crate::pack_screen::PackInfo>,
@@ -1233,6 +1236,9 @@ impl Default for OptionsUi {
             languages: Vec::new(),
             language_choice: None,
             language_search: search,
+            selected_mod: 0,
+            mod_list_scroll: 0.0,
+            mod_text_heights: Default::default(),
             settings_search,
             pack_infos: Vec::new(),
             pack_selection: Vec::new(),
@@ -1325,7 +1331,10 @@ impl OptionsUi {
     }
     fn settings_search_active(&self) -> bool {
         self.settings_search.focused
-            && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds)
+            && matches!(
+                self.page(),
+                Page::Video | Page::Controls | Page::KeyBinds | Page::Mods
+            )
     }
     pub fn page(&self) -> Page {
         *self.stack.last().unwrap_or(&Page::Main)
@@ -1389,9 +1398,15 @@ impl OptionsUi {
         self.stack.push(page);
         self.scroll = 0.0;
         self.scrollbar_drag_y = None;
-        if matches!(page, Page::Video | Page::Controls | Page::KeyBinds) {
+        if matches!(
+            page,
+            Page::Video | Page::Controls | Page::KeyBinds | Page::Mods
+        ) {
             self.settings_search.set_value("");
             self.settings_search.focused = false;
+        }
+        if page == Page::Mods {
+            self.mod_list_scroll = 0.0;
         }
         if page == Page::Language {
             self.language_choice = None;
@@ -1445,6 +1460,9 @@ impl OptionsUi {
         }
     }
     fn scrollbar_x(&self, width: f32) -> f32 {
+        if self.page() == Page::Mods {
+            return width - 8.0;
+        }
         (width / 2.0).floor()
             + match self.page() {
                 Page::KeyBinds | Page::PadBinds => 178.0,
@@ -1805,39 +1823,6 @@ impl OptionsUi {
                 rows
             }
             Page::Font => pairs(&[Opt::ForceUnicode, Opt::JapaneseGlyphs]),
-            Page::Mods => {
-                if s.mods.installed.is_empty() {
-                    return vec![Row::Header("horizon.mods.empty")];
-                }
-                s.mods
-                    .installed
-                    .iter()
-                    .enumerate()
-                    .map(|(i, installed)| {
-                        let mut label = Text::literal(installed.title.clone());
-                        if installed.problem.is_some() {
-                            label = label.append(tr("horizon.mods.stopped"));
-                        } else if installed.dev {
-                            label = label.append(tr("horizon.mods.dev"));
-                        }
-                        // A native mod gets its settings page's button beside its name.
-                        if installed.native.is_some() {
-                            let name = button(0.0, 0.0, 150.0, label, Act::ModInfo(i));
-                            let settings = button(
-                                0.0,
-                                0.0,
-                                150.0,
-                                tr("horizon.mods.settings"),
-                                Act::ModSettings(i),
-                            );
-                            Row::Buttons(name, Some(settings))
-                        } else {
-                            let widget = button(0.0, 0.0, 310.0, label, Act::ModInfo(i));
-                            Row::Buttons(widget, None)
-                        }
-                    })
-                    .collect()
-            }
             Page::NativeMod(i) => self.native_rows(s, i),
             Page::ShaderPacks => {
                 if s.shader_packs.is_empty() {
@@ -1867,10 +1852,23 @@ impl OptionsUi {
     }
     /// Build every widget of the current page.
     fn layout(&mut self, s: &Settings, w: f32, h: f32) -> (Vec<Widget>, f32, f32, f32) {
+        self.layout_measured(s, w, h, None)
+    }
+    fn layout_measured(
+        &mut self,
+        s: &Settings,
+        w: f32,
+        h: f32,
+        font: Option<&crate::font::Font>,
+    ) -> (Vec<Widget>, f32, f32, f32) {
         let mut out = Vec::new();
         let page = self.page();
         let cx = (w / 2.0).floor();
-        if matches!(page, Page::Video | Page::Controls | Page::KeyBinds) {
+        if matches!(
+            page,
+            Page::Video | Page::Controls | Page::KeyBinds | Page::Mods
+        ) {
+            self.settings_search.width = 200.0;
             self.settings_search.x = cx - 100.0;
             self.settings_search.y = 17.0;
         }
@@ -2252,6 +2250,187 @@ impl OptionsUi {
                 ));
                 out.push(button(cx + 4.0, h - 28.0, 150.0, tr("gui.done"), Act::Done));
             }
+            Page::Mods => {
+                top = 40.0;
+                let left = 10.0;
+                let split = (w * 0.36).floor();
+                let right = split + 16.0;
+                let detail_width = (w - right - 18.0).max(30.0);
+                if self.mod_text_heights.0 != detail_width.to_bits() {
+                    self.mod_text_heights.0 = detail_width.to_bits();
+                    self.mod_text_heights.1.clear();
+                }
+                self.settings_search.x = left;
+                self.settings_search.y = 17.0;
+                self.settings_search.width = split - left;
+                out.push(Widget {
+                    x: right,
+                    y: 17.0,
+                    w: detail_width,
+                    h: 9.0,
+                    kind: WKind::Text {
+                        text: tr("horizon.pages.mods"),
+                        color: u32::MAX,
+                        centered: false,
+                    },
+                    list: false,
+                });
+                let query = self.settings_search.value.to_lowercase();
+                let filtered: Vec<_> = s
+                    .mods
+                    .installed
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| {
+                        format!("{} {}", m.title, m.id)
+                            .to_lowercase()
+                            .contains(&query)
+                    })
+                    .collect();
+                if !filtered.iter().any(|(i, _)| *i == self.selected_mod)
+                    && let Some((i, _)) = filtered.first()
+                {
+                    self.selected_mod = *i;
+                }
+                if filtered.is_empty() {
+                    out.push(Widget {
+                        x: left,
+                        y: top + 2.0,
+                        w: split - left,
+                        h: 9.0,
+                        kind: WKind::Text {
+                            text: tr("horizon.mods.empty"),
+                            color: u32::MAX,
+                            centered: false,
+                        },
+                        list: true,
+                    });
+                }
+                out.push(Widget {
+                    x: split + 7.0,
+                    y: top,
+                    w: 1.0,
+                    h: bottom - top,
+                    kind: WKind::Text {
+                        text: Text::literal(""),
+                        color: rgba(128, 128, 128, 128),
+                        centered: false,
+                    },
+                    list: false,
+                });
+                self.mod_list_scroll = self.mod_list_scroll.clamp(
+                    0.0,
+                    (filtered.len() as f32 * 24.0 + 4.0 - (bottom - top)).max(0.0),
+                );
+                let mut y = top + 2.0 - self.mod_list_scroll;
+                for (i, m) in &filtered {
+                    let mut wd = button(
+                        left,
+                        y,
+                        split - left,
+                        Text::literal(m.title.clone()),
+                        Act::ModInfo(*i),
+                    );
+                    if *i == self.selected_mod
+                        && let WKind::Button { label, .. } = &mut wd.kind
+                    {
+                        *label = label.clone().with_color(text::YELLOW);
+                    }
+                    wd.list = true;
+                    out.push(wd);
+                    y += 24.0;
+                }
+                let mut detail_y = top + 2.0 - self.scroll;
+                if let Some(m) = s
+                    .mods
+                    .installed
+                    .get(self.selected_mod)
+                    .filter(|_| !filtered.is_empty())
+                {
+                    let mut lines = vec![
+                        m.title.clone(),
+                        format!(
+                            "Version: {}",
+                            if m.version.is_empty() {
+                                "Not supplied"
+                            } else {
+                                &m.version
+                            }
+                        ),
+                        format!(
+                            "Authors: {}",
+                            if m.authors.is_empty() {
+                                "Not supplied".into()
+                            } else {
+                                m.authors.join(", ")
+                            }
+                        ),
+                        format!("Kind: {}", m.kind),
+                        format!("File: {}", m.file),
+                        m.description.clone(),
+                    ];
+                    lines.extend(m.additions.clone());
+                    let normal = lines.len();
+                    if let Some(problem) = &m.problem {
+                        lines.push(problem.clone());
+                    }
+                    for (n, line) in lines.iter().enumerate() {
+                        if line.is_empty() {
+                            continue;
+                        }
+                        let height = if let Some(font) = font {
+                            let height = font
+                                .split(&Text::literal(line.clone()), detail_width)
+                                .len()
+                                .max(1) as f32
+                                * 11.0
+                                + 5.0;
+                            self.mod_text_heights.1.insert(line.clone(), height);
+                            height
+                        } else {
+                            self.mod_text_heights.1.get(line).copied().unwrap_or(16.0)
+                        };
+                        out.push(Widget {
+                            x: right,
+                            y: detail_y,
+                            w: detail_width,
+                            h: height,
+                            kind: WKind::Text {
+                                text: Text::literal(line.clone()),
+                                color: if n >= normal {
+                                    rgba(255, 85, 85, 255)
+                                } else {
+                                    u32::MAX
+                                },
+                                centered: false,
+                            },
+                            list: true,
+                        });
+                        detail_y += height;
+                    }
+                    if m.native.is_some() {
+                        let mut wd = button(
+                            right,
+                            detail_y,
+                            detail_width.min(150.0),
+                            Text::literal("Config"),
+                            Act::ModSettings(self.selected_mod),
+                        );
+                        wd.list = true;
+                        out.push(wd);
+                        detail_y += 24.0;
+                    }
+                }
+                content = (detail_y + self.scroll - top + 2.0).max(0.0);
+                out.push(button(
+                    cx - 154.0,
+                    h - 28.0,
+                    150.0,
+                    tr("horizon.mods.open_folder"),
+                    Act::OpenModFolder,
+                ));
+                out.push(button(cx + 4.0, h - 28.0, 150.0, tr("gui.done"), Act::Done));
+            }
             // Drawn by `pack_screen`.
             Page::Packs => {}
             _ => {
@@ -2433,7 +2612,7 @@ impl OptionsUi {
             crate::screen_draw::paint(batch, atlas, &draws);
             return;
         }
-        let (widgets, top, bottom, content) = self.layout(s, w, h);
+        let (widgets, top, bottom, content) = self.layout_measured(s, w, h, Some(&atlas.font));
         let in_world = self.in_world;
         ui::menu_background(batch, atlas, 0.0, 0.0, w, h, in_world);
         let list = bottom > top;
@@ -2565,6 +2744,17 @@ impl OptionsUi {
                             *color,
                             true,
                         );
+                    } else if self.page() == Page::Mods {
+                        for (i, line) in atlas.font.split(text, wd.w).iter().enumerate() {
+                            batch.text_styled(
+                                atlas,
+                                line,
+                                wd.x,
+                                wd.y + i as f32 * 11.0,
+                                *color,
+                                true,
+                            );
+                        }
                     } else {
                         batch.text_styled(atlas, text, wd.x, wd.y, *color, true);
                     }
@@ -2626,7 +2816,10 @@ impl OptionsUi {
             }
             self.language_search = search;
         }
-        if matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds) {
+        if matches!(
+            self.page(),
+            Page::Video | Page::Controls | Page::KeyBinds | Page::Mods
+        ) {
             let mut search = self.settings_search.clone();
             search.draw(batch, atlas, None);
             if search.value.is_empty() && !search.focused {
@@ -2724,9 +2917,15 @@ impl OptionsUi {
             }
             return events;
         }
-        let (widgets, top, bottom, content) = self.layout(s, size.0, size.1);
+        let (widgets, top, bottom, content) =
+            self.layout_measured(s, size.0, size.1, Some(&atlas.font));
         let mut events = Vec::new();
-        if !drag && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds) {
+        if !drag
+            && matches!(
+                self.page(),
+                Page::Video | Page::Controls | Page::KeyBinds | Page::Mods
+            )
+        {
             let search = &mut self.settings_search;
             search.focused = ui::hovered((x, y), search.x, search.y, search.width, search.height);
             if search.focused {
@@ -2839,7 +3038,10 @@ impl OptionsUi {
                             s.controller.reset_bindings();
                             events.push(Event::Changed);
                         }
-                        Act::ModInfo(_) => {}
+                        Act::ModInfo(i) => {
+                            self.selected_mod = i;
+                            self.scroll = 0.0;
+                        }
                         Act::ModSettings(i) => {
                             events.push(Event::ButtonClick);
                             self.push(Page::NativeMod(i));
@@ -2987,6 +3189,12 @@ impl OptionsUi {
     }
     /// The mouse wheel at the cursor.
     pub fn scroll_at(&mut self, s: &Settings, size: (f32, f32), cursor: (f32, f32), amount: f32) {
+        if self.page() == Page::Mods && cursor.0 < size.0 * 0.36 {
+            self.mod_list_scroll -= amount * 24.0;
+            self.layout(s, size.0, size.1);
+            return;
+        }
+
         if self.resource_error.is_some() {
             return;
         }
@@ -3518,7 +3726,7 @@ mod tests {
     }
 
     #[test]
-    fn classic_mods_page_toggles_mods_and_keeps_dev_and_invalid_entries_inactive() {
+    fn mods_page_selects_details_without_changing_enabled_state() {
         let atlas = atlas();
         let mut s = Settings::default();
         let mut ui = OptionsUi::default();
@@ -3578,6 +3786,7 @@ mod tests {
                 problem: id.is_empty().then(|| "Invalid package".into()),
                 dev,
                 native: None,
+                ..Default::default()
             });
         }
         let (widgets, ..) = ui.layout(&s, size.0, size.1);
@@ -3616,9 +3825,57 @@ mod tests {
             );
             assert!(!events.contains(&Event::Changed));
         }
+        assert_eq!(ui.selected_mod, 2);
+        assert!(ui.layout(&s, size.0, size.1).0.iter().any(|w| matches!(&w.kind, WKind::Text { text, color, .. } if text.plain() == "Invalid package" && *color == rgba(255, 85, 85, 255))));
+        ui.settings_search.set_value("normal");
+        let filtered = ui.layout(&s, size.0, size.1).0;
+        assert_eq!(
+            filtered
+                .iter()
+                .filter(|w| matches!(
+                    w.kind,
+                    WKind::Button {
+                        act: Act::ModInfo(_),
+                        ..
+                    }
+                ))
+                .count(),
+            1
+        );
+        assert_eq!(ui.selected_mod, 0);
         assert_eq!(s.mods.serialize(), "");
         assert!(!ui.back(&mut s).contains(&Event::Close));
         assert_eq!(ui.page(), Page::Main);
+    }
+
+    #[test]
+    fn mod_details_reserve_the_fonts_wrapped_height_and_keep_it_when_scrolling() {
+        let atlas = atlas();
+        let mut s = Settings::default();
+        s.mods.installed.push(crate::mod_list::Installed {
+            title: "Wrapped".into(),
+            additions: vec![
+                "long words wrap at word boundaries ".repeat(40),
+                "Tabs".into(),
+            ],
+            ..Default::default()
+        });
+        let mut ui = OptionsUi::default();
+        ui.show(Page::Mods);
+        let (widgets, _, _, measured) = ui.layout_measured(&s, 480.0, 240.0, Some(&atlas.font));
+        let text: Vec<_> = widgets
+            .iter()
+            .filter(|w| w.list && w.x > 180.0 && matches!(w.kind, WKind::Text { .. }))
+            .collect();
+        for pair in text.windows(2) {
+            assert!(pair[0].y + pair[0].h <= pair[1].y);
+        }
+        for wd in &text {
+            if let WKind::Text { text, .. } = &wd.kind {
+                assert!(wd.h >= atlas.font.split(text, wd.w).len() as f32 * 11.0);
+            }
+        }
+        assert_eq!(ui.layout(&s, 480.0, 240.0).3, measured);
     }
 
     #[test]
@@ -3634,6 +3891,7 @@ mod tests {
             problem: None,
             dev: false,
             native: Some(crate::mod_list::NativePage::default()),
+            ..Default::default()
         });
         ui.show(Page::Mods);
         let (widgets, ..) = ui.layout(&s, size.0, size.1);
@@ -3681,6 +3939,7 @@ mod tests {
                 keys: vec![["zoom".into(), "Zoom key".into(), "key.keyboard.z".into()]],
                 buttons: Vec::new(),
             }),
+            ..Default::default()
         });
         ui.show(Page::NativeMod(0));
         let key_label = |ui: &mut OptionsUi, s: &Settings| {

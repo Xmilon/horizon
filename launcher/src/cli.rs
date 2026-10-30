@@ -529,7 +529,7 @@ enum MultiplayerCmd {
 
 #[derive(Subcommand)]
 enum ModsCmd {
-    /// What the browser installed in an instance (the default)
+    /// Local mods and what the browser installed in an instance (the default)
     List {
         /// The instance (default: the selected one)
         #[arg(long)]
@@ -560,7 +560,7 @@ enum ModsCmd {
         #[arg(long, value_enum, default_value_t = SourceArg::Modrinth)]
         source: SourceArg,
     },
-    /// Install a pack and what it needs into an instance, by its id or slug (checksums
+    /// Install a local .imod, .hmod or mod folder, or a pack and what it needs by id or slug (checksums
     /// checked); a Java mod is ported into horizon-mods and turned on (a Java instance gets the
     /// jar made for its version and loader in mods/); a modpack is imported as an instance of
     /// its own; a data pack goes into the world `--world` names
@@ -622,14 +622,14 @@ enum ModsCmd {
         #[arg(long)]
         trust_native_code: bool,
     },
-    /// Remove a pack the browser installed
+    /// Remove a local mod or a pack the browser installed
     Remove {
         project: String,
         /// The instance (default: the selected one)
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Turn on a mod the browser installed (horizon-mods.txt, as the game's Options > Mods does;
+    /// Turn on an installed mod (moves content and Inox files into horizon-mods;
     /// in a Java instance, its file loses `.disabled`)
     Enable {
         project: String,
@@ -637,8 +637,8 @@ enum ModsCmd {
         #[arg(long)]
         instance: Option<String>,
     },
-    /// Turn off a mod the browser installed; it stays installed (in a Java instance, as
-    /// `<file>.disabled`)
+    /// Turn off an installed mod: content and Inox files move to horizon-mods-disabled/;
+    /// Java files become `<file>.disabled`; native selection applies at build time
     Disable {
         project: String,
         /// The instance (default: the selected one)
@@ -2109,9 +2109,38 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
     match action {
         ModsCmd::List { .. } => {
             let list = installed::Installed::load(&home).entries;
+            let local: Vec<_> = backend::local_mods(&home)
+                .into_iter()
+                .filter(|m| {
+                    !list
+                        .iter()
+                        .any(|e| horizon::mod_id(e) == Some(m.id.as_str()))
+                })
+                .collect();
+            if java.is_none() && !as_json {
+                for m in &local {
+                    println!(
+                        "{} {}{}\n  {}",
+                        m.name,
+                        m.version,
+                        if m.enabled { "" } else { " (off)" },
+                        m.file.display()
+                    );
+                }
+            }
             if as_json {
-                json(list.iter().map(entry_json).collect());
-            } else if list.is_empty() && github_mods::origins(&home).is_empty() {
+                json(
+                    list.iter()
+                        .map(entry_json)
+                        .chain(
+                            local
+                                .iter()
+                                .map(|m| serde_json::to_value(m).unwrap_or_default()),
+                        )
+                        .collect(),
+                );
+            } else if list.is_empty() && local.is_empty() && github_mods::origins(&home).is_empty()
+            {
                 println!(
                     "Nothing installed from the browser yet: horizon-launcher mods search <text>"
                 );
@@ -2129,7 +2158,11 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                 );
             }
             for e in list.iter().filter(|_| !as_json) {
-                let off = java.is_some() && !java_instance::is_on(&home, e);
+                let off = match &java {
+                    Some(_) => !java_instance::is_on(&home, e),
+                    None => horizon::mod_id(e)
+                        .is_some_and(|id| !horizon_launcher::browser::java::is_enabled(&home, id)),
+                };
                 println!(
                     "{}{}  {}  ({}, {})\n  {}  {}",
                     e.title,
@@ -2141,6 +2174,10 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
                     e.checksum
                 );
             }
+        }
+        ModsCmd::Install { project, .. } if java.is_none() && Path::new(&project).exists() => {
+            let m = backend::install_local_mod(&home, Path::new(&project))?;
+            println!("Installed {} {}", m.name, m.version);
         }
         ModsCmd::Search {
             text,
@@ -2466,6 +2503,12 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             github_mods::remove(&home, &project)?;
             println!("Removed {project} (installed from GitHub).");
         }
+        ModsCmd::Remove { project, .. }
+            if java.is_none() && installed::Installed::load(&home).lookup(&project).is_none() =>
+        {
+            backend::remove_local_mod(&home, &project)?;
+            println!("Removed {project}.");
+        }
         ModsCmd::Remove { project, .. } => {
             let e = match java {
                 Some(_) => java_instance::remove(&home, &project)?,
@@ -2482,6 +2525,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             println!("{} is {}.", e.title, if on { "on" } else { "off" });
         }
         ModsCmd::Enable { project, .. } | ModsCmd::Disable { project, .. } => {
+            if installed::Installed::load(&home).lookup(&project).is_none()
+                && backend::set_local_mod_enabled(&home, &project, on)?
+            {
+                println!("{project} is {}.", if on { "on" } else { "off" });
+                return Ok(());
+            }
+
             let e = installed::Installed::load(&home)
                 .lookup(&project)
                 .cloned()

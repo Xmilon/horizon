@@ -275,7 +275,8 @@ impl Index {
                 let extension_ok = p
                     .kind
                     .extension()
-                    .is_none_or(|e| f.name.ends_with(&format!(".{e}")));
+                    .is_none_or(|e| f.name.ends_with(&format!(".{e}")))
+                    || (p.kind == Kind::Mod && f.name.ends_with(".imod"));
                 if !plain_name(&f.name) || !extension_ok {
                     return Err(at(format!(
                         "{:?} is not a plain file name for a {}",

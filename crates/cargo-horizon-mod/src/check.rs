@@ -90,7 +90,7 @@ impl Report {
 /// The kind a file's extension says.
 pub fn kind_of(path: &Path) -> Option<Kind> {
     match path.extension()?.to_str()? {
-        "hmod" => Some(Kind::Mod),
+        "hmod" | "imod" => Some(Kind::Mod),
         "hnmod" => Some(Kind::NativeMod),
         "hpack" => Some(Kind::Modpack),
         "zip" => Some(Kind::ResourcePack),
@@ -188,5 +188,14 @@ mod tests {
         let e = check(&pack, Kind::Shader, None, None).err().unwrap();
         assert!(e.contains("horizon-shaders.toml"), "{e}");
         assert!(check(&pack, Kind::Mod, None, None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod inox_kind_tests {
+    use super::*;
+    #[test]
+    fn imod_is_a_content_mod() {
+        assert_eq!(kind_of(Path::new("ruby.imod")), Some(Kind::Mod));
     }
 }

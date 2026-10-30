@@ -229,6 +229,8 @@ pub(crate) struct NativeMod {
     pub(crate) id: String,
     /// `Name 1.0`.
     pub(crate) title: String,
+    pub(crate) version: String,
+    pub(crate) authors: Vec<String>,
     pub(crate) description: String,
     /// Its keys: name, label and default key (`key.keyboard.z`). The page
     /// lists them first; `native_mod_key` reads the player's choice.
@@ -1451,8 +1453,7 @@ impl Game<'_> {
     pub(super) fn list_native_mods(&mut self) {
         let mut mods = Vec::new();
         self.native_mods(&mut mods);
-        // A WebAssembly mod of the same id: the native row stands for it,
-        // and alone toggles its `mod.<id>` line.
+        // A native mod built in supersedes an older content package of the same id.
         self.settings
             .mods
             .installed
@@ -1466,11 +1467,25 @@ impl Game<'_> {
             };
             self.settings.mods.installed.push(Installed {
                 id: m.id,
+                version: if m.version.is_empty() {
+                    m.title
+                        .rsplit_once(' ')
+                        .map(|(_, v)| v.to_owned())
+                        .unwrap_or_default()
+                } else {
+                    m.version
+                },
                 title: m.title,
+                authors: m.authors,
                 description: m.description,
                 problem: None,
                 dev: false,
                 native: Some(page),
+                kind: "Native".into(),
+                file: std::env::current_exe()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default(),
+                ..Default::default()
             });
         }
     }

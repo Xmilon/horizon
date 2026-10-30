@@ -4667,3 +4667,213 @@ pub fn {f}("
         );
     }
 }
+
+/// A content or Inox mod installed locally, including launcher-disabled mods.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct LocalMod {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub file: std::path::PathBuf,
+    pub enabled: bool,
+}
+
+pub const DISABLED_MODS: &str = "horizon-mods-disabled";
+
+pub fn local_mods(home: &Path) -> Vec<LocalMod> {
+    let mut mods = Vec::new();
+    for (dir, enabled) in [("horizon-mods", true), (DISABLED_MODS, false)] {
+        for file in horizon_mods::find(&home.join(dir)) {
+            if let Ok(package) = horizon_mods::Package::read(&file) {
+                let m = package.manifest;
+                mods.push(LocalMod {
+                    id: m.id,
+                    name: m.name,
+                    version: m.version,
+                    file,
+                    enabled,
+                });
+            }
+        }
+    }
+    mods
+}
+
+/// Move a content mod without overwriting another file. Native mods use their build selection.
+pub fn set_local_mod_enabled(home: &Path, id: &str, on: bool) -> Result<bool, String> {
+    if Path::new(id).components().count() != 1 || id == "." || id == ".." {
+        return Err("Expected a plain mod id or file name".into());
+    }
+    let mods: Vec<_> = local_mods(home)
+        .into_iter()
+        .filter(|m| m.id == id || m.file.file_name().is_some_and(|n| n == id))
+        .collect();
+    if mods.is_empty() {
+        return Ok(false);
+    }
+    if mods.len() != 1 {
+        return Err(format!(
+            "More than one installed mod matches {id}; resolve the duplicate first."
+        ));
+    }
+    let m = &mods[0];
+    if m.enabled == on {
+        return Ok(true);
+    }
+    let dir = home.join(if on { "horizon-mods" } else { DISABLED_MODS });
+    let target = dir.join(m.file.file_name().ok_or("Mod has no file name")?);
+    if target.exists() {
+        return Err(format!(
+            "{} already exists; nothing moved.",
+            target.display()
+        ));
+    }
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    fs::rename(&m.file, &target).map_err(|e| format!("{}: {e}", m.file.display()))?;
+    Ok(true)
+}
+
+pub fn remove_local_mod(home: &Path, id: &str) -> Result<(), String> {
+    let mods: Vec<_> = local_mods(home)
+        .into_iter()
+        .filter(|m| m.id == id)
+        .collect();
+    if mods.len() != 1 {
+        return Err(format!(
+            "Expected one installed mod named {id}, found {}",
+            mods.len()
+        ));
+    }
+    let path = &mods[0].file;
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        fs::remove_file(path)
+    }
+    .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+#[cfg(test)]
+mod local_mod_tests {
+    use super::*;
+    #[test]
+    fn inox_folder_moves_without_losing_data_or_overwriting() {
+        let home = std::env::temp_dir().join(format!("horizon-inox-enable-{}", std::process::id()));
+        let source = home.join("source/ruby");
+        let path = source.clone();
+        fs::create_dir_all(&path).unwrap();
+        fs::write(
+            path.join("inox.toml"),
+            "[mod]\nid = \"ruby\"\nname = \"Ruby\"\nversion = \"1.0.0\"\n",
+        )
+        .unwrap();
+        let installed = install_local_mod(&home, &source).unwrap();
+        let path = installed.file;
+        assert!(install_local_mod(&home, &source).is_err());
+        assert_eq!(local_mods(&home).len(), 1);
+        assert!(set_local_mod_enabled(&home, "ruby", false).unwrap());
+        assert!(!path.exists());
+        assert!(!local_mods(&home)[0].enabled);
+        fs::create_dir_all(&path).unwrap();
+        assert!(set_local_mod_enabled(&home, "ruby", true).is_err());
+        fs::remove_dir(&path).unwrap();
+        assert!(set_local_mod_enabled(&home, "ruby", true).unwrap());
+        assert!(path.join("inox.toml").is_file());
+        // The archive form follows exactly the same move and remove path.
+        let packed = home.join("horizon-mods/emerald.imod");
+        fs::write(
+            &packed,
+            horizon_mods::imod::write(
+                "[mod]\nid = \"emerald\"\nname = \"Emerald\"\nversion = \"1.0.0\"\n",
+                &[],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(set_local_mod_enabled(&home, "emerald", false).unwrap());
+        assert!(home.join("horizon-mods-disabled/emerald.imod").is_file());
+        remove_local_mod(&home, "emerald").unwrap();
+        remove_local_mod(&home, "ruby").unwrap();
+        assert!(local_mods(&home).is_empty());
+        fs::remove_dir_all(home).unwrap();
+    }
+}
+
+/// Validate a local content package before installing it in the active folder.
+pub fn install_local_mod(home: &Path, path: &Path) -> Result<LocalMod, String> {
+    let package = horizon_mods::Package::read(path)?;
+    let m = package.manifest;
+    if package.wasm.is_some() {
+        return Err("WebAssembly mods need a native port.".into());
+    }
+    let content = horizon_mods::Content::read(path, &m)?;
+    for installed in local_mods(home) {
+        if installed.id == m.id {
+            return Err(format!("{} is already installed", m.id));
+        }
+        let other = horizon_mods::Package::read(&installed.file)?;
+        let other_content = horizon_mods::Content::read(&installed.file, &other.manifest)?;
+        if let Some(e) = horizon_mods::content::clash(
+            (&m.id, &content.namespaces),
+            (&other.manifest.id, &other_content.namespaces),
+        ) {
+            return Err(e);
+        }
+    }
+    let name = if path.is_dir() {
+        m.id.clone()
+    } else {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .filter(|e| matches!(*e, "imod" | "hmod"))
+            .ok_or("Expected an .imod or .hmod file")?;
+        format!("{}.{ext}", m.id)
+    };
+    let target = home.join("horizon-mods").join(name);
+    if target.exists() {
+        return Err(format!("{} already exists", target.display()));
+    }
+    let staging = target.with_extension("installing");
+    if staging.exists() {
+        return Err(format!("{} already exists", staging.display()));
+    }
+    fs::create_dir_all(target.parent().ok_or("No mod folder")?).map_err(|e| e.to_string())?;
+    let copy = (|| -> Result<(), String> {
+        if path.is_dir() {
+            let manifest = if path.join("inox.toml").is_file() {
+                "inox.toml"
+            } else {
+                "horizon-mod.toml"
+            };
+            for name in std::iter::once(manifest).chain(content.files.iter().map(String::as_str)) {
+                let from = path.join(name);
+                if !from.is_file() {
+                    continue;
+                } // Inox generates these files at load time.
+                let to = staging.join(name);
+                fs::create_dir_all(to.parent().ok_or("No content folder")?)
+                    .map_err(|e| e.to_string())?;
+                fs::copy(from, to).map_err(|e| e.to_string())?;
+            }
+        } else {
+            fs::copy(path, &staging).map_err(|e| e.to_string())?;
+        }
+        fs::rename(&staging, &target).map_err(|e| e.to_string())
+    })();
+    if copy.is_err() {
+        if staging.is_dir() {
+            let _ = fs::remove_dir_all(&staging);
+        } else {
+            let _ = fs::remove_file(&staging);
+        }
+    }
+    copy?;
+    Ok(LocalMod {
+        id: m.id,
+        name: m.name,
+        version: m.version,
+        file: target,
+        enabled: true,
+    })
+}
