@@ -213,6 +213,14 @@ impl Registries {
             .and_then(|v| v.downcast_ref())
             .ok_or_else(|| format!("{} / {id}: unknown entry or wrong type", key.id))
     }
+    /// Every entry of a registry in ID order; empty for an unknown registry or wrong type.
+    pub fn entries<T: 'static>(&self, key: RegistryKey<T>) -> impl Iterator<Item = (&str, &T)> {
+        self.registries
+            .get(key.id)
+            .into_iter()
+            .flat_map(|r| r.values.iter())
+            .filter_map(|(id, v)| Some((id.as_str(), v.downcast_ref()?)))
+    }
     pub fn data(&self) -> BTreeMap<String, RegistryData> {
         self.registries
             .iter()
@@ -298,6 +306,10 @@ mod tests {
         assert!(builder.insert("ruby", MATERIAL, "ruby:a", 0).is_err());
         let registries = builder.freeze(&[reference]).unwrap();
         assert_eq!(*registries.get(MATERIAL, "ruby:a").unwrap(), 42);
+        assert_eq!(
+            registries.entries(MATERIAL).collect::<Vec<_>>(),
+            [("ruby:a", &42)]
+        );
         assert_eq!(registries.data()[MATERIAL.id].schema, 1);
     }
     #[test]

@@ -112,6 +112,7 @@ fn define(owner: &str, registries: &mut RegistryBuilder) -> Result {
 `create` takes the owning namespace, a typed key, and a nonzero schema version. `insert` checks type,
 namespace and duplicate IDs. Other mods may add entries in their own namespaces to this registry.
 `registries.get(MATERIALS, "ruby:ruby")` returns `&Material`; a wrong type or missing entry is an error.
+`registries.entries(MATERIALS)` lists every entry in ID order, for lookups by a field such as a recipe input.
 Put references in `Registration.references` to validate them before gameplay. Saved references use
 `EntryRef { registry, id }`, never a runtime array index.
 
