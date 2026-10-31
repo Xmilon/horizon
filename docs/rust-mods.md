@@ -183,10 +183,12 @@ The native build key includes source inputs, the selected Horizon source, toolch
 resolved combined lockfile. Compilation uses that lockfile. An unreleased SDK needs `--source`;
 an upstream Horizon checkout without this SDK fails with an explanation.
 
-Every modded world gets `horizon-rust-mods.json`. Before loading or migrating it, Horizon checks saved
-mod versions/source fingerprints and registry schemas/values. Missing or changed mods, entries or
-schemas refuse the open instead of silently replacing content. This is deliberately conservative:
-updating a saved world's Rust mod currently requires restoring the exact source build or writing an
+Every modded world gets `horizon-rust-mods.json`. Before loading or migrating it, Horizon checks that
+every saved mod is still installed and that registry schemas and saved entries are unchanged. A missing
+mod, a changed schema or a removed or changed entry refuses the open instead of silently replacing
+content. A rebuilt or updated mod (new source, version or Horizon build) opens the world if its registry
+contract still holds, and the file is rewritten with the new versions. Registries may gain entries.
+Removed blocks or items are not covered by this check. Changing a schema or saved entry requires an
 explicit migration outside this API. No automatic schema migration is claimed.
 
 Multiplayer extends the existing registry compatibility handshake with the mod/source contract and

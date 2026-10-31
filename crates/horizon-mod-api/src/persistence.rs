@@ -30,10 +30,11 @@ impl Manifest {
         if self.api != saved.api {
             return Err("World needs a different Rust mod API; restore the matching build".into());
         }
+        // A rebuilt or updated mod may open the world; the registry contract below guards its data.
         for (id, version) in &saved.mods {
-            if self.mods.get(id) != Some(version) {
+            if !self.mods.contains_key(id) {
                 return Err(format!(
-                    "World needs the saved Rust mod {id} {} (same source build); restore it before opening the world",
+                    "World needs the saved Rust mod {id} {}; install it before opening the world",
                     version.version
                 ));
             }
@@ -73,7 +74,7 @@ impl Manifest {
 mod tests {
     use super::*;
     #[test]
-    fn missing_or_changed_mod_fails_without_writes() {
+    fn missing_mod_or_changed_registry_fails_without_writes() {
         let dir =
             std::env::temp_dir().join(format!("horizon-registry-save-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -91,11 +92,30 @@ mod tests {
             },
         );
         saved.write_world(&dir).unwrap();
-        let before = std::fs::read(dir.join(FILE)).unwrap();
         assert!(empty.check_world(&dir).is_err());
         assert!(saved.check_world(&dir).is_ok());
-        saved.mods.get_mut("ruby").unwrap().fingerprint = "b".into();
-        assert!(saved.check_world(&dir).is_err());
+        let mut rebuilt = saved.clone();
+        rebuilt.mods.get_mut("ruby").unwrap().fingerprint = "b".into();
+        rebuilt.mods.get_mut("ruby").unwrap().version = "2".into();
+        assert!(rebuilt.check_world(&dir).is_ok());
+        let mut changed = saved.clone();
+        changed.registries.insert(
+            "ruby:material".into(),
+            RegistryData {
+                schema: 1,
+                entries: BTreeMap::from([("ruby:a".into(), serde_json::json!(1))]),
+            },
+        );
+        changed.write_world(&dir).unwrap();
+        let before = std::fs::read(dir.join(FILE)).unwrap();
+        changed
+            .registries
+            .get_mut("ruby:material")
+            .unwrap()
+            .entries
+            .insert("ruby:a".into(), serde_json::json!(2));
+        assert!(changed.check_world(&dir).is_err());
+        assert!(rebuilt.check_world(&dir).is_err());
         assert_eq!(std::fs::read(dir.join(FILE)).unwrap(), before);
         std::fs::remove_file(dir.join(FILE)).unwrap();
         std::fs::remove_dir(dir).unwrap();
