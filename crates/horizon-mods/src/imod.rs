@@ -30,6 +30,10 @@ pub fn is_imod(path: &Path) -> bool {
         path.join(IMOD_MANIFEST).is_file()
     } else {
         path.extension().is_some_and(|e| e == EXTENSION)
+            || std::fs::File::open(path)
+                .ok()
+                .and_then(|file| zip::ZipArchive::new(file).ok())
+                .is_some_and(|mut zip| zip.by_name(IMOD_MANIFEST).is_ok())
     }
 }
 
@@ -80,6 +84,9 @@ pub fn write(toml_text: &str, files: &[(&str, &[u8])]) -> Result<Vec<u8>, String
 pub struct InoxFile {
     #[serde(rename = "mod")]
     pub meta: ModMeta,
+    /// A source mod compiled with the game; absent in existing content-only mods.
+    #[serde(default)]
+    pub rust: Option<crate::rust_mod::RustMod>,
     /// Blocks by name: `[block.ruby_block]` is `<id>:ruby_block`.
     #[serde(default)]
     pub block: BTreeMap<String, BlockDecl>,
@@ -126,7 +133,7 @@ pub struct ModMeta {
 }
 
 /// A block: a vanilla template's behaviour with its own look, name and numbers.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct BlockDecl {
     /// The vanilla block it behaves as (`minecraft:iron_block`).
@@ -162,6 +169,29 @@ pub struct BlockDecl {
     /// Other creative tabs its item is also in (`minecraft:building_blocks`).
     #[serde(default)]
     pub creative_tabs: Vec<String>,
+}
+impl Default for BlockDecl {
+    fn default() -> Self {
+        Self {
+            template: String::new(),
+            name: None,
+            texture: None,
+            model: None,
+            hardness: None,
+            explosion_resistance: None,
+            light: None,
+            requires_tool: None,
+            friction: None,
+            map_color: None,
+            sounds: None,
+            item: true,
+            drops: None,
+            tool: None,
+            tier: None,
+            tags: Vec::new(),
+            creative_tabs: Vec::new(),
+        }
+    }
 }
 
 /// An item: a vanilla template's behaviour with its own look, name and numbers.
@@ -382,6 +412,15 @@ fn yes() -> bool {
 /// declarations.
 pub fn parse(text: &str) -> Result<(Manifest, InoxFile), String> {
     let file: InoxFile = toml::from_str(text).map_err(|e| format!("{IMOD_MANIFEST}: {e}"))?;
+    let manifest = validate(&file)?;
+    Ok((manifest, file))
+}
+
+/// Validate declarations supplied by either TOML or a compiled Rust mod.
+pub fn validate(file: &InoxFile) -> Result<Manifest, String> {
+    if let Some(rust) = &file.rust {
+        rust.check()?;
+    }
     let m = &file.meta;
     let manifest = Manifest {
         id: m.id.clone(),
@@ -435,7 +474,7 @@ pub fn parse(text: &str) -> Result<(Manifest, InoxFile), String> {
             }
         }
     }
-    Ok((manifest, file))
+    Ok(manifest)
 }
 
 /// A block or item name: `[a-z0-9_]`, 1 to 64 characters.

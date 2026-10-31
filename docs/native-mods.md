@@ -1,5 +1,9 @@
 # Native mods (experimental)
 
+For an ordinary Cargo library with typed custom registries, Rust events and persistent machines,
+start with [Rust mods](rust-mods.md). The launcher compiles those `.imod` source packages through
+the same native build process, and can combine them with the `.hnmod` mixins described below.
+
 Native mods are **mixin bundles** that change the game's own Rust source before it is compiled, with
 [horizon-mixins](https://github.com/horizon-rust/horizon-mixins) (MIT, by levzzz5154, made for Horizon). A bundle
 is a `horizon-mixin.toml` and a few `.rs` helpers that hook into named functions of the game (HEAD, BEFORE_CALL,

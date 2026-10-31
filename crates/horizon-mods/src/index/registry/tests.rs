@@ -260,8 +260,14 @@ fn a_mod_may_turn_native_once() {
     assert!(r.errors.is_empty(), "{r:?}");
     assert!(r.notes.iter().any(|n| n.contains("turns native")), "{r:?}");
     // Its .hmod versions are a WebAssembly mod's files; the new ones native.
-    assert_eq!(file_kind(&native, &native.versions[1]), Kind::Mod);
-    assert_eq!(file_kind(&native, &native.versions[0]), Kind::NativeMod);
+    assert_eq!(
+        file_kind(&native, &native.versions[1], Path::new("unused")).unwrap(),
+        Kind::Mod
+    );
+    assert_eq!(
+        file_kind(&native, &native.versions[0], Path::new("unused")).unwrap(),
+        Kind::NativeMod
+    );
     // And never back.
     let r = review(&[native], &[base], "ludovic111");
     assert!(

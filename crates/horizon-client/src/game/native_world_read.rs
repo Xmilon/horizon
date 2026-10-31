@@ -46,7 +46,7 @@ impl Game<'_> {
 }
 
 /// Resolve an existing world state, preserving unloaded and invalid states.
-fn read_block(
+pub(super) fn read_block(
     world: &World,
     registry: &BlockRegistry,
     [x, y, z]: [i32; 3],

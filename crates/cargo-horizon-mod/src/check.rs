@@ -90,7 +90,18 @@ impl Report {
 /// The kind a file's extension says.
 pub fn kind_of(path: &Path) -> Option<Kind> {
     match path.extension()?.to_str()? {
-        "hmod" | "imod" => Some(Kind::Mod),
+        "hmod" => Some(Kind::Mod),
+        "imod" => Some(
+            if horizon_mods::rust_mod::descriptor(path)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                Kind::NativeMod
+            } else {
+                Kind::Mod
+            },
+        ),
         "hnmod" => Some(Kind::NativeMod),
         "hpack" => Some(Kind::Modpack),
         "zip" => Some(Kind::ResourcePack),

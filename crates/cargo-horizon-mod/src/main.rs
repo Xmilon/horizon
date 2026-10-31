@@ -15,6 +15,7 @@ use horizon_mods::{
     manifest::MANIFEST,
 };
 mod check;
+mod native;
 mod registry;
 
 use std::{
@@ -34,9 +35,10 @@ fn main() -> ExitCode {
             println!("Built {}", p.display());
         }),
         Some("run") => run(&args[1..]),
+        Some("native-build") => native::build(&args[1..]).map(|p| println!("Built {}", p.display())),
         Some("check") => check(&args[1..]),
         Some("registry") => registry::main(&args[1..]),
-        _ => Err("usage: cargo horizon-mod new <path> [--name \"Name\"] [--template content|inox] | build | run [--game <horizon-client>] [-- <game args>] | check <file> [--kind <kind>] [--key <public key> --signature <file.minisig>] [--json] | registry build|review|check|list".into()),
+        _ => Err("usage: cargo horizon-mod new <path> [--name \"Name\"] [--template content|inox|rust] [--api-path <SDK crate>] | build | run [--game <horizon-client>] [-- <game args>] | native-build --workspace <checkout> --trust-native-code [--out <folder>] [--mod <folder-or-imod>] | check <file> [--kind <kind>] [--key <public key> --signature <file.minisig>] [--json] | registry build|review|check|list".into()),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
@@ -130,10 +132,9 @@ fn new(args: &[String]) -> Result<(), String> {
     let files: &[(&str, &str)] = match flag(args, "--template") {
         None | Some("content") => &files,
         Some("inox") => &inox,
+        Some("rust") => return native::new(dir, &id, &name, flag(args, "--api-path")),
         Some(_) => {
-            return Err(
-                "templates are content and inox: code mods are native (docs/native-mods.md)".into(),
-            );
+            return Err("templates are content, inox and rust (docs/rust-mods.md)".into());
         }
     };
     for &(file, text) in files {
@@ -196,6 +197,9 @@ fn build_in(root: &Path) -> Result<PathBuf, String> {
 /// mod's own files in `assets/` and `data/`. The game makes the rest from `inox.toml` when it
 /// loads the mod; this checks that it can.
 fn build_imod(root: &Path) -> Result<PathBuf, String> {
+    if horizon_mods::rust_mod::descriptor(root)?.is_some() {
+        return native::package(root);
+    }
     let toml = imod::read_toml(root)?;
     if root.join(MANIFEST).exists() || root.join("Cargo.toml").exists() {
         return Err(format!(
@@ -255,6 +259,9 @@ fn check(args: &[String]) -> Result<(), String> {
 }
 
 fn run(args: &[String]) -> Result<(), String> {
+    if horizon_mods::rust_mod::descriptor(Path::new("."))?.is_some() {
+        return native::run(args);
+    }
     let path = build()?;
     let game = flag(args, "--game")
         .map(str::to_string)

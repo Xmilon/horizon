@@ -4682,10 +4682,17 @@ pub const DISABLED_MODS: &str = "horizon-mods-disabled";
 
 pub fn local_mods(home: &Path) -> Vec<LocalMod> {
     let mut mods = Vec::new();
-    for (dir, enabled) in [("horizon-mods", true), (DISABLED_MODS, false)] {
+    for (dir, enabled) in [
+        ("horizon-mods", true),
+        (DISABLED_MODS, false),
+        (crate::native_mods::INSTALLED, true),
+    ] {
         for file in horizon_mods::find(&home.join(dir)) {
             if let Ok(package) = horizon_mods::Package::read(&file) {
                 let m = package.manifest;
+                let enabled = enabled
+                    && (dir != crate::native_mods::INSTALLED
+                        || crate::browser::java::selection_enabled(home, &m.id));
                 mods.push(LocalMod {
                     id: m.id,
                     name: m.name,
@@ -4717,6 +4724,10 @@ pub fn set_local_mod_enabled(home: &Path, id: &str, on: bool) -> Result<bool, St
         ));
     }
     let m = &mods[0];
+    if m.file.starts_with(home.join(crate::native_mods::INSTALLED)) {
+        crate::browser::java::set_selection(home, &m.id, on)?;
+        return Ok(true);
+    }
     if m.enabled == on {
         return Ok(true);
     }
@@ -4806,6 +4817,29 @@ pub fn install_local_mod(home: &Path, path: &Path) -> Result<LocalMod, String> {
     if package.wasm.is_some() {
         return Err("WebAssembly mods need a native port.".into());
     }
+    if horizon_mods::rust_mod::descriptor(path)?.is_some() {
+        let files = horizon_mods::rust_mod::read(path)?;
+        if local_mods(home).iter().any(|other| other.id == m.id) {
+            return Err(format!("{} is already installed", m.id));
+        }
+        let folder = home.join(crate::native_mods::INSTALLED);
+        fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        let target = folder.join(format!("{}.imod", m.id));
+        if target.exists() {
+            return Err(format!("{} already exists", target.display()));
+        }
+        let partial = target.with_extension("imod.installing");
+        fs::write(&partial, horizon_mods::rust_mod::write(&files)?).map_err(|e| e.to_string())?;
+        fs::rename(partial, &target).map_err(|e| e.to_string())?;
+        crate::browser::java::set_selection(home, &m.id, true)?;
+        return Ok(LocalMod {
+            id: m.id,
+            name: m.name,
+            version: m.version,
+            file: target,
+            enabled: true,
+        });
+    }
     let content = horizon_mods::Content::read(path, &m)?;
     for installed in local_mods(home) {
         if installed.id == m.id {
@@ -4876,4 +4910,54 @@ pub fn install_local_mod(home: &Path, path: &Path) -> Result<LocalMod, String> {
         file: target,
         enabled: true,
     })
+}
+
+#[cfg(test)]
+mod rust_source_tests {
+    use super::*;
+    #[test]
+    fn rust_source_uses_native_selection_and_preserves_code() {
+        let root = std::env::temp_dir().join(format!(
+            "horizon-rust-local-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = root.join("ruby");
+        let home = root.join("home");
+        for (name, text) in [
+            (
+                "inox.toml",
+                "[mod]\nid='ruby'\nname='Ruby'\nversion='1.0.0'\n[rust]\napi='0.1'\nentry='create'",
+            ),
+            (
+                "Cargo.toml",
+                "[package]\nname='ruby'\nversion='1.0.0'\n[dependencies]\nhorizon-mod-api='0.1'",
+            ),
+            ("src/lib.rs", "pub struct Ruby;"),
+        ] {
+            let path = project.join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+        let installed = install_local_mod(&home, &project).unwrap();
+        assert_eq!(
+            installed.file,
+            home.join(crate::native_mods::INSTALLED).join("ruby.imod")
+        );
+        let files = horizon_mods::rust_mod::read(&installed.file).unwrap();
+        assert_eq!(files["src/lib.rs"], b"pub struct Ruby;");
+        assert_eq!(local_mods(&home).len(), 1);
+        assert!(set_local_mod_enabled(&home, "ruby", false).unwrap());
+        assert!(!local_mods(&home)[0].enabled);
+        assert!(installed.file.is_file());
+        assert!(!home.join(DISABLED_MODS).exists());
+        assert!(set_local_mod_enabled(&home, "ruby", true).unwrap());
+        assert!(local_mods(&home)[0].enabled);
+        remove_local_mod(&home, "ruby").unwrap();
+        assert!(local_mods(&home).is_empty());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

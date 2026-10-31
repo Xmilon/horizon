@@ -113,6 +113,77 @@ pub struct Block {
     pub default_state: BTreeMap<String, String>,
     /// Also add a block item with the same id.
     pub item: bool,
+    /// Rust-defined state space; legacy templates leave this absent.
+    pub native: Option<NativeBlock>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NativeBlock {
+    pub properties: BTreeMap<String, Vec<String>>,
+    pub default_state: BTreeMap<String, String>,
+    pub collision: Vec<[f64; 6]>,
+    pub block_entity: bool,
+}
+impl Default for NativeBlock {
+    fn default() -> Self {
+        Self {
+            properties: BTreeMap::new(),
+            default_state: BTreeMap::new(),
+            collision: vec![[0.0, 0.0, 0.0, 1.0, 1.0, 1.0]],
+            block_entity: false,
+        }
+    }
+}
+impl NativeBlock {
+    /// Enumerate a bounded state space in name/value order, independent of registration order.
+    pub fn states(&self) -> Result<Vec<BTreeMap<String, String>>, String> {
+        let valid = |s: &str| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+        };
+        let mut states = vec![BTreeMap::new()];
+        for (key, values) in &self.properties {
+            let mut sorted = values.clone();
+            sorted.sort();
+            sorted.dedup();
+            if !valid(key)
+                || values.is_empty()
+                || values.len() != sorted.len()
+                || values.iter().any(|v| !valid(v))
+                || states.len().saturating_mul(values.len()) > 4096
+            {
+                return Err(
+                    "native block needs unique nonempty state values, with at most 4096 states"
+                        .into(),
+                );
+            }
+            states = states
+                .into_iter()
+                .flat_map(|state| {
+                    sorted.iter().map(move |value| {
+                        let mut state = state.clone();
+                        state.insert(key.clone(), value.clone());
+                        state
+                    })
+                })
+                .collect();
+        }
+        if self.default_state.len() != self.properties.len()
+            || !states.contains(&self.default_state)
+        {
+            return Err("native block needs a complete valid default_state".into());
+        }
+        if self.collision.len() > 16
+            || self.collision.iter().any(|b| {
+                b.iter().any(|n| !n.is_finite() || !(0.0..=1.0).contains(n))
+                    || (0..3).any(|i| b[i] > b[i + 3])
+            })
+        {
+            return Err("native collision needs at most 16 ordered boxes within the block".into());
+        }
+        Ok(states)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
@@ -147,14 +218,14 @@ pub struct Item {
     pub components: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum Source {
     Dir(PathBuf),
     Zip(PathBuf),
 }
 
 /// A mod's content: its files and declarations.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Content {
     source: Source,
     /// Every content file (`assets/...`, `data/...`), sorted.
@@ -219,6 +290,50 @@ pub fn clash(a: (&str, &[String]), b: (&str, &[String])) -> Option<String> {
 }
 
 impl Content {
+    /// Compiled mods use the same Inox generator and content fence, without serializing TOML.
+    pub fn from_declarations(
+        declarations: &crate::imod::InoxFile,
+        files: BTreeMap<String, Vec<u8>>,
+    ) -> Result<Self, String> {
+        let manifest = crate::imod::validate(declarations)?;
+        let total: usize = files.values().map(Vec::len).sum();
+        if files.len() > MAX_FILES || total as u64 > MAX_TOTAL {
+            return Err("compiled mod content exceeds the content limits".into());
+        }
+        for (name, bytes) in &files {
+            check_path(name)?;
+            if bytes.len() as u64 > MAX_FILE {
+                return Err(format!("{name}: content file too large"));
+            }
+        }
+        let raw = files.keys().cloned().collect();
+        let mut generated = crate::imod::generate(declarations, &raw, |name| {
+            files
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("missing {name}"))
+        })?;
+        for (name, bytes) in files {
+            generated.entry(name).or_insert(bytes);
+        }
+        if generated.len() > MAX_FILES
+            || generated.values().any(|b| b.len() as u64 > MAX_FILE)
+            || generated.values().map(|b| b.len() as u64).sum::<u64>() > MAX_TOTAL
+        {
+            return Err("generated mod content exceeds package limits".into());
+        }
+        let mut content = Self {
+            source: Source::Dir(PathBuf::from(".")),
+            files: generated.keys().cloned().collect(),
+            blocks: Vec::new(),
+            items: Vec::new(),
+            namespaces: manifest.owned_namespaces().map(str::to_owned).collect(),
+            generated,
+        };
+        content.check(&manifest)?;
+        Ok(content)
+    }
+
     /// The content of the mod at `path` (a `.hmod` or a mod folder).
     pub fn read(path: &Path, manifest: &Manifest) -> Result<Content, String> {
         let (source, sized) = if path.is_dir() {
@@ -387,6 +502,7 @@ impl Content {
                 shapes: file.shapes,
                 default_state: file.default_state,
                 item: file.item,
+                native: None,
             });
         }
         for (item, name) in items {
@@ -582,6 +698,7 @@ capabilities = ["registries"]
                     ..BlockProperties::default()
                 },
                 item: true,
+                native: None,
             }]
         );
         assert_eq!(content.items[0].id, "ruby:ruby");

@@ -1,12 +1,13 @@
 # Horizon mods
 
-Three kinds of mod run in Horizon:
+These mod formats run in Horizon:
 
 | Kind | File | What it is | Where it runs |
 |---|---|---|---|
 | **Content mod** | `.hmod` | Data and assets: blocks, items, recipes, loot, tags, models, textures, structures. No code. | Read when the game starts |
 | **Inox mod** | `.imod` | Blocks and items declared in one `inox.toml`, plus textures; loaded as a content mod ([inox-mods.md](inox-mods.md)). No code. | Read when the game starts |
 | **Native mod** | `.hnmod` | A [horizon-mixins](https://github.com/horizon-rust/horizon-mixins) bundle: Rust that changes the game's own source before it is compiled. | In a game the launcher builds for the player ([native-mods.md](native-mods.md)) |
+| **Rust mod** | `.imod` with `[rust]` | A Cargo library with typed custom registries, Rust callbacks, blocks/items and persistent machines. | Compiled with the selected native mods ([rust-mods.md](rust-mods.md)) |
 
 Fabric and NeoForge jars do **not** run as they are: their code calls and patches Minecraft's Java classes, and
 Horizon has none. What carries over is the data and assets inside a jar ([modpacks.md](modpacks.md)).
@@ -20,6 +21,7 @@ A mod in the folder is **on**: there is no switch in the game, a mod is installe
    game folder (the one holding `options.txt`): a content mod's `.hmod` or an Inox mod's `.imod` (or a folder holding
    `horizon-mod.toml` or `inox.toml`) in `horizon-mods/`. Native mods go in `horizon-native-mods/`, and the launcher builds them
    ([native-mods.md](native-mods.md)).
+   Rust source packages use `horizon-native-mods/` too; the launcher keeps their build selection.
 2. Start the game: every mod there loads. Options > **Mods** has a searchable list and a details pane,
    with a **Config** button for a native mod's settings page.
 3. To stop using a content or Inox mod, disable it from the launcher and restart. Its file moves to
@@ -43,15 +45,15 @@ cargo horizon-mod build             # only build: target/horizon-mod/my_mod.hmod
 cargo horizon-mod check target/horizon-mod/my_mod.hmod   # the registry's checks; --json for JSON
 ```
 
-- `new <path> [--name "Name"]` writes the template. It makes content mods only: any other `--template` is refused.
+- `new <path> [--name "Name"] [--template content|inox|rust]` writes a template. The Rust template and SDK require this Inox checkout; see [Rust mods](rust-mods.md).
 - `build` packs `horizon-mod.toml`, `assets/` and `data/` into `target/horizon-mod/<id>.hmod`, with the same checks
-  the game makes when it reads the content. It refuses a folder with a `Cargo.toml` (code is native now) and a
+  the game makes when it reads the content. The content path refuses a `Cargo.toml`; an Inox project with `[rust]` packages its Cargo library as native source instead. Content mods refuse a
   manifest without capability `registries`.
 - `run` builds, then starts `horizon-client` (on `PATH`, or `--game PATH`, or `HORIZON_CLIENT`) with
   `--dev-mod target/horizon-mod/<id>.hmod` (a mod loaded from outside `horizon-mods/`). Arguments after `--` go to the game. The game reads content once
   at start, so rebuild and run again after an edit.
 - `check <file>` runs what the registry runs: the file's size and SHA-256, its manifest and content, and a signature
-  with `--key <public key> --signature <file>.minisig`. It reads `.hmod`, `.hnmod`, `.hpack`, resource pack `.zip`
+  with `--key <public key> --signature <file>.minisig`. It reads `.hmod`, `.imod`, `.hnmod`, `.hpack`, resource pack `.zip`
   and `.hshader` files.
 - `registry build|review|check|list|release|page` is the registry repository's CI ([api/mod-index.md](api/mod-index.md)).
 

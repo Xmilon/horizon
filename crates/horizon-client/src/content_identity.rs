@@ -9,7 +9,7 @@ use std::{
 pub const CHANNEL: &str = "horizon:block_registry";
 pub const MARKER: &str = "horizon-content-blocks";
 pub const MISMATCH: &str =
-    "Content block registry mismatch: install the same content blocks as the server.";
+    "Mod registry or Rust build mismatch: install the same mods and compiled build as the server.";
 
 /// Hash the network order and each state's name and properties, not its gameplay facts.
 pub fn identity(root: &Path) -> Result<[u8; 32], String> {
@@ -19,7 +19,20 @@ pub fn identity(root: &Path) -> Result<[u8; 32], String> {
         return Ok(*hash);
     }
     let bytes = std::fs::read(root.join("facts.json")).map_err(|e| e.to_string())?;
-    let hash = hash_facts(&bytes)?;
+    let mut hash = hash_facts(&bytes)?;
+    match std::fs::read(root.join(horizon_mod_api::persistence::FILE)) {
+        Ok(manifest) => {
+            let parsed: horizon_mod_api::persistence::Manifest =
+                serde_json::from_slice(&manifest).map_err(|e| e.to_string())?;
+            let canonical = serde_json::to_vec(&parsed).map_err(|e| e.to_string())?;
+            let mut digest = Sha256::new();
+            digest.update(hash);
+            digest.update(canonical);
+            hash = digest.finalize().into();
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.to_string()),
+    }
     identities.insert(root.to_owned(), hash);
     Ok(hash)
 }

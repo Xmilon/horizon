@@ -24,42 +24,96 @@ pub(super) struct ModsState {
 pub(super) fn content_root(
     root: &std::path::Path,
     dev: &[std::path::PathBuf],
-) -> std::path::PathBuf {
+) -> horizon_client::Result<std::path::PathBuf> {
     use horizon_client::mod_content::{self, ContentMod};
     use horizon_mods::{Capability, Content, Package};
     let here = std::env::current_dir().unwrap_or_default();
     let mut paths = horizon_mods::find(&here.join(mod_list::DIR));
     paths.retain(|p| !dev.contains(p));
     paths.extend(dev.iter().cloned());
+    paths.extend(horizon_mods::rust_mod::selected_sources(&here));
     let mut mods: Vec<ContentMod> = Vec::new();
+    let mut versions = std::collections::BTreeMap::new();
+    let mut source_mods = Vec::new();
     for path in &paths {
         let Ok(package) = Package::read(path) else {
             continue;
         };
         let m = &package.manifest;
+        if horizon_mods::rust_mod::descriptor(path)?.is_some() {
+            source_mods.push((path, m.clone()));
+            continue;
+        }
         if !m.capabilities.contains(&Capability::Registries) || mods.iter().any(|c| c.id == m.id) {
             continue;
         }
         let content = Content::read(path, m).and_then(|content| {
-            // The first of two mods owning one namespace stays on.
             let own = (m.id.as_str(), content.namespaces.as_slice());
             match mods
                 .iter()
                 .find_map(|c| horizon_mods::content::clash((&c.id, &c.content.namespaces), own))
             {
-                Some(e) => Err(e),
+                Some(error) => Err(error),
                 None => Ok(content),
             }
         });
         match content {
-            Ok(content) => mods.push(ContentMod {
-                id: m.id.clone(),
-                content,
-            }),
-            Err(e) => log::warn!("Horizon: mod {} content not loaded: {e}", m.id),
+            Ok(content) => {
+                versions.insert(m.id.clone(), m.version.clone());
+                mods.push(ContentMod {
+                    id: m.id.clone(),
+                    content,
+                });
+            }
+            Err(error) => log::warn!("Horizon: mod {} content not loaded: {error}", m.id),
         }
     }
-    match mod_content::resource_root(root, &mods, &here.join(".horizon-cache")) {
+    let data: Vec<_> = mods
+        .iter()
+        .map(|m| (m.id.clone(), m.content.clone()))
+        .collect();
+    let runtime = super::rust_mods::initialize(&data)?;
+    for (path, m) in source_mods {
+        let compiled = runtime.mods.iter().find(|c| c.declarations.meta.id == m.id);
+        if !compiled.is_some_and(|c| {
+            c.declarations.meta.version == m.version
+                && horizon_mods::rust_mod::read(path).is_ok_and(|files| {
+                    c.fingerprint.split('/').next()
+                        == Some(horizon_mods::rust_mod::fingerprint(&files).as_str())
+                })
+        }) {
+            return Err(format!(
+                "Rust mod {} needs a native rebuild; compile the selected mods with the launcher",
+                m.id
+            )
+            .into());
+        }
+    }
+    for native in &runtime.mods {
+        for content in &mods {
+            if let Some(error) = horizon_mods::content::clash(
+                (&content.id, &content.content.namespaces),
+                (&native.declarations.meta.id, &native.content.namespaces),
+            ) {
+                return Err(error.into());
+            }
+        }
+        mods.push(ContentMod {
+            id: native.declarations.meta.id.clone(),
+            content: native.content.clone(),
+        });
+    }
+    let resources =
+        mod_content::resource_root(root, &mods, &here.join(".horizon-cache")).and_then(|out| {
+            if out == root && !runtime.mods.is_empty() {
+                let out = here.join(".horizon-cache/rust-content");
+                mod_content::build(root, &mods, &out)?;
+                Ok(out)
+            } else {
+                Ok(out)
+            }
+        });
+    match resources {
         Ok(out) => {
             if out != root {
                 log::info!(
@@ -68,11 +122,43 @@ pub(super) fn content_root(
                     out.display()
                 );
             }
-            out
+            let mut manifest = runtime.manifest();
+            for module in &mods {
+                if manifest.mods.contains_key(&module.id) || module.content.is_empty() {
+                    continue;
+                }
+                let files = module
+                    .content
+                    .files
+                    .iter()
+                    .map(|name| module.content.file(name).map(|bytes| (name.clone(), bytes)))
+                    .collect::<Result<std::collections::BTreeMap<_, _>, _>>()?;
+                manifest.mods.insert(
+                    module.id.clone(),
+                    horizon_mod_api::persistence::ModVersion {
+                        version: versions.get(&module.id).cloned().unwrap_or_default(),
+                        fingerprint: horizon_mods::rust_mod::fingerprint(&files),
+                    },
+                );
+            }
+            if !manifest.mods.is_empty() {
+                if out == root {
+                    return Err("Rust mod content overlay was not created".into());
+                }
+                std::fs::write(
+                    out.join(horizon_mod_api::persistence::FILE),
+                    serde_json::to_vec(&manifest)?,
+                )?;
+                std::fs::write(out.join(horizon_client::content_identity::MARKER), b"1")?;
+            }
+            Ok(out)
         }
         Err(e) => {
+            if !runtime.mods.is_empty() {
+                return Err(e);
+            }
             log::warn!("Horizon: content mods not loaded: {e}");
-            root.to_owned()
+            Ok(root.to_owned())
         }
     }
 }
@@ -223,6 +309,76 @@ impl Game<'_> {
         }
         // A mod with a native version built in says so instead, and isn't news.
         self.list_native_mods();
+        if let Ok(runtime) = super::rust_mods::catalog() {
+            for module in &runtime.mods {
+                if let Some(row) = self
+                    .settings
+                    .mods
+                    .installed
+                    .iter_mut()
+                    .find(|m| m.id == module.declarations.meta.id)
+                {
+                    row.kind = "Rust (compiled)".into();
+                    row.additions = vec![
+                        format!(
+                            "Blocks: {}",
+                            module
+                                .content
+                                .blocks
+                                .iter()
+                                .map(|b| b.id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        format!(
+                            "Items: {}",
+                            module
+                                .content
+                                .items
+                                .iter()
+                                .map(|b| b.id.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        format!(
+                            "Registries: {}",
+                            runtime
+                                .registries
+                                .data()
+                                .keys()
+                                .filter(|id| id.starts_with(&format!("{}:", row.id)))
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                        format!(
+                            "Machines: {}",
+                            module
+                                .machines
+                                .iter()
+                                .map(|m| m.block.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    ];
+                    for (label, marker) in [("Tags", "/tags/"), ("Tabs", "/horizon/creative_tab/")]
+                    {
+                        let files: Vec<_> = module
+                            .content
+                            .files
+                            .iter()
+                            .filter(|file| file.starts_with("data/") && file.contains(marker))
+                            .cloned()
+                            .collect();
+                        row.additions.push(format!(
+                            "{label} ({}): {}",
+                            files.len(),
+                            files.join(", ")
+                        ));
+                    }
+                }
+            }
+        }
         let installed = &self.settings.mods.installed;
         self.mods.stopped = installed
             .iter()

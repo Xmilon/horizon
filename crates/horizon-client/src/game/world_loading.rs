@@ -65,9 +65,22 @@ impl WorldRequest {
         } = self;
         let name = name.as_deref();
         let create = create.as_ref();
+        let registry_manifest =
+            match std::fs::read(options.resources.join(horizon_mod_api::persistence::FILE)) {
+                Ok(bytes) => {
+                    serde_json::from_slice::<horizon_mod_api::persistence::Manifest>(&bytes)?
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    super::rust_mods::catalog()?.manifest()
+                }
+                Err(error) => return Err(error.into()),
+            };
+        registry_manifest.check_world(&save_root)?;
+        let session_lock = horizon_client::save::SessionLock::acquire(&save_root)?;
+        registry_manifest.check_world(&save_root)?;
         horizon_client::save::upgrade_older_world(&save_root)?;
         horizon_client::save::migrate_legacy(&save_root)?;
-        let session_lock = horizon_client::save::SessionLock::acquire(&save_root)?;
+        registry_manifest.write_world(&save_root)?;
         // RandomSequences: the world's data/minecraft/random_sequences.dat.
         let rand_sequences =
             horizon_client::save::read_dat(&save_root.join("data/minecraft/random_sequences.dat"))

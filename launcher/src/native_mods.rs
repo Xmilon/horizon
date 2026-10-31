@@ -67,10 +67,7 @@ pub(crate) fn root() -> PathBuf {
 /// and horizon-mixins' output check stats `\\?\C:`, the volume itself, which Windows refuses
 /// (os error 1). A drive path loses its `\\?\`; any other path is left as it is.
 fn plain(path: PathBuf) -> PathBuf {
-    match path.to_str().and_then(|p| p.strip_prefix(r"\\?\")) {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
-        _ => path,
-    }
+    horizon_mods::rust_mod::plain_path(path)
 }
 
 /// The build's log, kept until the next build.
@@ -83,7 +80,7 @@ const MANIFEST: &str = "horizon-mixin.toml";
 const NATIVE_MANIFEST: &str = horizon_mods::index::native::MANIFEST;
 /// Where an instance keeps the native mods installed from the registry, `<id>.hnmod`, each on or
 /// off in `horizon-mods.txt` like any mod.
-pub const INSTALLED: &str = "horizon-native-mods";
+pub const INSTALLED: &str = horizon_mods::rust_mod::INSTALLED;
 
 /// The native mods turned on in the game folder `home`, unpacked into a folder [`build`] takes.
 /// Each `.hnmod` is checked again as the registry checks it (Rust and TOML under
@@ -94,14 +91,38 @@ pub fn installed_mods(home: &Path) -> Result<PathBuf, String> {
     let mut paths: Vec<PathBuf> = fs::read_dir(home.join(INSTALLED))
         .map(|dir| dir.flatten().map(|e| e.path()).collect())
         .unwrap_or_default();
-    paths.retain(|p| p.extension().is_some_and(|e| e == "hnmod"));
+    paths.retain(|p| {
+        p.extension().is_some_and(|e| e == "hnmod" || e == "imod")
+            || p.is_dir() && p.join("inox.toml").is_file()
+    });
     paths.sort();
     let mut count = 0;
+    let mut seen = std::collections::BTreeSet::new();
     for path in paths {
+        if let Some(declarations) = horizon_mods::rust_mod::descriptor(&path)? {
+            if !crate::browser::java::is_enabled(home, &declarations.meta.id) {
+                continue;
+            }
+            if !seen.insert(declarations.meta.id.clone()) {
+                return Err(format!("duplicate native mod {}", declarations.meta.id));
+            }
+            let files = horizon_mods::rust_mod::read(&path)?;
+            let dir = out.join(&declarations.meta.id);
+            for (name, bytes) in files {
+                let target = dir.join(name);
+                fs::create_dir_all(target.parent().unwrap()).map_err(|e| e.to_string())?;
+                fs::write(target, bytes).map_err(|e| e.to_string())?;
+            }
+            count += 1;
+            continue;
+        }
         let bundle = horizon_mods::index::native::Bundle::read(&path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
         if !crate::browser::java::is_enabled(home, &bundle.manifest.id) {
             continue;
+        }
+        if !seen.insert(bundle.manifest.id.clone()) {
+            return Err(format!("duplicate native mod {}", bundle.manifest.id));
         }
         let dir = out.join(&bundle.manifest.id);
         for (name, bytes) in &bundle.files {
@@ -152,6 +173,10 @@ pub fn bundles(folder: &Path) -> Result<Vec<Bundle>, String> {
     for dir in dirs {
         found.extend(bundle_in(&dir)?);
     }
+    let mut ids = std::collections::BTreeSet::new();
+    if found.iter().any(|b| !ids.insert(&b.id)) {
+        return Err("duplicate native mod IDs".into());
+    }
     if found.is_empty() {
         return Err(format!(
             "{} holds no native mod ({MANIFEST} or {NATIVE_MANIFEST}).",
@@ -162,6 +187,17 @@ pub fn bundles(folder: &Path) -> Result<Vec<Bundle>, String> {
 }
 
 pub(crate) fn bundle_in(dir: &Path) -> Result<Option<Bundle>, String> {
+    if let Some(declarations) = horizon_mods::rust_mod::descriptor(dir)? {
+        horizon_mods::rust_mod::read(dir)?;
+        return Ok(Some(Bundle {
+            id: declarations.meta.id,
+            version: declarations.meta.version,
+            dir: dir.to_owned(),
+            horizon: None,
+            mixins: None,
+            hooks: Some(20),
+        }));
+    }
     if dir.join(MANIFEST).is_file() {
         return bundle(dir, None).map(Some);
     }
@@ -645,21 +681,7 @@ pub(crate) fn unpack_archive(url: &str, partial: &Path, limit: u64) -> Result<Pa
 /// Makes `to` hold `from`'s files, writing only those that changed, so Cargo, which goes by file
 /// times, recompiles only what the mods changed.
 fn sync(from: &Path, to: &Path) -> Result<(), String> {
-    let new = files(from)?;
-    let old = if to.is_dir() { files(to)? } else { Vec::new() };
-    for (name, path) in &new {
-        let target = to.join(name);
-        if fs::read(&target).ok() != fs::read(path).ok() {
-            fs::create_dir_all(target.parent().unwrap_or(to)).map_err(|e| e.to_string())?;
-            fs::copy(path, &target).map_err(|e| format!("{}: {e}", target.display()))?;
-        }
-    }
-    for (name, path) in old {
-        if new.binary_search_by(|(n, _)| n.cmp(&name)).is_err() {
-            let _ = fs::remove_file(path);
-        }
-    }
-    Ok(())
+    horizon_mods::rust_mod::sync_workspace(from, to)
 }
 
 /// Builds `folder`'s mods on the Horizon revision they pin (else `base`'s, the installed version
@@ -675,8 +697,29 @@ pub fn build(
     anyway: bool,
     progress: impl Fn(Step),
 ) -> Result<String, String> {
+    build_with_source(base, folder, instance, anyway, None, progress)
+}
+
+/// An explicit source checkout is copied into staging; it is never patched in place.
+pub fn build_with_source(
+    base: &str,
+    folder: &Path,
+    instance: Option<&Instance>,
+    anyway: bool,
+    workspace: Option<&Path>,
+    progress: impl Fn(Step),
+) -> Result<String, String> {
     backend::need_prepared(base)?;
     fs::create_dir_all(root()).map_err(|e| e.to_string())?;
+    let build_lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root().join("build.lock"))
+        .map_err(|e| e.to_string())?;
+    build_lock
+        .try_lock()
+        .map_err(|_| "another native build is already running".to_string())?;
     let _ = fs::write(log_path(), "");
     // The mods are copied first: the build and its key use the copy, whatever happens to the
     // folder meanwhile.
@@ -684,7 +727,15 @@ pub fn build(
     let _ = fs::remove_dir_all(&incoming);
     let found = bundles(folder)?;
     for b in &found {
-        backend::copy_dir(&b.dir, &incoming.join(&b.id)).map_err(|e| e.to_string())?;
+        if horizon_mods::rust_mod::descriptor(&b.dir)?.is_some() {
+            for (name, bytes) in horizon_mods::rust_mod::read(&b.dir)? {
+                let target = incoming.join(&b.id).join(name);
+                fs::create_dir_all(target.parent().unwrap()).map_err(|e| e.to_string())?;
+                fs::write(target, bytes).map_err(|e| e.to_string())?;
+            }
+        } else {
+            backend::copy_dir(&b.dir, &incoming.join(&b.id)).map_err(|e| e.to_string())?;
+        }
     }
     let mods: Vec<Bundle> = found
         .into_iter()
@@ -696,15 +747,33 @@ pub fn build(
     // A mod naming a hook points' version doesn't pin: it follows the others, else the game.
     let pins: Vec<Bundle> = mods.iter().filter(|b| b.hooks.is_none()).cloned().collect();
     let free = pins.iter().all(|b| b.horizon.is_none());
-    let pinned = newest(
-        &pins,
-        "Horizon",
-        |b| b.horizon.as_ref(),
-        || revision_of(base),
-        None,
-        |r| committed(backend::REPO, r),
-    )?;
-    let revision = with_hooks(&mods, pinned, free, hooks_at)?;
+    let pinned = if let Some(workspace) = workspace {
+        let output = Command::new("git")
+            .current_dir(workspace)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .map_err(|e| e.to_string())?;
+        let revision = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        if !output.status.success() || !is_revision(&revision) {
+            return Err("--source must be a Horizon Git checkout".into());
+        }
+        revision
+    } else {
+        newest(
+            &pins,
+            "Horizon",
+            |b| b.horizon.as_ref(),
+            || revision_of(base),
+            None,
+            |r| committed(backend::REPO, r),
+        )?
+    };
+    let revision = with_hooks(&mods, pinned, free, |revision| match workspace {
+        Some(path) => fs::read_to_string(path.join(HOOKS_FILE))
+            .ok()
+            .and_then(|s| hooks_in(&s)),
+        None => hooks_at(revision),
+    })?;
     let other = mismatch(&mods, &revision);
     if let (Some(list), false) = (&other, anyway) {
         return Err(format!("{MISMATCH}{list}."));
@@ -713,7 +782,9 @@ pub fn build(
         .iter()
         .filter(|b| b.hooks.is_some() || b.horizon.as_ref().is_some_and(|r| *r != revision))
     {
-        repin(b, &revision)?;
+        if horizon_mods::rust_mod::descriptor(&b.dir)?.is_none() {
+            repin(b, &revision)?;
+        }
     }
     // Said with a failure: a mod made for another revision may not apply or compile on this one.
     let blame = |e: String| {
@@ -730,56 +801,126 @@ pub fn build(
         Some(MIXINS_REV),
         |r| committed("horizon-rust/horizon-mixins", r),
     )?;
-    let version = version_for(&revision, &mixins, &mods)?;
+    let snapshot = root().join(format!(
+        "source-local-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    let local_hash = workspace
+        .map(|path| horizon_mods::rust_mod::copy_workspace(path, &snapshot))
+        .transpose()?;
+    if workspace.is_some() {
+        fs::write(snapshot.join(".horizon-revision"), &revision).map_err(|e| e.to_string())?;
+    }
+    let key = local_hash
+        .as_ref()
+        .map_or_else(|| mixins.clone(), |hash| format!("{mixins}/{hash}"));
+    let mut version = version_for(&revision, &key, &mods)?;
     if !backend::installed().contains(&version) {
         rust_toolchain::linker()?;
         let rust = rust_toolchain::install(|f| progress(Step::Rust(f)))?;
-        progress(Step::Tool);
-        let tool = tool(&rust, &mixins)?;
         progress(Step::Source(revision.clone()));
-        let source = source(&revision)?;
+        let source = match workspace {
+            Some(_) => snapshot.clone(),
+            None => source(&revision)?,
+        };
         progress(Step::Mixins);
         // horizon-mixins refuses an output path through a link (macOS's /tmp is one).
         let real = plain(root().canonicalize().map_err(|e| e.to_string())?);
         let fresh = real.join("stage.new");
         let _ = fs::remove_dir_all(&fresh);
-        run(
-            apply(&rust, &tool, &source, &incoming, &fresh),
-            "horizon-mixins",
-            |_| {},
-        )
-        .map_err(blame)?;
+        let projects: Vec<_> = mods
+            .iter()
+            .filter(|m| m.dir.join("inox.toml").is_file())
+            .map(|m| m.dir.clone())
+            .collect();
+        let legacy: Vec<_> = mods
+            .iter()
+            .filter(|m| !m.dir.join("inox.toml").is_file())
+            .collect();
+        if legacy.is_empty() {
+            horizon_mods::rust_mod::copy_workspace(&source, &fresh)?;
+        } else {
+            progress(Step::Tool);
+            let tool = tool(&rust, &mixins)?;
+            let legacy_dir = root().join("legacy.incoming");
+            if legacy_dir.exists() {
+                let checked = legacy_dir.canonicalize().map_err(|e| e.to_string())?;
+                if !checked.starts_with(root().canonicalize().map_err(|e| e.to_string())?) {
+                    return Err("native staging escaped its cache".into());
+                }
+                fs::remove_dir_all(&checked).map_err(|e| e.to_string())?;
+            }
+            for bundle in legacy {
+                backend::copy_dir(&bundle.dir, &legacy_dir.join(&bundle.id))
+                    .map_err(|e| e.to_string())?;
+            }
+            run(
+                apply(&rust, &tool, &source, &legacy_dir, &fresh),
+                "horizon-mixins",
+                |_| {},
+            )
+            .map_err(blame)?;
+        }
+        if !projects.is_empty() {
+            horizon_mods::rust_mod::stage(&fresh, &projects)?;
+        }
         let stage = root().join("stage");
         sync(&fresh, &stage)?;
         let _ = fs::remove_dir_all(&fresh);
         let target = root().join("target");
-        let mut compile = rust.command(&rust.cargo());
-        compile.current_dir(&stage).env("CARGO_TARGET_DIR", &target);
-        compile.args(["build", "--locked", "--profile", PROFILE]);
-        if has_mods_feature(&stage) {
-            compile.args(["--features", FEATURES]);
+        if !projects.is_empty() {
+            let mut lock = rust.command(&rust.cargo());
+            lock.current_dir(&stage)
+                .args(["metadata", "--format-version", "1"]);
+            run(lock, "Resolving the combined mod dependencies", |_| {})?;
+            let locked = horizon_mods::index::sha256_file(&stage.join("Cargo.lock"))?;
+            version = version_for(
+                &revision,
+                &format!("{revision}/{key}/{locked}/{}", rust_toolchain::VERSION),
+                &mods,
+            )?;
         }
-        compile.args(["-p", "horizon-client", "--bin", "horizon-client"]);
-        let mut crates = 0;
-        run(compile, "Compiling the game", |line| {
-            if let Some(name) = line.trim_start().strip_prefix("Compiling ") {
-                crates += 1;
-                let name = name.split_whitespace().next().unwrap_or(name);
-                progress(Step::Compile(crates, name.to_owned()));
+        if !backend::installed().contains(&version) {
+            let mut compile = rust.command(&rust.cargo());
+            let locked = horizon_mods::index::sha256_file(&stage.join("Cargo.lock"))?;
+            compile.env(
+                "HORIZON_MOD_BUILD_ID",
+                format!("{revision}/{key}/{locked}/{}", rust_toolchain::VERSION),
+            );
+            compile
+                .current_dir(&stage)
+                .env("CARGO_TARGET_DIR", &target)
+                .env("RUST_MIN_STACK", "33554432");
+            compile.args(["build", "--locked", "--profile", PROFILE, "-j", "1"]);
+            if has_mods_feature(&stage) {
+                compile.args(["--features", FEATURES]);
             }
-        })
-        .map_err(blame)?;
-        progress(Step::Install);
-        let about = serde_json::json!({
-            "base": base,
-            "horizon": revision,
-            "horizon_mixins": mixins,
-            "hooks": mods.iter().find_map(|m| m.hooks),
-            "rust": rust_toolchain::VERSION,
-            "mods": mods.iter().map(|m| serde_json::json!({"id": m.id, "version": m.version})).collect::<Vec<_>>(),
-        });
-        let binary = target.join(PROFILE).join(backend::CLIENT);
-        install(base, &version, &binary, &about)?;
+            compile.args(["-p", "horizon-client", "--bin", "horizon-client"]);
+            let mut crates = 0;
+            run(compile, "Compiling the game", |line| {
+                if let Some(name) = line.trim_start().strip_prefix("Compiling ") {
+                    crates += 1;
+                    let name = name.split_whitespace().next().unwrap_or(name);
+                    progress(Step::Compile(crates, name.to_owned()));
+                }
+            })
+            .map_err(blame)?;
+            progress(Step::Install);
+            let about = serde_json::json!({
+                "base": base,
+                "horizon": revision,
+                "horizon_mixins": mixins,
+                "hooks": mods.iter().find_map(|m| m.hooks),
+                "rust": rust_toolchain::VERSION,
+                "mods": mods.iter().map(|m| serde_json::json!({"id": m.id, "version": m.version})).collect::<Vec<_>>(),
+            });
+            let binary = target.join(PROFILE).join(backend::CLIENT);
+            install(base, &version, &binary, &about)?;
+        }
     }
     match instance.filter(|i| i.kind != instances::Kind::Default) {
         Some(own) => instances::edit(&own.id, |meta| meta.version = Some(version.clone()))?,

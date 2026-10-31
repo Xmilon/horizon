@@ -4,6 +4,40 @@ use serde_json::{json, Value};
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 const SHA2: &str = "fedcba9876543210fedcba9876543210fedcba98";
 
+#[test]
+fn rust_sources_follow_the_native_github_install_path() {
+    let root = tree("rust-source");
+    let home = tree("rust-home");
+    write(
+        &root.join("inox.toml"),
+        "[mod]\nid='ruby'\nname='Ruby'\nversion='0.1.0'\n[rust]\napi='0.1'\nentry='create'",
+    );
+    write(
+        &root.join("Cargo.toml"),
+        "[package]\nname='ruby'\nversion='0.1.0'\n[dependencies]\nhorizon-mod-api='0.1'",
+    );
+    write(&root.join("src/lib.rs"), "pub struct Ruby;");
+    let bundle = find_mods(&root).unwrap().remove(0);
+    let bytes = pack(&bundle).unwrap();
+    let packed = checked(&bytes, &root.join("out")).unwrap();
+    assert_eq!(packed.file.extension().unwrap(), "imod");
+    let found = Resolved {
+        owner: "acme".into(),
+        repo: "ruby".into(),
+        tag: None,
+        commit: SHA.into(),
+        asset: None,
+        content_only: None,
+    };
+    install(&home, &found, &packed).unwrap();
+    assert!(home.join(INSTALLED).join("ruby.imod").is_file());
+    assert!(origin(&home, "ruby").is_some());
+    assert!(remove(&home, "ruby").unwrap());
+    assert!(!home.join(INSTALLED).join("ruby.imod").exists());
+    fs::remove_dir_all(root).unwrap();
+    fs::remove_dir_all(home).unwrap();
+}
+
 fn link(text: &str) -> Link {
     parse(text).unwrap()
 }

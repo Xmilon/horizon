@@ -250,7 +250,7 @@ fn assets(release: &serde_json::Value, link: &Link) -> (Option<Asset>, Option<St
         list.iter()
             .filter(move |a| a["name"].as_str().is_some_and(|n| n.ends_with(ext)))
     };
-    let hnmod = named(".hnmod").find_map(|a| {
+    let hnmod = named(".hnmod").chain(named(".imod")).find_map(|a| {
         let url = a["browser_download_url"].as_str()?.to_owned();
         let name = a["name"].as_str()?.to_owned();
         // Only this repository's own release files.
@@ -265,7 +265,6 @@ fn assets(release: &serde_json::Value, link: &Link) -> (Option<Asset>, Option<St
         })
     });
     let hmod = named(".hmod")
-        .chain(named(".imod"))
         .find_map(|a| a["name"].as_str().map(str::to_owned))
         .filter(|_| hnmod.is_none());
     (hnmod, hmod)
@@ -397,13 +396,27 @@ fn checked(bytes: &[u8], dir: &Path) -> Result<Packed, String> {
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let file = dir.join(format!("{}.hnmod", &sum[..16]));
     fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
-    let bundle = format::Bundle::read(&file).inspect_err(|_| {
-        let _ = fs::remove_file(&file);
-    })?;
+    let checked = (|| -> Result<(String,String),String> {
+        if let Some(declarations) = horizon_mods::rust_mod::descriptor(&file)? {
+            horizon_mods::rust_mod::read(&file)?;
+            return Ok((declarations.meta.id,declarations.meta.version));
+        }
+        if horizon_mods::imod::is_imod(&file) { return Err("this Inox package is data-only; use a local content install instead of a native GitHub build".into()); }
+        let bundle = format::Bundle::read(&file)?;
+        Ok((bundle.manifest.id,bundle.manifest.version))
+    })().inspect_err(|_| { let _ = fs::remove_file(&file); })?;
+    let rust = horizon_mods::rust_mod::descriptor(&file)?.is_some();
+    let output = if rust {
+        let output = file.with_extension("imod");
+        fs::rename(&file, &output).map_err(|e| e.to_string())?;
+        output
+    } else {
+        file
+    };
     Ok(Packed {
-        id: bundle.manifest.id,
-        version: bundle.manifest.version,
-        file,
+        id: checked.0,
+        version: checked.1,
+        file: output,
         sha256: sum,
     })
 }
@@ -472,6 +485,9 @@ fn walk_files(root: &Path, dir: &Path, out: &mut Vec<(String, PathBuf)>) -> Resu
 /// (`[compatibility] horizon_revision`). An unpacked `.hnmod` (`horizon-native.json`) keeps the
 /// pins and hook points its manifest names. The zip is the same for the same files.
 pub fn pack(bundle: &Bundle) -> Result<Vec<u8>, String> {
+    if horizon_mods::rust_mod::descriptor(&bundle.dir)?.is_some() {
+        return horizon_mods::rust_mod::write(&horizon_mods::rust_mod::read(&bundle.dir)?);
+    }
     let horizon = bundle.horizon.clone().filter(|h| format::revision(h)).ok_or_else(|| {
         format!(
             "{} has no [compatibility] horizon_revision (40 hex digits): add the Horizon commit it was made for.",
@@ -636,8 +652,18 @@ pub fn origins(home: &Path) -> Vec<Origin> {
 /// it came from. A mod from the registry or the player's own is never replaced; one from GitHub
 /// is (that is how it updates).
 pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin, String> {
-    let target = home.join(INSTALLED).join(format!("{}.hnmod", packed.id));
-    if target.exists() && origin(home, &packed.id).is_none() {
+    let rust = packed.file.extension().is_some_and(|e| e == "imod");
+    let target = home.join(INSTALLED).join(format!(
+        "{}.{}",
+        packed.id,
+        if rust { "imod" } else { "hnmod" }
+    ));
+    let other = home.join(INSTALLED).join(format!(
+        "{}.{}",
+        packed.id,
+        if rust { "hnmod" } else { "imod" }
+    ));
+    if (target.exists() || other.exists()) && origin(home, &packed.id).is_none() {
         return Err(format!(
             "{} is already installed and not from GitHub: remove it first.",
             packed.id
@@ -659,6 +685,9 @@ pub fn install(home: &Path, found: &Resolved, packed: &Packed) -> Result<Origin,
     let path = origin_path(home, &packed.id);
     fs::write(&path, text).map_err(|e| format!("{}: {e}", path.display()))?;
     java::set_enabled(home, &packed.id, true)?;
+    if other.exists() {
+        fs::remove_file(other).map_err(|e| e.to_string())?;
+    }
     let _ = fs::remove_file(&packed.file);
     Ok(record)
 }
@@ -671,6 +700,7 @@ pub fn remove(home: &Path, id: &str) -> Result<bool, String> {
     for path in [
         origin_path(home, id),
         home.join(INSTALLED).join(format!("{id}.hnmod")),
+        home.join(INSTALLED).join(format!("{id}.imod")),
     ] {
         if let Err(e) = fs::remove_file(&path) {
             if e.kind() != std::io::ErrorKind::NotFound {

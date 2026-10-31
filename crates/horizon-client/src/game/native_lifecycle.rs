@@ -26,6 +26,11 @@ pub(super) struct NativeWorldEpoch(u64);
 /// Non-paused authoritative server ticks since open (not game or frame time).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct NativeTickId(u64);
+impl NativeTickId {
+    pub(super) fn number(self) -> u64 {
+        self.0
+    }
+}
 
 /// Internal state for deciding which events can fire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

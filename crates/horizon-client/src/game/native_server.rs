@@ -279,12 +279,12 @@ impl Game<'_> {
             host.hub.send_to(g.conn, &packet);
         }
     }
-    /// A line of the command's answer, inside `native_perform_command`:
-    /// sent to the player whose command it is after the call, as vanilla
-    /// commands' feedback is.
+    /// A line for the acting player: captured for commands, otherwise sent
+    /// with the guest's action packets after their state is restored.
     pub(super) fn native_feedback(&mut self, line: Text) {
         match &mut self.chat_capture {
             Some(lines) => lines.push(line),
+            None if self.lan_acting.is_some() => self.guest_packets.push(system_chat(&line)),
             None => self.system_message(line),
         }
     }

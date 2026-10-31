@@ -276,7 +276,7 @@ impl Index {
                     .kind
                     .extension()
                     .is_none_or(|e| f.name.ends_with(&format!(".{e}")))
-                    || (p.kind == Kind::Mod && f.name.ends_with(".imod"));
+                    || (matches!(p.kind, Kind::Mod | Kind::NativeMod) && f.name.ends_with(".imod"));
                 if !plain_name(&f.name) || !extension_ok {
                     return Err(at(format!(
                         "{:?} is not a plain file name for a {}",
@@ -558,8 +558,23 @@ impl Facts {
 /// this build doesn't know are refused: their checks come with their formats.
 pub fn inspect(kind: &Kind, path: &Path) -> Result<Facts, String> {
     match kind {
-        Kind::NativeMod => Ok(native::Bundle::read(path)?.manifest.facts()),
+        Kind::NativeMod => {
+            if let Some(declarations) = crate::rust_mod::descriptor(path)? {
+                crate::rust_mod::read(path)?;
+                Ok(Facts {
+                    id: Some(declarations.meta.id),
+                    version: Some(declarations.meta.version),
+                    api: format!("rust-{}", crate::rust_mod::API),
+                    ..Facts::default()
+                })
+            } else {
+                Ok(native::Bundle::read(path)?.manifest.facts())
+            }
+        }
         Kind::Mod => {
+            if crate::rust_mod::descriptor(path)?.is_some() {
+                return Err("Rust source is native code: submit it as kind native-mod".into());
+            }
             let Package { manifest: m, wasm } = Package::read(path)?;
             crate::Content::read(path, &m)?;
             let api_level = match wasm {

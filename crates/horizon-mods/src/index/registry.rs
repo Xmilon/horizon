@@ -355,7 +355,7 @@ pub fn project(entry: &Entry, src: &Sources) -> Result<Project, Vec<String>> {
         match version(entry, v, src) {
             // A mod that turned native keeps its `.hmod` versions published, but the index offers
             // only its native ones: a launcher never installs a `.hmod` as a native mod.
-            Ok(_) if file_kind(entry, v) != entry.kind => {}
+            Ok(version) if entry.kind == Kind::NativeMod && version.side.is_some() => {}
             Ok(v) => versions.push(v),
             Err(e) => errors.push(format!("{id} {}: {e}", v.version)),
         }
@@ -386,10 +386,15 @@ pub fn project(entry: &Entry, src: &Sources) -> Result<Project, Vec<String>> {
 
 /// The kind of a version's file: the project's, but a `.hmod` of a mod that turned native
 /// (`review`) is a WebAssembly mod's.
-fn file_kind(entry: &Entry, v: &EntryVersion) -> Kind {
+fn file_kind(entry: &Entry, v: &EntryVersion, path: &Path) -> Result<Kind, String> {
     match entry.kind {
-        Kind::NativeMod if v.file.ends_with(".hmod") => Kind::Mod,
-        _ => entry.kind.clone(),
+        Kind::NativeMod if v.file.ends_with(".hmod") => Ok(Kind::Mod),
+        Kind::NativeMod
+            if crate::imod::is_imod(path) && crate::rust_mod::descriptor(path)?.is_none() =>
+        {
+            Ok(Kind::Mod)
+        }
+        _ => Ok(entry.kind.clone()),
     }
 }
 
@@ -425,7 +430,7 @@ fn version_at(
         (None, Some(_)) => return Err("signed, but the project has no key".into()),
         (None, None) => {}
     }
-    let facts = inspect(&file_kind(entry, v), path)?;
+    let facts = inspect(&file_kind(entry, v, path)?, path)?;
     if facts.id.as_ref().is_some_and(|id| *id != entry.id) {
         return Err(format!(
             "the file's id is {:?}, not {:?}",

@@ -110,17 +110,25 @@ pub fn check_project(
     Ok((version, check))
 }
 
+fn native_installed(home: &Path, id: &str) -> bool {
+    ["hnmod", "imod"].iter().any(|extension| {
+        home.join(crate::native_mods::INSTALLED)
+            .join(format!("{id}.{extension}"))
+            .is_file()
+    })
+}
+
 /// Content mods load from the active folder; native mods use the build selection.
 pub fn is_enabled(home: &Path, id: &str) -> bool {
-    if let Some(m) = crate::backend::local_mods(home).iter().find(|m| {
-        m.id == id
-            && !home
-                .join(crate::native_mods::INSTALLED)
-                .join(format!("{id}.hnmod"))
-                .exists()
-    }) {
-        return m.enabled;
+    if !native_installed(home, id) {
+        if let Some(m) = crate::backend::local_mods(home).iter().find(|m| m.id == id) {
+            return m.enabled;
+        }
     }
+    selection_enabled(home, id)
+}
+
+pub(crate) fn selection_enabled(home: &Path, id: &str) -> bool {
     let key = format!("mod.{id}");
     fs::read_to_string(home.join(MODS_LIST))
         .unwrap_or_default()
@@ -131,14 +139,13 @@ pub fn is_enabled(home: &Path, id: &str) -> bool {
 
 /// Moves content mods between folders; native mods keep their build-selection lines.
 pub fn set_enabled(home: &Path, id: &str, on: bool) -> Result<(), String> {
-    if !home
-        .join(crate::native_mods::INSTALLED)
-        .join(format!("{id}.hnmod"))
-        .exists()
-        && crate::backend::set_local_mod_enabled(home, id, on)?
-    {
+    if !native_installed(home, id) && crate::backend::set_local_mod_enabled(home, id, on)? {
         return Ok(());
     }
+    set_selection(home, id, on)
+}
+
+pub(crate) fn set_selection(home: &Path, id: &str, on: bool) -> Result<(), String> {
     let path = home.join(MODS_LIST);
     let text = fs::read_to_string(&path).unwrap_or_default();
     let key = format!("mod.{id}");

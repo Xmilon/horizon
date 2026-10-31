@@ -244,7 +244,13 @@ pub(super) fn spawn_loader(
                     pack_error = Some(error.to_string());
                     vanilla_root.clone()
                 });
-            let root = mods::content_root(&root, &dev_mods);
+            let root = match mods::content_root(&root, &dev_mods) {
+                Ok(root) => root,
+                Err(error) => {
+                    let _ = sender.send(LoaderMsg::Done(Err(error.to_string())));
+                    return;
+                }
+            };
             let result = load_resources(
                 root,
                 &vanilla_root,

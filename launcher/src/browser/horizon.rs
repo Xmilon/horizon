@@ -629,7 +629,16 @@ fn install_version(
     }
     let native = p.kind == index::Kind::NativeMod;
     let relative = match native {
-        true => format!("{}/{}.hnmod", crate::native_mods::INSTALLED, p.id),
+        true => format!(
+            "{}/{}.{}",
+            crate::native_mods::INSTALLED,
+            p.id,
+            if v.file.name.ends_with(".imod") {
+                "imod"
+            } else {
+                "hnmod"
+            }
+        ),
         false => relative(project.kind, &p.id, &v.file.name)?,
     };
     let mut list = installed::Installed::load(home);
@@ -674,6 +683,9 @@ fn install_version(
     let checked = index::check_file(index, p, v, &path).and_then(|trust| {
         // Only Rust and TOML sources, for the mod the index names: nothing in it runs here.
         match native {
+            true if horizon_mods::rust_mod::descriptor(&path)?.is_some() => {
+                horizon_mods::rust_mod::read(&path).map(|_| trust)
+            }
             true => index::native::Bundle::read(&path).and_then(|b| match b.manifest.id == p.id {
                 true => Ok(trust),
                 false => Err(format!("it is {}, not {}", b.manifest.id, p.id)),
@@ -750,7 +762,10 @@ fn stays(native: bool, old: &str) -> bool {
 /// `horizon-native-mods/<id>.hnmod`).
 pub fn mod_id(entry: &installed::Entry) -> Option<&str> {
     if let Some(rest) = entry.file.strip_prefix(crate::native_mods::INSTALLED) {
-        return rest.strip_prefix('/')?.strip_suffix(".hnmod");
+        let rest = rest.strip_prefix('/')?;
+        return rest
+            .strip_suffix(".hnmod")
+            .or_else(|| rest.strip_suffix(".imod"));
     }
     let rest = entry.file.strip_prefix(java::MODS_DIR)?.strip_prefix('/')?;
     Some(

@@ -430,7 +430,8 @@ impl Game<'_> {
         phase: WorldPhase,
         error_text: &str,
     ) {
-        let _ = (context, phase, error_text);
+        let _ = (context, error_text);
+        self.rust_world_event(phase);
     }
     /// The authoritative server tick's phases: `ServerTickStart` before any
     /// level is ticked (NeoForge's `ServerTickEvent.Pre`), `ServerTickEnd`
@@ -443,7 +444,7 @@ impl Game<'_> {
         context: &NativeLifecycleContext,
         phase: ServerTickPhase,
     ) {
-        let _ = (context, phase);
+        self.rust_tick_event(context, phase);
     }
     /// The HUD (not drawn under F1), after the minimap: place a box with
     /// `corners.place` (boxes stack away from their edge) and draw it with
@@ -456,7 +457,7 @@ impl Game<'_> {
     /// (`key.keyboard.z`, `key.mouse.left`): keys on any screen (check
     /// `native_playing`), mouse buttons while playing. Repeats are left out.
     pub(super) fn native_key(&mut self, key: &str, pressed: bool) {
-        let _ = (key, pressed);
+        self.rust_event(horizon_mod_api::Event::Key { name: key, pressed }, None);
     }
     /// Wheel steps while playing: set `claimed` to keep them from the hotbar.
     pub(super) fn native_wheel(&mut self, steps: f32, claimed: &mut bool) {
@@ -478,17 +479,17 @@ impl Game<'_> {
     }
     /// Options > Mods lists the native mods: push yours.
     pub(super) fn native_mods(&mut self, mods: &mut Vec<NativeMod>) {
-        let _ = mods;
+        self.rust_mod_rows(mods);
     }
     /// The buttons of mod `mod_id`'s settings page, under its keys: push
     /// their labels when it is yours. Asked again each time the page opens
     /// and after each click.
     pub(super) fn native_settings(&mut self, mod_id: &str, buttons: &mut Vec<String>) {
-        let _ = (mod_id, buttons);
+        self.rust_settings(mod_id, buttons);
     }
     /// Button `button` of mod `mod_id`'s settings page was clicked.
     pub(super) fn native_settings_click(&mut self, mod_id: &str, button: usize) {
-        let _ = (mod_id, button);
+        self.rust_settings_click(mod_id, button);
     }
     /// The player did `event` on mod `mod_id`'s panel (`native_panel_items`):
     /// act on it when it is yours. API 2.
@@ -505,13 +506,13 @@ impl Game<'_> {
         block: &str,
         entity: &mut Option<(String, Compound)>,
     ) {
-        let _ = (block, entity);
+        self.rust_machine_create(block, entity);
     }
     /// Whether block `block`'s block entity ticks (`EntityBlock.getTicker`):
     /// set `ticks` when it is yours. Asked for each of the block's states
     /// when a world opens. API 15.
     pub(super) fn native_block_entity_ticks(&self, block: &str, ticks: &mut bool) {
-        let _ = (block, ticks);
+        self.rust_machine_ticks(block, ticks);
     }
     /// Block `block`'s block entity has item slots (a `WorldlyContainer`):
     /// set `container` when the block is yours. Asked once for each mod
@@ -525,7 +526,7 @@ impl Game<'_> {
         block: &str,
         container: &mut Option<ModContainer>,
     ) {
-        let _ = (block, container);
+        self.rust_machine_container(block, container);
     }
     /// A server tick of the block entity at `pos`, in vanilla's order among
     /// the others (`Level.tickBlockEntities`), when its `id` is yours: read
@@ -537,14 +538,14 @@ impl Game<'_> {
     /// dropped. Clients, the window's own in single player included, don't
     /// get it yet. API 17.
     pub(super) fn native_block_entity_tick(&mut self, pos: [i32; 3], entity: &mut ModBlockEntity) {
-        let _ = (pos, entity);
+        self.rust_machine_tick(pos, entity);
     }
     /// A menu opens on this client for block `block`, a mod's: set `screen`
     /// when the block is yours, to lay its screen out (`native_screen_draw`
     /// draws it). The server asks it too: a slot it hides is not in the menu
     /// there either, so shift-clicks never fill it. API 19.
     pub(super) fn native_screen(&self, block: &str, screen: &mut Option<NativeScreen>) {
-        let _ = (block, screen);
+        self.rust_screen(block, screen);
     }
     /// Draw block `block`'s screen at `origin` (its top left, GUI pixels),
     /// over a plain panel with its slots' frames and under the items and
@@ -560,7 +561,7 @@ impl Game<'_> {
         batch: &mut HudBatch,
         origin: [f32; 2],
     ) {
-        let _ = (block, data, batch, origin);
+        self.rust_screen_draw(block, data, batch, origin);
     }
     /// A left or right (`right`) press at `at` (GUI pixels from the screen's
     /// top left, so outside it too) on block `block`'s screen, a mod's, over
@@ -575,7 +576,7 @@ impl Game<'_> {
         right: bool,
         button: &mut Option<i32>,
     ) {
-        let _ = (block, data, at, right, button);
+        self.rust_screen_click(block, data, at, right, button);
     }
     /// The tooltip at `at` (as in `native_screen_click`) on block `block`'s
     /// screen, a mod's, over no item: push its lines when it is over
@@ -587,7 +588,7 @@ impl Game<'_> {
         at: [f32; 2],
         lines: &mut Vec<String>,
     ) {
-        let _ = (block, data, at, lines);
+        self.rust_screen_tooltip(block, data, at, lines);
     }
     /// A player pressed menu button `id` on the menu of the mod block entity
     /// at `pos` (`AbstractContainerMenu.clickMenuButton`), on the server:
@@ -599,7 +600,7 @@ impl Game<'_> {
         entity: &mut ModBlockEntity,
         id: i32,
     ) {
-        let _ = (pos, entity, id);
+        self.rust_machine_button(pos, entity, id);
     }
     /// The commands native mods add to the server's command tree: push
     /// yours. Asked once when a world opens to players (a dedicated
@@ -607,7 +608,7 @@ impl Game<'_> {
     /// chat box then completes them as vanilla's, within their level. A
     /// name vanilla has is left out. API 8.
     pub(super) fn native_register_commands(&mut self, commands: &mut Vec<NativeCommand>) {
-        let _ = commands;
+        self.rust_commands(commands);
     }
     /// A player's command on the server (`Commands.performCommand`),
     /// without its slash, for a command a mod registered and the player's
@@ -620,7 +621,15 @@ impl Game<'_> {
         command: &str,
         ran: &mut bool,
     ) {
-        let _ = (player, command, ran);
+        if !*ran {
+            *ran = self.rust_event(
+                horizon_mod_api::Event::Command {
+                    player: player.uuid,
+                    command,
+                },
+                None,
+            );
+        }
     }
     /// A click in a menu a mod opened (`native_open_menu`), which moved
     /// nothing: the menu's `slot` (its own first, then the player's
@@ -667,7 +676,16 @@ impl Game<'_> {
         face: [i32; 3],
         claimed: &mut bool,
     ) {
-        let _ = (stack, pos, face, claimed);
+        if !*claimed {
+            *claimed = self.rust_event(
+                horizon_mod_api::Event::UseItemOn {
+                    stack,
+                    position: pos,
+                    face,
+                },
+                None,
+            );
+        }
     }
     /// A player uses `stack` (right click) with `self.hand`: in the air, or
     /// on a block once `native_use_item_on` let it through, where `Item.use`
@@ -675,7 +693,9 @@ impl Game<'_> {
     /// hand swings and the item's own use doesn't run. Server-side, for every
     /// player of the world; an item on cooldown is never used. API 13.
     pub(super) fn native_use_item(&mut self, stack: &ItemStack, claimed: &mut bool) {
-        let _ = (stack, claimed);
+        if !*claimed {
+            *claimed = self.rust_event(horizon_mod_api::Event::UseItem { stack }, None);
+        }
     }
     /// A player breaks the block `state` at `pos`, once the game allowed it
     /// (the held item can break blocks, the debug stick didn't take the
@@ -689,7 +709,16 @@ impl Game<'_> {
         state: BlockStateId,
         canceled: &mut bool,
     ) {
-        let _ = (pos, state, canceled);
+        if !*canceled {
+            let state = self.rust_block_state(state);
+            *canceled = self.rust_event(
+                horizon_mod_api::Event::DestroyBlock {
+                    position: pos,
+                    state,
+                },
+                None,
+            );
+        }
     }
     /// A player placed `stack` as the block `state` at `pos`: where
     /// `BlockItem.place` set it, before the stack shrinks. It only hears; a
@@ -701,7 +730,15 @@ impl Game<'_> {
         pos: [i32; 3],
         state: BlockStateId,
     ) {
-        let _ = (stack, pos, state);
+        let _ = stack;
+        let state = self.rust_block_state(state);
+        self.rust_event(
+            horizon_mod_api::Event::PlaceBlock {
+                position: pos,
+                state,
+            },
+            None,
+        );
     }
 }
 

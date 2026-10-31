@@ -73,6 +73,8 @@ mod combat;
 mod command_blocks;
 mod command_harness;
 mod commands;
+#[path = "compiled_mods.rs"]
+mod compiled_mods;
 mod composter;
 mod consume;
 mod control;
@@ -207,6 +209,7 @@ mod remote_vehicles;
 mod render_control;
 mod render_tick;
 mod respawn_anchor;
+mod rust_mods;
 mod saves_control;
 mod saving;
 mod scoreboard;
@@ -4872,6 +4875,10 @@ impl Game<'_> {
             && let Some(hit) = block_hit
         {
             let held = self.held().cloned();
+            if self.hand == Hand::Main && self.rust_use_block(hit.pos, hit.face) {
+                self.swing_arm();
+                return Ok(true);
+            }
             if self.use_lectern(hit.pos, held.as_ref()) {
                 self.swing_arm();
                 return Ok(true);
@@ -17065,7 +17072,7 @@ pub fn run() -> Result<()> {
             pack_error = Some(e.to_string());
             vanilla_root.clone()
         });
-    options.resources = mods::content_root(&options.resources, &options.dev_mods);
+    options.resources = mods::content_root(&options.resources, &options.dev_mods)?;
     let loaded = load_resources(
         options.resources.clone(),
         &vanilla_root,

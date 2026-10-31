@@ -169,6 +169,24 @@ impl SyncData {
             );
             registries.push(((*key).to_owned(), Entries { names, json }));
         }
+        let native_manifest = resources.join(horizon_mod_api::persistence::FILE);
+        if native_manifest.is_file() {
+            let manifest: horizon_mod_api::persistence::Manifest =
+                serde_json::from_slice(&std::fs::read(native_manifest).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            for (key, registry) in manifest.registries {
+                let (names, json): (Vec<_>, Vec<_>) = registry.entries.into_iter().unzip();
+                dynamic.registries.insert(
+                    key.clone(),
+                    names
+                        .iter()
+                        .zip(&json)
+                        .map(|(n, v)| (n.clone(), Some(json_to_nbt(v))))
+                        .collect(),
+                );
+                registries.push((key, Entries { names, json }));
+            }
+        }
         let tags = Self::load_tags(&root, &builtin, &dynamic);
         let content_identity = if resources.join(crate::content_identity::MARKER).exists() {
             Some(crate::content_identity::identity(resources)?)
@@ -225,7 +243,7 @@ impl SyncData {
                             id: name.clone(),
                             data: match changed {
                                 Some(json) => Some(json_to_nbt(&json)),
-                                None if known_pack => None,
+                                None if known_pack && key.starts_with("minecraft:") => None,
                                 None => Some(json_to_nbt(json)),
                             },
                         }
@@ -353,6 +371,25 @@ fn changed_dimension_type(name: &str, json: &Value, levels: &LevelShapes) -> Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_registry_values_are_sent_even_when_the_vanilla_pack_is_known() {
+        let mut sync = SyncData::empty();
+        sync.registries.push((
+            "ruby:materials".into(),
+            Entries {
+                names: vec!["ruby:ruby".into()],
+                json: vec![serde_json::json!({"power":10})],
+            },
+        ));
+        let packets = sync.registry_packets(true, &LevelShapes::VANILLA);
+        assert_eq!(packets[0].registry, "ruby:materials");
+        assert_eq!(packets[0].entries[0].id, "ruby:ruby");
+        assert_eq!(
+            packets[0].entries[0].data.as_ref().unwrap().get("power"),
+            Some(&Tag::Int(10))
+        );
+    }
 
     #[test]
     fn json_becomes_nbt() {

@@ -9,6 +9,7 @@ pub mod imod;
 pub mod index;
 pub mod manifest;
 pub mod modpack;
+pub mod rust_mod;
 
 pub use content::Content;
 pub use manifest::{Capability, Manifest, Package, Side, find};

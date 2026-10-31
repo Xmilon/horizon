@@ -1,4 +1,90 @@
 use super::*;
+
+#[test]
+fn rust_block_states_reach_every_engine_table() {
+    let root = std::env::temp_dir().join(format!(
+        "horizon-native-states-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&root).unwrap();
+    let facts = r#"{"states":[["minecraft:stone",false,false,"Block{minecraft:stone}","minecraft:stone"]],"defaults":{"minecraft:stone":0}}"#;
+    fs::write(root.join("facts.json"), facts).unwrap();
+    fs::write(
+        root.join("gameplay-facts.json"),
+        r#"{"states":[{"item":"minecraft:stone","block_entity":false}]}"#,
+    )
+    .unwrap();
+    let declarations = horizon_mods::imod::InoxFile {
+        meta: horizon_mods::imod::ModMeta {
+            id: "ruby".into(),
+            name: "Ruby".into(),
+            version: "1".into(),
+            ..Default::default()
+        },
+        block: BTreeMap::from([(
+            "machine".into(),
+            horizon_mods::imod::BlockDecl {
+                template: "minecraft:stone".into(),
+                texture: Some("minecraft:block/stone".into()),
+                ..Default::default()
+            },
+        )]),
+        ..Default::default()
+    };
+    let mut content = Content::from_declarations(&declarations, BTreeMap::new()).unwrap();
+    content.blocks[0].native = Some(horizon_mods::content::NativeBlock {
+        properties: BTreeMap::from([("active".into(), vec!["false".into(), "true".into()])]),
+        default_state: BTreeMap::from([("active".into(), "true".into())]),
+        block_entity: true,
+        ..Default::default()
+    });
+    let mods = [ContentMod {
+        id: "ruby".into(),
+        content,
+    }];
+    let plan = Plan::new(&root, &mods).unwrap();
+    let mut table: J = serde_json::from_str(facts).unwrap();
+    plan.json("facts.json", &mut table).unwrap();
+    let bytes = serde_json::to_vec(&table).unwrap();
+    let registry =
+        horizon_world::registry::BlockRegistry::from_facts_json(bytes.as_slice()).unwrap();
+    assert_eq!(registry.len(), 3);
+    assert_eq!(registry.default_state("ruby:machine").unwrap().0, 2);
+    assert_eq!(
+        registry
+            .state(horizon_world::registry::BlockStateId(1))
+            .unwrap()
+            .properties["active"],
+        "false"
+    );
+    let mut table: J =
+        serde_json::from_str(r#"{"states":[{"item":"minecraft:stone","block_entity":false}]}"#)
+            .unwrap();
+    plan.json("gameplay-facts.json", &mut table).unwrap();
+    let json = serde_json::to_value(table).unwrap();
+    assert_eq!(json["states"][2]["block_entity"], true);
+    let mut table =
+        serde_json::from_str(r#"{"minecraft:stone":{"schema":{},"states":[{}]}}"#).unwrap();
+    plan.json("model-states.json", &mut table).unwrap();
+    let json = serde_json::to_value(table).unwrap();
+    assert_eq!(json["ruby:machine"]["states"][1]["active"], "true");
+    let mut table =
+        serde_json::from_str(r#"{"minecraft:stone":{"default":0,"states":[0]}}"#).unwrap();
+    plan.json("render-definitions.json", &mut table).unwrap();
+    let json = serde_json::to_value(table).unwrap();
+    assert_eq!(json["ruby:machine"]["states"], serde_json::json!([1, 2]));
+    let mut collision = Tag::compound([("cached_shapes", Tag::IntArray(vec![7]))]);
+    plan.nbt(&mut collision);
+    assert_eq!(
+        collision.get("cached_shapes"),
+        Some(&Tag::IntArray(vec![7, 7, 7]))
+    );
+    fs::remove_dir_all(root).unwrap();
+}
 use crate::{assets::Assets, blocks::BlockFacts, items::Items};
 
 #[test]

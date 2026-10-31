@@ -5,11 +5,13 @@ sets, ore generation, tags and creative inventory tabs. A mod is one `inox.toml`
 data files it wants (recipes, advancements...). The game reads it at start, writes the vanilla files a
 content mod would need (declarations, blockstates, models, item definitions, names, loot tables, tags,
 worldgen features, equipment assets, creative tabs), and registers everything through the same loader as `.hmod`
-content mods ([mods.md](mods.md), [modpacks.md](modpacks.md)). No code runs and nothing is compiled: an
-`.imod` is as safe as a resource pack.
+content mods ([mods.md](mods.md), [modpacks.md](modpacks.md)). With no `[rust]` section, no mod code
+runs and nothing is compiled: this is a data-only package.
 
-Inox is the first step towards a full mod loader. Behaviour that needs code (a block that does something
-new when used, a new entity, a fluid) comes later; see [What comes next](#what-comes-next).
+For code, an `.imod` can instead hold an ordinary Cargo library with a `[rust]` entrypoint:
+see [Rust mods](rust-mods.md). That path adds typed custom registries, Rust behavior and persistent
+machines, reuses these declarations directly from Rust, and requires a trusted native build. The
+extension alone no longer implies a data-only package. Entity and fluid engine adapters remain future work.
 
 - [Quick start](#quick-start)
 - [The file](#the-file)
@@ -713,17 +715,13 @@ Try it: open the creative inventory and turn to page 2 for the Ruby tab, search 
 
 ## What comes next
 
-Inox is meant to grow into a full loader, step by step, each step built into the game rather than
-patched in:
+Inox supports the data declarations described here and the [Rust API](rust-mods.md): typed custom
+registries, block/item callbacks, independent block states, persistent machines, container screens,
+commands, settings and key bindings. Rust source is compiled together with the selected native mods.
 
-1. **Now:** blocks, items, tool sets, food, armour, ore generation, tags and creative tabs declared in
-   data (this page).
-2. More worldgen shorthands (trees, flowers, nether and end ores), data generation (recipes made from
-   the declarations), mob armour.
-3. Behaviour hooks for declared blocks and items (use, break, attack, place), called by the game itself.
-4. Code in `.imod`s: a sandboxed runtime again (the removed WebAssembly runtime is the starting point),
-   with a registry API instead of templates.
-5. Block entities, entities and fluids, once the game has registries for them.
+The next engine adapters are independent entities and fluids. More worldgen shorthands (trees,
+flowers, nether and end ores), recipe data generation and mob armour are separate content features.
+A sandboxed runtime and loading separately compiled Rust libraries are not part of this milestone.
 
 ## Managing installed mods
 
@@ -732,7 +730,9 @@ The launcher accepts `.imod`, `.hmod` and folders containing `inox.toml` or
 content mod into the selected Horizon instance, and `mods list` to list local mods
 alongside browser installs. `mods remove <id>` removes an installed local mod.
 
-`horizon-launcher mods disable <id>` moves content and Inox mods from
+Rust `.imod` source packages install into `horizon-native-mods/` and require a native build.
+
+`horizon-launcher mods disable <id>` moves content and data-only Inox mods from
 `horizon-mods/` to `horizon-mods-disabled/`; `mods enable <id>` moves them back.
 A conflicting destination is refused without overwriting it. Restart the game to
 apply the change. Native mods keep their build-time selection and require rebuilding.

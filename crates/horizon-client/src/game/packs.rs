@@ -323,7 +323,7 @@ pub(super) fn stage_pack(
     progress: &super::Progress,
 ) -> horizon_client::Result<StagedPack> {
     let root = startup_root(vanilla_root, selected, server)?;
-    let root = super::mods::content_root(&root, dev_mods);
+    let root = super::mods::content_root(&root, dev_mods)?;
     progress.set(1);
     let render = Arc::new(assets.reload(&root)?);
     let mut atlas = HudAtlas::build_over(&root, vanilla_root)?;

@@ -745,6 +745,9 @@ enum Cmd {
     /// revision they pin, with the launcher's own Rust, as the version the "Native mods" instance
     /// plays. Not sandboxed: the mods' code runs with your rights
     NativeBuild {
+        /// Copy this Horizon checkout into build staging (required for an unreleased Rust mod API)
+        #[arg(long)]
+        source: Option<PathBuf>,
         /// A mod folder (horizon-mixin.toml, or an unpacked .hnmod), or a folder of them
         /// (default: the native mods installed and turned on in the instance)
         folder: Option<PathBuf>,
@@ -1169,6 +1172,7 @@ fn execute(command: Cmd, as_json: bool) -> Result<(), String> {
             }
         }
         Cmd::NativeBuild {
+            source,
             folder,
             instance,
             version,
@@ -1191,11 +1195,12 @@ fn execute(command: Cmd, as_json: bool) -> Result<(), String> {
                     Some(&target),
                 ),
             };
-            let built = horizon_launcher::native_mods::build(
+            let built = horizon_launcher::native_mods::build_with_source(
                 &base,
                 &folder,
                 target,
                 allow_version_mismatch,
+                source.as_deref(),
                 |step| eprintln!("{}", step.label()),
             )
             .map_err(|e| {
@@ -2112,9 +2117,10 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
             let local: Vec<_> = backend::local_mods(&home)
                 .into_iter()
                 .filter(|m| {
-                    !list
-                        .iter()
-                        .any(|e| horizon::mod_id(e) == Some(m.id.as_str()))
+                    github_mods::origin(&home, &m.id).is_none()
+                        && !list
+                            .iter()
+                            .any(|e| horizon::mod_id(e) == Some(m.id.as_str()))
                 })
                 .collect();
             if java.is_none() && !as_json {
@@ -2177,6 +2183,13 @@ fn mods(action: ModsCmd, as_json: bool) -> Result<(), String> {
         }
         ModsCmd::Install { project, .. } if java.is_none() && Path::new(&project).exists() => {
             let m = backend::install_local_mod(&home, Path::new(&project))?;
+            if m.file.starts_with(home.join(native_mods::INSTALLED)) {
+                let mut settings = backend::Settings::load();
+                settings.native_mods = true;
+                settings.native_mods_noticed = true;
+                settings.save();
+                eprintln!("Installed Rust source; build the selected native mods before playing.");
+            }
             println!("Installed {} {}", m.name, m.version);
         }
         ModsCmd::Search {
