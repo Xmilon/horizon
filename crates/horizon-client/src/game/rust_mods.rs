@@ -1,5 +1,5 @@
 //! Bridge the public SDK to the existing native hook sites. No engine internals enter the SDK.
-use super::{Game, compiled_mods, execution_role::ExecutionRole};
+use super::{Game, execution_role::ExecutionRole};
 use horizon_client::{containers::ModBlockEntity, text::Text};
 use horizon_core::position::BlockPos;
 use horizon_mod_api::{Action, BlockState, Event, Host, Runtime};
@@ -7,11 +7,21 @@ use horizon_world::{chunk, level::flags};
 use std::sync::OnceLock;
 
 static RUNTIME: OnceLock<Result<Runtime, String>> = OnceLock::new();
+static COMPILED: OnceLock<fn() -> Vec<horizon_mod_api::ModSource>> = OnceLock::new();
+
+/// Called by a modded executable before `entry::main`, so the mods live in their own small crate
+/// and changing one recompiles only that crate and the link, never this library.
+pub fn set_compiled_mods(mods: fn() -> Vec<horizon_mod_api::ModSource>) {
+    let _ = COMPILED.set(mods);
+}
 pub(super) fn initialize(
     data: &[(String, horizon_mods::Content)],
 ) -> Result<&'static Runtime, String> {
     RUNTIME
-        .get_or_init(|| Runtime::build_with_content(compiled_mods::mods(), data))
+        .get_or_init(|| {
+            let mods = COMPILED.get().map(|mods| mods()).unwrap_or_default();
+            Runtime::build_with_content(mods, data)
+        })
         .as_ref()
         .map_err(Clone::clone)
 }

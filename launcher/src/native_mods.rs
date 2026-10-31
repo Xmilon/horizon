@@ -899,7 +899,13 @@ pub fn build_with_source(
             if has_mods_feature(&stage) {
                 compile.args(["--features", FEATURES]);
             }
-            compile.args(["-p", "horizon-client", "--bin", "horizon-client"]);
+            // With Rust mods the generated package holds them, so the game library stays cached.
+            let package = if projects.is_empty() {
+                "horizon-client"
+            } else {
+                horizon_mods::rust_mod::GAME_PACKAGE
+            };
+            compile.args(["-p", package, "--bin", "horizon-client"]);
             let mut crates = 0;
             run(compile, "Compiling the game", |line| {
                 if let Some(name) = line.trim_start().strip_prefix("Compiling ") {

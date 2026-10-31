@@ -73,8 +73,6 @@ mod combat;
 mod command_blocks;
 mod command_harness;
 mod commands;
-#[path = "compiled_mods.rs"]
-mod compiled_mods;
 mod composter;
 mod consume;
 mod control;
@@ -210,6 +208,7 @@ mod render_control;
 mod render_tick;
 mod respawn_anchor;
 mod rust_mods;
+pub use rust_mods::set_compiled_mods;
 mod saves_control;
 mod saving;
 mod scoreboard;

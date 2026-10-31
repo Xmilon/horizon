@@ -179,7 +179,10 @@ selection, as for `.hnmod`. Data-only packages still move between `horizon-mods/
 page UI is changed for this API.
 
 The compiler stages Cargo projects, adds library dependencies and entrypoint glue, and embeds their
-assets. It preserves the existing mixin path when `.hnmod` mods are selected alongside Rust projects.
+assets. The mods and that glue live in a generated executable package, `compiled-mods/horizon-game`,
+which links the unchanged `horizon-client` library (the game is in the library; its own `main.rs` only
+adds the allocator). Changing a mod's code, assets or data therefore recompiles that mod, the small
+package and the link, while the first build compiles everything once. It preserves the existing mixin path when `.hnmod` mods are selected alongside Rust projects.
 The native build key includes source inputs, the selected Horizon source, toolchain/profile and the
 resolved combined lockfile. Compilation uses that lockfile. An unreleased SDK needs `--source`;
 an upstream Horizon checkout without this SDK fails with an explanation.

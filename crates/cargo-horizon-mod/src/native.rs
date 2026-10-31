@@ -144,7 +144,7 @@ pub(super) fn build(args: &[String]) -> Result<PathBuf, String> {
             "-j",
             "1",
             "-p",
-            "horizon-client",
+            rust_mod::GAME_PACKAGE,
             "--bin",
             "horizon-client",
         ]);
