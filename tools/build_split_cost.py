@@ -55,3 +55,33 @@ if summary:
         for row in rows:
             out.write(f"| {row['step']} | {row['seconds']} |\n")
         out.write('\n' + report['cache'] + '\n\n' + report['limit'] + '\n')
+
+# Replay the real arrow harness's commands against a freshly built client
+# probe's dep-info. This isolates selection from running Java/game fixtures.
+run('split-client-probe', ['cargo', 'build', '--locked', '-p', 'horizon-client', '--example', 'client_probe'])
+import sys
+sys.path.insert(0, str(Path.cwd() / 'tools'))
+import parity
+parity.TARGET = Path(os.environ['CARGO_TARGET_DIR'])
+binary = parity.TARGET / 'debug/examples/client_probe'
+trace = {'modules': [], 'read': [], 'commands': [
+    ['cargo', 'build', '--locked', '-p', 'horizon-client', '--example', 'client_probe'],
+    [str(binary), 'arrow_probe', '.local/horizon-client/26.3', '/tmp/arrow-replay', '--describe'],
+]}
+dependencies, artifacts = parity.dependencies(trace)
+game_sources = [p for p in dependencies if p == 'crates/horizon-client/src/game.rs' or p.startswith('crates/horizon-client/src/game/')]
+assert game_sources, 'The rebuilt probe must actually list gameplay sources.'
+print('Rebuilt arrow probe lists', len(game_sources), 'gameplay sources', flush=True)
+# Empty records exclude other harnesses from this one-harness experiment;
+# this is not a measurement of the whole fleet's historical records.
+records = {name: {'dependencies': [script.relative_to(parity.ROOT).as_posix()], 'artifacts': []}
+           for name, script in parity.harnesses().items()}
+records['arrow'] = {'dependencies': dependencies, 'artifacts': artifacts, 'status': 'fail'}
+parity.STATE.parent.mkdir(parents=True, exist_ok=True)
+parity.STATE.write_text(json.dumps({'harnesses': records, 'hashes': {}}))
+Path('scope-changed.txt').write_text('crates/horizon-client/src/game/combat.rs\n')
+run('split-arrow-scope-default', ['python3', 'tools/parity.py', '--changed-files', 'scope-changed.txt', '--list'])
+run('split-arrow-scope-by-crate', ['python3', 'tools/parity.py', '--changed-files', 'scope-changed.txt', '--list', '--by-crate'])
+for name in ('split-arrow-scope-default', 'split-arrow-scope-by-crate'):
+    print(name + ':\n' + Path('build-split-' + name + '.log').read_text(), flush=True)
+Path('build-split-probe-dependencies.log').write_text(json.dumps({'trace': trace, 'dependencies': dependencies, 'artifacts': artifacts}, indent=2))
