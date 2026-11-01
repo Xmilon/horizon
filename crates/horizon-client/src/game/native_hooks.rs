@@ -1109,6 +1109,10 @@ impl Game<'_> {
     ) {
         let _ = (pos, state, partial, canceled);
     }
+    /// Render-thread notification after a resource-pack reload has applied successfully.
+    /// Atlas, models, renderer and client caches already refer to the new resources.
+    /// Selection/F3+T and server-pack reloads share this point; initial startup does not.
+    pub(super) fn native_client_resources_reloaded(&mut self) {}
     /// The world frame's local visual sources. Push requests; Horizon validates
     /// and limits them before rendering. Called only while a world is visible.
     pub(super) fn native_visuals(
