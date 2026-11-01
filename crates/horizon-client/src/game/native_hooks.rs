@@ -1098,6 +1098,17 @@ impl Game<'_> {
     ) {
         let _ = (hand, stack, partial, swing, equip, canceled);
     }
+    /// Before an eligible targeted block's selection outline is built.
+    /// Cancel skips only the default block highlight, after normal HUD and game-mode gates.
+    pub(super) fn native_block_highlight(
+        &self,
+        pos: [i32; 3],
+        state: BlockStateId,
+        partial: f32,
+        canceled: &mut bool,
+    ) {
+        let _ = (pos, state, partial, canceled);
+    }
     /// The world frame's local visual sources. Push requests; Horizon validates
     /// and limits them before rendering. Called only while a world is visible.
     pub(super) fn native_visuals(
