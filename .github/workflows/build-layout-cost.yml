@@ -1,0 +1,32 @@
+name: Revised library layout cost (fork only)
+on:
+  push:
+    branches: [bench/5446-layout]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      RUST_MIN_STACK: '33554432'
+      CARGO_BUILD_JOBS: '2'
+      CARGO_INCREMENTAL: '1'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/layout-target
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compare main with the revised split
+        run: |
+          cp tools/build_layout_cost.py /tmp/build_layout_cost.py
+          python3 /tmp/build_layout_cost.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: revised-layout-cost
+          path: |
+            layout-cost.json
+            layout-*.log
