@@ -125,8 +125,8 @@ For mods that run where the world is simulated: a dedicated server, a LAN host, 
   single-player world, and changes that are no text edit (dye, glow ink, wax, `/data`, `/setblock`).
 - **`native_player_client_loaded_world(player, name)`**: the server heard that a guest's client finished loading
   the level around them after joining, respawning or changing dimension. The player's state is not swapped in.
-- **`native_player_stop_using_item(player, name)`**: a server player released the use-item key before the item
-  finished being used. The player's state is not swapped in.
+- **`native_player_stop_using_item(player, name)`**: a server player released the use-item key, or a mod's
+  `release_using_item` did, before the item finished being used. The player's state is swapped in.
 - **`native_player_recipe_book_settings_change(player, name, book, open, filtering)`**: a server player's recipe
   book open or filter setting changed; `book` is the book type's protocol id. The player's state is not swapped in.
 - **`native_player_command(player, name, command, canceled, replies)`**: any command a player typed (without the
@@ -360,8 +360,8 @@ For mods that run where the world is simulated: a dedicated server, a LAN host, 
 - **`native_whitelist_state_update(enabled)`**: the dedicated server's player whitelist was enabled or disabled.
 - **`native_player_bundle_item_select(player, name, slot, index)`**: a server player selected an item in a bundle;
   `slot` is the packet's menu slot and `index` is the chosen item index.
-- **`native_player_ready_arrow(player, name, arrow)`**: a server player released a drawn bow, with `arrow` naming
-  the selected projectile item. The guest's state is not swapped in while the packet is handled.
+- **`native_player_ready_arrow(player, name, arrow)`**: a server player released a drawn bow, by the use-item key or a
+  mod's `release_using_item`, with `arrow` naming the selected projectile item. The player's state is swapped in.
 - **`native_prepare_hopper_transfer(pos)`**: a hopper at `pos` begins a transfer attempt, after its cooldown and enabled checks and before pushing or pulling items.
 - **`native_inventory_move_item(source, destination, item, cancel)`**: a hopper is about to move one item between containers (a composter's bone meal too). Set `cancel` to leave it in the source slot. A chest boat or minecart is reported at the block it is in.
 - **`native_hopper_inventory_search(hopper, container, entity)`**: a hopper selects a block container or container entity while searching for items.
@@ -763,6 +763,15 @@ handle, an entity the client doesn't track and a level it doesn't show:
   the item a player uses: at 1 the use completes on the next tick, at 0 or less it lasts until the player lets go, as in
   vanilla. It moves the deadline the use-item Tick hook moves, so shield, bow, trident, spear, instrument and bundle uses,
   which don't count it, ignore it, and a call inside that Tick hook is overwritten by the hook's result. Nothing in use reads 0 and refuses a write. A mob's item use is a counter of its goal, so mobs read None.
+- `living.used_item_hand(host)` (`getUsedItemHand` while `isUsingItem`) reads the hand of the item a player or a mob uses,
+  None when it uses none; on a client only the local player answers. `living.start_using_item(host, hand)` is
+  `LivingEntity.startUsingItem`: the item's use timer and the use-item Start hook, not the item's own `use` (no ammo check,
+  no sound). A player's client lets go of a use whose button isn't down, as in vanilla, so that use is released on its next
+  tick. `living.release_using_item(host)` is `releaseUsingItem`, what letting go of the button runs: the use-item Stop
+  hook, the item's own release (a player's bow or trident shoots), a mod's `release_using`, once. A mob's use is its goal's
+  counter: it shows and its goals see it, but it never runs out, so only a release or a goal ends it, and vanilla's bow and
+  trident have no release for a mob. A piglin with something in its off hand and a drinking witch refuse a start and have no
+  use to read or release: the counter is their own timer.
 - `living.effects(host)` lists a living entity's active effects (vanilla's `activeEffects`) as `NativeActiveEffect`s — the
   load-owned `EffectKey` (read its canonical name with `key.id(host)`), the ticks left (-1 infinite), the amplifier, and the `ambient` and `visible` flags; Horizon keeps no separate
   show-icon flag, the icon always shows. `living.effect(host, key)` reads one (`getEffect`) and `living.potion_affected(host,
@@ -2635,11 +2644,11 @@ registration path.
 
 - A server player's experience level changed: `native_player_level_change(player, name, from, to)` is called after experience points or levels change their level, including orb points. The player's state is swapped in when they are a guest.
 
-- A server player released a drawn bow with `native_player_ready_arrow(player, name, arrow)`: the name of the selected projectile item.
+- A server player released a drawn bow, by the use-item key or a mod's `release_using_item`, with `native_player_ready_arrow(player, name, arrow)`: the name of the selected projectile item.
 
 - A server player's recipe book open or filter setting changed: `native_player_recipe_book_settings_change(player, name, book, open, filtering)`, where `book` is its protocol id.
 
-- A server player released the use-item key before the item finished being used: `native_player_stop_using_item(player, name)`.
+- A server player released the use-item key, or a mod's `release_using_item` did, before the item finished being used: `native_player_stop_using_item(player, name)`.
 
 - A guest's player input changed sneaking: `native_player_toggle_sneak(player, name, sneaking)` is called after the hub applies the new state, only when it changes. The guest's state is swapped in.
 

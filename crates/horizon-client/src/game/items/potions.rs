@@ -782,12 +782,15 @@ impl Game<'_> {
                 .play("minecraft:entity.generic.drink", Some(eye), 0.5, pitch);
         }
         // ItemStack.onUseTick: the item's own tick after the consumable's.
-        self.item_on_use_tick(stack, ticks - 1);
+        if !self.item_on_use_tick(stack, ticks - 1) {
+            return true;
+        }
         if i64::from(ticks) < i64::from(duration) {
             self.using = Some((slot, ticks));
             return true;
         }
         self.finish_drinking(slot, stack);
+        self.use_item_finished(stack);
         true
     }
     /// `PotionItem.finishUsingItem` (and `OminousBottleItem`'s) of `stack` in

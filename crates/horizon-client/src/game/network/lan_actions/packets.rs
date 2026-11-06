@@ -323,41 +323,10 @@ impl Game<'_> {
                         self.as_guest(conn, |g| g.drop_held(a.action == 4));
                     }
                 }
-                // RELEASE_USE_ITEM: ServerPlayer.releaseUsingItem, with the
-                // hand of the item in use acting.
+                // RELEASE_USE_ITEM: ServerPlayer.releaseUsingItem.
                 6 => {
-                    let listening = !mod_api::__private::mods().is_empty();
-                    let (uuid, name) = if listening {
-                        let Some(host) = self.lan.as_ref() else {
-                            return;
-                        };
-                        let guest = &host.hub.guests[gi];
-                        (guest.uuid, guest.name.clone())
-                    } else {
-                        (0, String::new())
-                    };
                     self.as_guest(conn, |g| {
-                        let Some(hand) = g.used_hand() else {
-                            return;
-                        };
-                        g.with_hand(hand, |g| {
-                            if let Some((slot, ticks)) = g.using.take()
-                                && let Some(stack) = g.stack_in(slot).cloned()
-                            {
-                                if listening
-                                    && &*stack.item == "minecraft:bow"
-                                    && let Some(arrow) = g
-                                        .projectile_slot("minecraft:bow")
-                                        .and_then(|slot| g.stack_in(slot).map(|s| s.item.clone()))
-                                {
-                                    g.native_player_ready_arrow(uuid, &name, &arrow);
-                                }
-                                g.release_used_item(&stack, ticks, false);
-                                if listening {
-                                    g.native_player_stop_using_item(uuid, &name);
-                                }
-                            }
-                        });
+                        g.release_using_item();
                     });
                 }
                 // SWAP_ITEM_WITH_OFFHAND: the hands swap and the item in use stops

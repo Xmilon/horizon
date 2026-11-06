@@ -237,6 +237,10 @@ impl GuestPlay {
     pub(super) fn using(&self) -> Option<(usize, u32)> {
         self.using
     }
+    /// `LivingEntity.getUsedItemHand` of the item in use, none when none is.
+    pub(super) fn used_hand(&self) -> Option<Hand> {
+        super::item_use::hand_of(self.using)
+    }
     /// `LivingEntity.useItemRemaining` of the item in use, 0 when none is.
     pub(super) fn use_remaining(&self) -> i32 {
         super::item_use::remaining_of(self.using, self.use_duration)

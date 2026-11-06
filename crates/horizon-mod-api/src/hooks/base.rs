@@ -1611,7 +1611,7 @@ pub trait Hooks {
     /// `stack` in `hand` (`LivingEntity.startUsingItem`), for `duration`
     /// ticks (`native_use_duration`'s answer). `entity` is a mob's
     /// `Entity.getId`, None for a player (`host.players().acting_player()` says who);
-    /// only players fire it so far. Change `duration` (consumables, potions,
+    /// a mob fires it only for `LivingRef::start_using_item`. Change `duration` (consumables, potions,
     /// spyglasses and mods' items count to it; below 0 refuses the use, and
     /// 0 runs it out on its first tick, as `native_living_entity_use_item_tick`
     /// running it out, unless the item's own is 0 already), or set
@@ -4386,8 +4386,8 @@ requires a farmer at work and `mob_griefing` enabled."#]
         cancellable = true
     )]
     fn player_portal();
-    /// A server player released a drawn bow with `arrow` selected. The guest's
-    /// state is not swapped in during packet handling.
+    /// A server player released a drawn bow with `arrow` selected, by the use-item
+    /// key or a mod's `LivingRef::release_using_item`. The player's state is swapped in.
     #[hook(
         side = "server",
         contract = "listen",
@@ -4476,8 +4476,8 @@ requires a farmer at work and `mob_griefing` enabled."#]
         neoforge = "none (NeoForge has no such event)"
     )]
     fn player_stop_spectating_entity();
-    /// A server player released the use-item key before the item finished being used. The guest's
-    /// state is not swapped in.
+    /// A server player released the use-item key, or a mod's `LivingRef::release_using_item` did,
+    /// before the item finished being used. The player's state is swapped in.
     #[hook(
         side = "server",
         contract = "listen",

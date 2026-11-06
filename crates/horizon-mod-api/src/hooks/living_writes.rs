@@ -55,4 +55,22 @@ pub trait Helpers {
         target = "horizon_client::game::native_living_writes::Game<'_>::native_living_set_item_use_remaining"
     )]
     fn living_set_item_use_remaining();
+    #[helper(
+        side = "both",
+        receiver = "living",
+        target = "horizon_client::game::native_living_writes::Game<'_>::native_living_used_item_hand"
+    )]
+    fn living_used_item_hand();
+    #[helper(
+        side = "server",
+        receiver = "living",
+        target = "horizon_client::game::native_living_writes::Game<'_>::native_living_start_using_item"
+    )]
+    fn living_start_using_item();
+    #[helper(
+        side = "server",
+        receiver = "living",
+        target = "horizon_client::game::native_living_writes::Game<'_>::native_living_release_using_item"
+    )]
+    fn living_release_using_item();
 }

@@ -5,9 +5,11 @@
 //! `native_living_entity_use_item_start`, `native_living_entity_use_item_finish`),
 //! and each tick and the release of a use (`native_living_entity_use_item_tick`,
 //! `native_on_use_tick`, `native_living_entity_use_item_stop`, `native_release_using`).
-use super::Game;
+use super::{Game, shield::OFFHAND_SLOT};
 use horizon_client::{
+    first_person::Hand,
     items::{ItemInfo, ItemStack},
+    mobs::spear_use,
     spear::Kinetic,
 };
 use horizon_core::use_animation::UseAnimation;
@@ -155,7 +157,9 @@ impl Game<'_> {
     /// `LivingEntity.updateUsingItem` for a `mod_use` item used `ticks` so far:
     /// `completeUsingItem` once its duration ran out.
     pub(super) fn tick_mod_use(&mut self, slot: usize, ticks: u32, stack: &ItemStack) {
-        self.item_on_use_tick(stack, ticks);
+        if !self.item_on_use_tick(stack, ticks) {
+            return;
+        }
         if let Some(ticks) = count_down(ticks, self.use_duration) {
             self.using = Some((slot, ticks));
             return;
@@ -215,11 +219,14 @@ impl Game<'_> {
         left > 0 || !set
     }
     /// A mod's `Item.onUseTick` of `stack` used `ticks`, while ticks are left.
-    pub(super) fn item_on_use_tick(&mut self, stack: &ItemStack, ticks: u32) {
+    /// False when that mod released the use, which then has nothing left to run.
+    pub(super) fn item_on_use_tick(&mut self, stack: &ItemStack, ticks: u32) -> bool {
+        let using = self.using;
         let remaining = ticks_left(self.use_duration, ticks);
         if remaining > 0 {
             self.native_on_use_tick(stack, None, remaining);
         }
+        self.using == using
     }
     /// How long `stack`, used `ticks`, counts as held: `getUseDuration` less
     /// the ticks left (`BowItem.releaseUsing`, `CrossbowItem.onUseTick`,
@@ -249,6 +256,131 @@ impl Game<'_> {
         if used {
             self.apply_use_cooldown(stack);
         }
+    }
+    /// Whether a use in `slot` lost its item: switching hotbar slots only ends
+    /// a main-hand use.
+    pub(super) fn use_hand_changed(&self, slot: usize) -> bool {
+        slot != self.selected && slot != OFFHAND_SLOT
+    }
+    /// `LivingEntity.releaseUsingItem` of the acting player, the hand of the
+    /// item in use acting: the use is over before any hook runs, so a mod
+    /// that releases again from one finds nothing. False when none runs.
+    pub(super) fn release_using_item(&mut self) -> bool {
+        let Some(hand) = self.used_hand() else {
+            return false;
+        };
+        self.with_hand(hand, |game| {
+            let Some((slot, ticks)) = game.using.take() else {
+                return false;
+            };
+            let Some(stack) = game.stack_in(slot).cloned() else {
+                return true;
+            };
+            let hand_changed = game.use_hand_changed(slot);
+            let player = (!mod_api::__private::mods().is_empty()).then(|| {
+                let name = game.acting_player_name().to_owned();
+                (game.native_acting_id(), name)
+            });
+            if let Some((uuid, name)) = &player
+                && !hand_changed
+                && &*stack.item == "minecraft:bow"
+                && let Some(arrow) = game
+                    .projectile_slot("minecraft:bow")
+                    .and_then(|slot| game.stack_in(slot).map(|s| s.item.clone()))
+            {
+                game.native_player_ready_arrow(*uuid, name, &arrow);
+            }
+            game.release_used_item(&stack, ticks, hand_changed);
+            if let Some((uuid, name)) = &player {
+                game.native_player_stop_using_item(*uuid, name);
+            }
+            true
+        })
+    }
+    /// The stack in the hand of mob `id`.
+    fn mob_hand_stack(&self, id: u32, off_hand: bool) -> Option<ItemStack> {
+        use horizon_items::equipment::{MAINHAND, OFFHAND};
+        let slot = if off_hand { OFFHAND } else { MAINHAND };
+        let mob = self.mobs.iter().find(|m| m.id == id)?;
+        mob.extra.slot_stack(slot).cloned()
+    }
+    /// `ItemStack.causeUseVibration` for `stack` used by mob `id`.
+    fn mob_use_vibration(&mut self, id: u32, stack: &ItemStack, event: &'static str) {
+        if !self.use_vibrates(stack) {
+            return;
+        }
+        let Some(p) = self.mobs.iter().find(|m| m.id == id).map(|m| m.position) else {
+            return;
+        };
+        let ctx = self.mob_context(id, None);
+        self.post_game_event(event, [p.x, p.y, p.z], ctx);
+    }
+    /// `LivingEntity.startUsingItem` of mob `id`, `native_living_entity_use_item_start`
+    /// as for a player. True when the use started. A mob's use is its
+    /// `using_item` counter: its goals run that, and nothing counts a use down
+    /// to `finishUsingItem` for it.
+    pub(super) fn start_mob_using_item(&mut self, id: u32, hand: Hand) -> bool {
+        let off_hand = hand == Hand::Off;
+        let free = |m: &horizon_client::mobs::Mob| {
+            !spear_use::is_using_item(m) && !spear_use::counts_own_timer(m)
+        };
+        if !self.mobs.iter().any(|m| m.id == id && free(m)) {
+            return false;
+        }
+        let Some(stack) = self.mob_hand_stack(id, off_hand) else {
+            return false;
+        };
+        let own = self.use_duration(&stack);
+        let (mut duration, mut canceled) = (own, false);
+        let entity = Some(id as i32);
+        self.native_living_entity_use_item_start(
+            &stack,
+            entity,
+            hand,
+            &mut duration,
+            &mut canceled,
+        );
+        if start_of(own, duration, canceled).is_none() {
+            return false;
+        }
+        // The hook may have changed the mob: the same checks again.
+        let started = self
+            .mobs
+            .iter_mut()
+            .find(|m| m.id == id)
+            .is_some_and(|m| free(m) && spear_use::start_using_item(m, off_hand));
+        if started {
+            self.mob_use_vibration(id, &stack, "minecraft:item_interact_start");
+        }
+        started
+    }
+    /// `LivingEntity.releaseUsingItem` of mob `id`: a mod's `Stop` and
+    /// `Item.releaseUsing`, the use over before them as for a player. A bow's
+    /// and a trident's own release ask for a player, and a use cooldown too
+    /// (`UseCooldown.apply`). False when no use runs.
+    pub(super) fn release_mob_using_item(&mut self, id: u32) -> bool {
+        let Some(mob) = self.mobs.iter_mut().find(|m| m.id == id) else {
+            return false;
+        };
+        if !spear_use::is_using_item(mob) {
+            return false;
+        }
+        let off_hand = mob.extra.using_off_hand;
+        let ticks = mob.extra.using_item.unsigned_abs() - 1;
+        spear_use::stop_using_item(mob);
+        let Some(stack) = self.mob_hand_stack(id, off_hand) else {
+            return true;
+        };
+        let remaining = ticks_left(self.use_duration(&stack), ticks);
+        let hand = if off_hand { Hand::Off } else { Hand::Main };
+        let entity = Some(id as i32);
+        let mut canceled = false;
+        self.native_living_entity_use_item_stop(&stack, entity, hand, remaining, &mut canceled);
+        if !canceled {
+            self.native_release_using(&stack, entity, remaining, &mut false);
+        }
+        self.mob_use_vibration(id, &stack, "minecraft:item_interact_finish");
+        true
     }
     /// `Player.canEat(canAlwaysEat)` for `stack`, food that is eaten only
     /// when hungry, then a mod's answer.
@@ -293,6 +425,18 @@ pub(super) fn bow_release_power(has_ammo: bool, charge: i32, canceled: bool) -> 
 /// `useItemRemaining` of a use of `duration` ticks, `ticks` old.
 pub(super) fn ticks_left(duration: i32, ticks: u32) -> i32 {
     duration.saturating_sub_unsigned(ticks)
+}
+
+/// `LivingEntity.getUsedItemHand` of the use `using` (its slot and ticks so
+/// far), none when nothing is in use.
+pub(super) fn hand_of(using: Option<(usize, u32)>) -> Option<Hand> {
+    using.map(|(slot, _)| {
+        if slot == OFFHAND_SLOT {
+            Hand::Off
+        } else {
+            Hand::Main
+        }
+    })
 }
 
 /// `LivingEntity.useItemRemaining` of the use `using` (its slot and ticks so

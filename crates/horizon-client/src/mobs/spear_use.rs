@@ -20,23 +20,41 @@ pub fn main_hand_kinetic(m: &Mob) -> Option<Kinetic> {
     m.extra.main_hand_id().and_then(Kinetic::of)
 }
 
-/// `LivingEntity.isUsingItem`. A piglin admiring what it holds in its off
-/// hand counts `using_item` down as well; vanilla keeps that in a memory.
-pub fn is_using_item(m: &Mob) -> bool {
-    m.extra.using_item > 0 && !(m.species() == Species::Piglin && m.extra.off_hand_id().is_some())
+/// Whether `using_item` is a timer that vanilla keeps apart from a use: a
+/// piglin with something in its off hand admires it (a memory), and a witch
+/// drinks (`Witch.usingTime`, its own `DATA_USING_ITEM`).
+pub fn counts_own_timer(m: &Mob) -> bool {
+    match m.species() {
+        Species::Piglin => m.extra.off_hand_id().is_some(),
+        Species::Witch => m.extra.flag,
+        _ => false,
+    }
 }
 
-/// `LivingEntity.startUsingItem(MAIN_HAND)`: the use of a kinetic weapon
-/// starts with a new `recentKineticEnemies`.
-pub fn start_using_item(m: &mut Mob) {
-    if m.extra.main_hand_id().is_none() || is_using_item(m) {
-        return;
+/// `LivingEntity.isUsingItem`, which an admiring piglin and a drinking witch
+/// are not.
+pub fn is_using_item(m: &Mob) -> bool {
+    m.extra.using_item > 0 && !counts_own_timer(m)
+}
+
+/// `LivingEntity.startUsingItem` of a hand, false when it is empty or a use
+/// runs: the use of a kinetic weapon starts with a new `recentKineticEnemies`
+/// (`update_using_item` stabs with the main hand's).
+pub fn start_using_item(m: &mut Mob, off_hand: bool) -> bool {
+    let held = if off_hand {
+        m.extra.off_hand_id()
+    } else {
+        m.extra.main_hand_id()
+    };
+    if held.is_none() || is_using_item(m) {
+        return false;
     }
     m.extra.using_item = 1;
-    m.extra.using_off_hand = false;
-    if main_hand_kinetic(m).is_some() {
+    m.extra.using_off_hand = off_hand;
+    if !off_hand && main_hand_kinetic(m).is_some() {
         m.extra.stabbed = Some(Vec::new());
     }
+    true
 }
 
 /// `LivingEntity.stopUsingItem`: `recentKineticEnemies` is gone.
@@ -432,7 +450,7 @@ impl SpearUse {
                 return;
             }
             state.start_engagement(Self::kinetic_weapon_use_duration(m));
-            start_using_item(m);
+            start_using_item(m, false);
         }
         if state.tick_and_check_engagement() {
             stop_using_item(m);
@@ -606,7 +624,7 @@ fn attack_start(m: &mut Mob) {
     m.ai.aggressive = true;
     m.extra.piglin.spear.engage_time = Some(attack_kinetic_weapon_use_duration(m));
     m.extra.piglin.spear.charge_position = None;
-    start_using_item(m);
+    start_using_item(m, false);
 }
 
 /// `SpearAttack.canStillUse`: time left to charge and able to attack.

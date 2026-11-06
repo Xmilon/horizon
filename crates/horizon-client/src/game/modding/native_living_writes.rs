@@ -2,11 +2,13 @@
 //! (docs/modding/src/how-to/native-mods.md, "Entity and level handles"): `LivingEntity.swing`,
 //! the arrows and bee stingers stuck in a player (`setArrowCount`,
 //! `setStingerCount`, `removeArrowTime`, `removeStingerTime`),
-//! `Mob.setLeftHanded`, `Mob.setCanPickUpLoot` and `useItemRemaining`. Reads
+//! `Mob.setLeftHanded`, `Mob.setCanPickUpLoot`, `useItemRemaining`, and
+//! `getUsedItemHand`, `startUsingItem` and `releaseUsingItem`. Reads
 //! return None and writes false for a stale handle, on a client, and for a
 //! kind Horizon keeps no such state for (each doc says which).
 use super::{Game, combat::Stuck, commands::Target};
 use horizon_client::first_person::{Hand, SwingAnimation};
+use horizon_client::mobs::spear_use;
 use mod_api::LivingRef;
 
 impl Game<'_> {
@@ -17,6 +19,17 @@ impl Game<'_> {
             Target::Guest(conn) => self.command_guest(conn).map(|g| g.uuid),
             _ => None,
         }
+    }
+    /// Runs `f` with the player a handle names acting, None when it didn't run.
+    fn native_living_as_player<T>(
+        &mut self,
+        living: LivingRef,
+        f: impl FnOnce(&mut Self) -> T,
+    ) -> Option<T> {
+        let uuid = self.native_living_player(living)?;
+        let mut out = None;
+        self.native_as_player(uuid, |game| out = Some(f(game)));
+        out
     }
     /// What is stuck in the player a handle names.
     fn native_living_stuck(&mut self, living: LivingRef) -> Option<&mut Stuck> {
@@ -159,16 +172,357 @@ impl Game<'_> {
             _ => false,
         }
     }
+    /// `LivingEntity.getUsedItemHand` while `isUsingItem`: the hand of the item
+    /// a player or a mob uses, None when it uses none. On a client, the local
+    /// player's only.
+    pub(super) fn native_living_used_item_hand(&self, living: LivingRef) -> Option<Hand> {
+        match self.native_living_read_target(living)? {
+            Target::Player => self.used_hand(),
+            Target::Guest(conn) => self.lan.as_ref()?.play.get(&conn)?.used_hand(),
+            Target::Mob(id) => {
+                let mob = self.mobs.iter().find(|m| m.id == id)?;
+                spear_use::is_using_item(mob).then_some(if mob.extra.using_off_hand {
+                    Hand::Off
+                } else {
+                    Hand::Main
+                })
+            }
+            _ => None,
+        }
+    }
+    /// `LivingEntity.startUsingItem`: starts using the item in `hand`, for its
+    /// `getUseDuration` as a mod's use-item Start hook left it, without the
+    /// item's own `use` (no ammo check, no sound). True when the use started:
+    /// false for an empty hand, a use under way, a refused Start, armor stands
+    /// and the dragon, and a player other than the acting one while another
+    /// player acts.
+    ///
+    /// A player's client lets go of a use whose button isn't down, as in
+    /// vanilla (`Minecraft.handleKeybinds`), so that use lasts until its next
+    /// tick, which releases it; an item with no use of its own ends then too.
+    /// A mob's use shows and its goals see it, but it never runs out: only
+    /// `release_using_item` or a goal ends it. False for a piglin with
+    /// something in its off hand and a drinking witch, whose counter is their
+    /// own timer.
+    pub(super) fn native_living_start_using_item(&mut self, living: LivingRef, hand: Hand) -> bool {
+        match self.native_living_target(living) {
+            Some(Target::Mob(id)) => self.start_mob_using_item(id, hand),
+            Some(Target::Player | Target::Guest(_)) => self
+                .native_living_as_player(living, |game| {
+                    game.with_hand(hand, Self::start_using_item)
+                })
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+    /// `LivingEntity.releaseUsingItem`: lets go of the item in use as the use
+    /// button does: the use-item Stop hook, the item's own release (a player's
+    /// bow or trident shoots by how long it was held) and a mod's
+    /// `release_using`, then the use is over. True when a use was released:
+    /// false when none runs, for armor stands and the dragon, and for a player
+    /// other than the acting one while another player acts. A mob's bow or
+    /// trident has no release of its own, as in vanilla.
+    pub(super) fn native_living_release_using_item(&mut self, living: LivingRef) -> bool {
+        match self.native_living_target(living) {
+            Some(Target::Mob(id)) => self.release_mob_using_item(id),
+            Some(Target::Player | Target::Guest(_)) => self
+                .native_living_as_player(living, Self::release_using_item)
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::native_entity_refs::tests::with_game;
     use super::Stuck;
+    use horizon_client::items::ItemStack;
     use horizon_client::mobs::Mob;
     use horizon_core::geometry::Vec3;
     use mod_api::first_person::Hand;
-    use mod_api::{EntityRef, NativeWorldEpoch};
+    use mod_api::{
+        EntityRef, Flow, Hooks, HostSide, ItemPart, LivingEntityUseItemStartEvent,
+        LivingEntityUseItemStopEvent, LivingEntityUseItemTickEvent, LivingRef, ModEntry, Mods,
+        NativeWorldEpoch, OnUseTickEvent, Registrar, ReleaseUsingEvent,
+    };
+    use std::sync::{Arc, Mutex};
+
+    /// What a mod heard of item uses, and what it does back.
+    #[derive(Default)]
+    struct Uses {
+        stops: Vec<(Option<i32>, Hand, i32)>,
+        releases: Vec<(Option<i32>, i32)>,
+        /// Refuses every Start.
+        refuse: bool,
+        /// Who to release from a Tick hook, and from an `Item.onUseTick`.
+        release_on_tick: Option<LivingRef>,
+        release_on_use_tick: Option<LivingRef>,
+        /// Who to release once more from the Stop hook, and what that answered.
+        release_on_stop: Option<LivingRef>,
+        released_again: Vec<bool>,
+    }
+    type Shared = Arc<Mutex<Uses>>;
+
+    #[derive(Clone)]
+    struct UsePart(Shared);
+    #[mod_api::horizon_part]
+    impl ItemPart for UsePart {
+        fn on_use_tick(&self, host: HostSide, _: &mut OnUseTickEvent<'_>) {
+            let who = self.0.lock().unwrap().release_on_use_tick;
+            if let (Some(who), HostSide::Server(host)) = (who, host) {
+                assert!(who.release_using_item(host));
+            }
+        }
+        fn release_using(&self, _: HostSide, event: &mut ReleaseUsingEvent<'_>) {
+            let mut uses = self.0.lock().unwrap();
+            uses.releases.push((event.entity, event.time_left));
+        }
+    }
+    struct UseMod(Shared);
+    #[mod_api::__subscriptions]
+    impl Hooks for UseMod {
+        fn register(&self, r: &mut dyn Registrar, _: &mod_api::RegistrationContext) {
+            for id in [
+                "minecraft:bow",
+                "minecraft:apple",
+                "minecraft:potion",
+                "minecraft:shield",
+            ] {
+                let item = r.item_key(id);
+                r.item_part(item, UsePart(self.0.clone()));
+            }
+        }
+        fn living_entity_use_item_start(
+            &self,
+            _: HostSide,
+            _: &mut LivingEntityUseItemStartEvent<'_>,
+        ) -> Flow {
+            if self.0.lock().unwrap().refuse {
+                Flow::Cancel
+            } else {
+                Flow::Continue
+            }
+        }
+        fn living_entity_use_item_tick(
+            &self,
+            host: HostSide,
+            _: &mut LivingEntityUseItemTickEvent<'_>,
+        ) -> Flow {
+            let who = self.0.lock().unwrap().release_on_tick;
+            if let (Some(who), HostSide::Server(host)) = (who, host) {
+                assert!(who.release_using_item(host));
+            }
+            Flow::Continue
+        }
+        fn living_entity_use_item_stop(
+            &self,
+            host: HostSide,
+            event: &mut LivingEntityUseItemStopEvent<'_>,
+        ) -> Flow {
+            let who = {
+                let mut uses = self.0.lock().unwrap();
+                uses.stops.push((event.entity, event.hand, event.duration));
+                uses.release_on_stop
+            };
+            if let (Some(who), HostSide::Server(host)) = (who, host) {
+                let again = who.release_using_item(host);
+                self.0.lock().unwrap().released_again.push(again);
+            }
+            Flow::Continue
+        }
+    }
+
+    /// Runs `test` on a game whose acting player stands at the origin, the use
+    /// button down, under a mod that fills the returned record.
+    fn with_uses(test: impl FnOnce(&mut super::Game<'_>, &Shared, LivingRef)) {
+        let uses = Shared::default();
+        let mods: Mods = vec![ModEntry::new("uses", Box::new(UseMod(uses.clone())))].into();
+        mod_api::__private::install_parts(&mods).unwrap();
+        mod_api::testing::with_mods(mods, || {
+            with_game(|game| {
+                game.resolve_parts().unwrap();
+                game.player = Some(
+                    horizon_client::motion::PlayerMotion::new(game.motion, Vec3::ZERO).unwrap(),
+                );
+                game.lan_acting_uuid = Some(123);
+                game.lan_acting_entity = Some(20);
+                game.screen = super::super::Screen::Playing;
+                game.right = true;
+                let player = game.native_living(game.native_entity(20).unwrap()).unwrap();
+                test(game, &uses, player);
+                mod_api::__private::install_parts(&[]).unwrap();
+                game.resolve_parts().unwrap();
+            });
+        });
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn an_item_used_in_either_hand_is_released_once() {
+        with_uses(|game, uses, player| {
+            uses.lock().unwrap().release_on_stop = Some(player);
+            game.selected = 3;
+            game.inventory[5] = Some(ItemStack::new("minecraft:arrow", 8));
+            for (round, hand) in [Hand::Main, Hand::Off].into_iter().enumerate() {
+                let bow = Some(ItemStack::new("minecraft:bow", 1));
+                game.inventory[3] = None;
+                game.offhand = None;
+                assert!(!game.native_living_start_using_item(player, hand));
+                match hand {
+                    Hand::Main => game.inventory[3] = bow,
+                    Hand::Off => game.offhand = bow,
+                }
+                assert_eq!(game.native_living_used_item_hand(player), None);
+                assert!(game.native_living_start_using_item(player, hand));
+                assert!(!game.native_living_start_using_item(player, hand));
+                assert_eq!(game.native_living_used_item_hand(player), Some(hand));
+                assert_eq!(game.native_living_item_use_remaining(player), Some(72_000));
+                for _ in 0..25 {
+                    game.tick_using();
+                }
+                assert_eq!(game.native_living_used_item_hand(player), Some(hand));
+                assert_eq!(game.native_living_item_use_remaining(player), Some(71_975));
+
+                let arrows = game.creatures.projectiles.len();
+                assert!(game.native_living_release_using_item(player));
+                assert_eq!(game.creatures.projectiles.len(), arrows + 1);
+                assert_eq!(game.native_living_used_item_hand(player), None);
+                assert_eq!(game.native_living_item_use_remaining(player), Some(0));
+                assert!(!game.native_living_release_using_item(player));
+                assert_eq!(game.creatures.projectiles.len(), arrows + 1);
+                let uses = uses.lock().unwrap();
+                assert_eq!(uses.stops.len(), round + 1);
+                assert_eq!(uses.stops[round], (None, hand, 71_975));
+                assert_eq!(uses.releases.len(), round + 1);
+                assert_eq!(uses.releases[round], (None, 71_975));
+                assert_eq!(uses.released_again, vec![false; round + 1]);
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_start_a_mod_refuses_starts_nothing() {
+        with_uses(|game, uses, player| {
+            game.offhand = Some(ItemStack::new("minecraft:bow", 1));
+            uses.lock().unwrap().refuse = true;
+            assert!(!game.native_living_start_using_item(player, Hand::Off));
+            assert_eq!(game.native_living_used_item_hand(player), None);
+        });
+    }
+
+    /// A player whose use button is up lets go on the next tick.
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_use_with_the_button_up_is_released_on_its_next_tick() {
+        with_uses(|game, uses, player| {
+            game.right = false;
+            game.offhand = Some(ItemStack::new("minecraft:bow", 1));
+            assert!(game.native_living_start_using_item(player, Hand::Off));
+            game.tick_using();
+            assert_eq!(game.native_living_used_item_hand(player), None);
+            assert_eq!(uses.lock().unwrap().stops, [(None, Hand::Off, 72_000)]);
+        });
+    }
+
+    /// A use a mod's own tick released stays released, and finishes nothing:
+    /// the tick that called it has no use left to go on with.
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_use_released_from_its_own_tick_stays_released() {
+        with_uses(|game, uses, player| {
+            let items = ["minecraft:apple", "minecraft:potion", "minecraft:shield"];
+            for (item, from_item) in items.into_iter().flat_map(|i| [(i, false), (i, true)]) {
+                let stack = ItemStack::new(item, 2);
+                game.offhand = Some(stack.clone());
+                assert!(game.native_living_start_using_item(player, Hand::Off));
+                {
+                    let mut uses = uses.lock().unwrap();
+                    uses.release_on_tick = (!from_item).then_some(player);
+                    uses.release_on_use_tick = from_item.then_some(player);
+                }
+                game.tick_using();
+                assert_eq!(game.native_living_used_item_hand(player), None);
+                {
+                    let mut uses = uses.lock().unwrap();
+                    (uses.release_on_tick, uses.release_on_use_tick) = (None, None);
+                }
+                game.tick_using();
+                assert_eq!(game.native_living_used_item_hand(player), None);
+                assert_eq!(game.offhand, Some(stack));
+            }
+            assert_eq!(uses.lock().unwrap().stops.len(), 6);
+        });
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_mob_uses_either_hand_until_it_is_released() {
+        use horizon_items::equipment::{MAINHAND, OFFHAND};
+        with_uses(|game, uses, _| {
+            let kinds = [
+                (12, "minecraft:zombie"),
+                (13, "minecraft:piglin"),
+                (14, "minecraft:witch"),
+            ];
+            for (id, kind) in kinds {
+                let kind = game.res.mob_types().get(kind).unwrap().clone();
+                game.mobs.push(Mob::new(id, kind, Vec3::ZERO, 0.0));
+            }
+            let zombie = game.native_living(game.native_entity(12).unwrap()).unwrap();
+            let piglin = game.native_living(game.native_entity(13).unwrap()).unwrap();
+            for (round, (hand, slot)) in [(Hand::Main, MAINHAND), (Hand::Off, OFFHAND)]
+                .into_iter()
+                .enumerate()
+            {
+                assert!(!game.native_living_start_using_item(zombie, hand));
+                let bow = ItemStack::new("minecraft:bow", 1);
+                game.mobs[0].extra.set_slot_stack(slot, Some(bow));
+                assert_eq!(game.native_living_used_item_hand(zombie), None);
+                assert!(game.native_living_start_using_item(zombie, hand));
+                assert!(!game.native_living_start_using_item(zombie, hand));
+                assert_eq!(game.native_living_used_item_hand(zombie), Some(hand));
+                // Its clients are told through the counter and the hand.
+                assert_eq!(game.mobs[0].extra.using_item, 1);
+                assert_eq!(game.mobs[0].extra.using_off_hand, hand == Hand::Off);
+
+                game.mobs[0].extra.using_item = 6;
+                let arrows = game.creatures.projectiles.len();
+                assert!(game.native_living_release_using_item(zombie));
+                assert_eq!(game.native_living_used_item_hand(zombie), None);
+                assert!(!game.native_living_release_using_item(zombie));
+                // `BowItem.releaseUsing` shoots for a player only.
+                assert_eq!(game.creatures.projectiles.len(), arrows);
+                let uses = uses.lock().unwrap();
+                assert_eq!(uses.stops.len(), round + 1);
+                assert_eq!(uses.stops[round], (Some(12), hand, 71_995));
+                assert_eq!(uses.releases[round], (Some(12), 71_995));
+                drop(uses);
+                game.mobs[0].extra.set_slot_stack(slot, None);
+            }
+
+            // A piglin's off hand makes the counter its admiring timer.
+            let gold = ItemStack::new("minecraft:gold_ingot", 1);
+            game.mobs[1]
+                .extra
+                .set_slot_stack(OFFHAND, Some(gold.clone()));
+            game.mobs[1].extra.set_slot_stack(MAINHAND, Some(gold));
+            assert!(!game.native_living_start_using_item(piglin, Hand::Main));
+            assert_eq!(game.mobs[1].extra.using_item, 0);
+
+            // A witch's drink is its own timer: no use to read, end or replace.
+            let witch = game.native_living(game.native_entity(14).unwrap()).unwrap();
+            let potion = ItemStack::new("minecraft:potion", 1);
+            game.mobs[2].extra.set_slot_stack(MAINHAND, Some(potion));
+            game.mobs[2].extra.using_item = 10;
+            game.mobs[2].extra.flag = true;
+            assert_eq!(game.native_living_used_item_hand(witch), None);
+            assert!(!game.native_living_start_using_item(witch, Hand::Main));
+            assert!(!game.native_living_release_using_item(witch));
+            assert_eq!(game.mobs[2].extra.using_item, 10);
+        });
+    }
 
     #[test]
     #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
@@ -292,6 +646,19 @@ mod tests {
             // No item in use: nothing to move.
             assert_eq!(game.native_living_item_use_remaining(player), Some(0));
             assert!(!game.native_living_set_item_use_remaining(player, 5));
+
+            // Between its turns its use is in its own record too: a bow's is 72000.
+            assert_eq!(game.native_living_used_item_hand(player), None);
+            game.as_guest(12, |game| {
+                game.offhand = Some(ItemStack::new("minecraft:bow", 1));
+            })
+            .unwrap();
+            assert!(game.native_living_start_using_item(player, Hand::Off));
+            assert_eq!(game.native_living_used_item_hand(player), Some(Hand::Off));
+            assert_eq!(game.native_living_item_use_remaining(player), Some(72_000));
+            assert!(game.native_living_release_using_item(player));
+            assert_eq!(game.native_living_used_item_hand(player), None);
+            assert!(!game.native_living_release_using_item(player));
 
             // The acting player's own state: an item in use for 3 of 32 ticks.
             game.as_guest(12, |game| {

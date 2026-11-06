@@ -3210,8 +3210,8 @@ impl Game<'_> {
     pub(in crate::game) fn native_player_client_loaded_world(&mut self, player: u128, name: &str) {
         self.fire_player_client_loaded_world(player, name);
     }
-    /// A server player released the use-item key before the item finished being used. The guest's
-    /// state is not swapped in.
+    /// A server player released the use-item key, or a mod's `LivingRef::release_using_item` did,
+    /// before the item finished being used. The player's state is swapped in.
     pub(in crate::game) fn native_player_stop_using_item(&mut self, player: u128, name: &str) {
         self.fire_player_stop_using_item(player, name);
     }
@@ -3227,8 +3227,8 @@ impl Game<'_> {
     ) {
         self.fire_player_recipe_book_settings_change(player, name, book, open, filtering);
     }
-    /// A server player released a drawn bow with `arrow` selected. The guest's
-    /// state is not swapped in during packet handling.
+    /// A server player released a drawn bow with `arrow` selected, by the use-item
+    /// key or a mod's `LivingRef::release_using_item`. The player's state is swapped in.
     pub(in crate::game) fn native_player_ready_arrow(
         &mut self,
         player: u128,
@@ -3548,7 +3548,7 @@ impl Game<'_> {
     /// `stack` in `hand` (`LivingEntity.startUsingItem`), for `duration`
     /// ticks (`native_use_duration`'s answer). `entity` is a mob's
     /// `Entity.getId`, None for a player (`native_acting_player` says who);
-    /// only players fire it so far. Change `duration` (consumables, potions,
+    /// a mob fires it only for `LivingRef::start_using_item`. Change `duration` (consumables, potions,
     /// spyglasses and mods' items count to it; below 0 refuses the use, and
     /// 0 runs it out on its first tick, as `native_living_entity_use_item_tick`
     /// running it out, unless the item's own is 0 already), or set
