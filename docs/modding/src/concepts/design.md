@@ -62,6 +62,81 @@ the phase. The game alone advances the thread-local boundary, so the window and 
 cannot change one another's permissions. [Load phases and access](trait-mods.md#load-phases-and-access)
 lists the once-per-process, per-world and per-reload moments. No additional FML or intermod bus is added.
 
+## Registering behaviour
+
+Choose the entry point by who owns the result. For behaviour attached to an existing block, item, entity
+or menu, implement `Hooks::register` and call the corresponding method on `&mut dyn Registrar`. For a
+subsystem that rebuilds its own table, implement its collection hook. The game owns both the lifetime
+of the table and the point at which it becomes visible.
+
+`Hooks::register` runs once at startup, in mod dispatch order, with a `RegistrationContext`.
+The registrar records the owning mod, checks for conflicting declarations and reports refusals before
+installing the table. It accepts registry keys and tags before the final per-game tables are available.
+When a game resolves its registries and tags, it binds the Parts to the objects they target. Runtime
+hooks then dispatch to the attached Parts. See [registry keys](trait-mods/007-registry-keys.md)
+and [Parts](trait-mods.md#parts).
+
+| Behaviour | Entry point | Side and collection time | When usable |
+| --- | --- | --- | --- |
+| Block, block entity, item, entity and menu Parts | `Registrar::attach_block_part`, `attach_block_entity_part`, `attach_item_part`, `attach_entity_part`, `attach_menu_part` | Startup on the sides that load the mod | After resolution against the game's registries. Each Part method runs on the side declared for that hook. |
+| Capability providers | `provide_block_entity_capability`, `provide_item_capability`, `provide_entity_capability` on the registrar | Startup registration, server provider calls | After the game resolves the registrations. A capability query supplies the holder and a server host. |
+| Block entity types and default entity attributes | `declare_block_entity_type`, `declare_entity_attributes` | Startup declarations on the sides that load the mod | When the registered types and defaults are resolved against the content tables. |
+| Game rules and categories | `game_rule_bool`, `game_rule_category` | Startup, before the game validates and installs the rule schema | When the game uses the installed schema to load rule values and build the rule UI. |
+| Dimension and chunk generation code, structure types, ticket controllers | `register_dimension`, `register_chunk_generator`, `register_structure_type`, `register_ticket_controller` | Startup declarations, consumed by world setup and generation | When the world resolves its dimension, structure or ticket registrations. |
+| Controls bindings | `Registrar::register_key_mapping` | Startup registration, client consumer | When the client installs the bindings in Controls and restores saved bindings. |
+| Component tooltips | `Registrar::register_tooltip_appender` | Startup registration, client consumer | The item tooltip builder uses the callback for the registered component and placement. |
+| Server commands | `Hooks::register_commands` collects `NativeCommand` usages | Server, when opening a world and on explicit command refresh | After the server rebuilds the command tree. The server owns permission checks and sends the tree to players. |
+| Client commands | `Hooks::register_client_commands` collects `NativeCommand` usages | Client, at connection start and when the server sends its tree | After the client incorporates them into completion and local dispatch. |
+| HUD layers and F3 entries | `register_gui_layers` and `register_debug_entries` | Client startup | When the installed HUD order or debug entry list is used for drawing. |
+| World-space debug renderers | `register_debug_renderers` | Client, each refresh of the renderer list | The next debug draw uses the refreshed list. |
+| Model layers, block and item tints, numeric and categorical item model properties | `layer_definitions`, `register_block_tint_sources`, `register_item_tint_sources`, `register_range_select_item_model_property`, `register_select_item_model_property` | Client startup before resource loading | The client can resolve the declarations when it builds its models and rendering tables. |
+| Data map types | `data_map_types` | Server, at world data load and each reload | After the server publishes the loaded data maps. |
+| Recipe property additions | `recipe_property_sets` | Server data load and client preload, after recipes resolve, and again on reload | When station slot checks use the published sets. |
+| Mod configs | `register_configs` | Config phase on the owning side, once at startup for Client/Common and per world for Server | After the file is read and the mod receives its config loading callback. |
+
+[Content mods](../how-to/content-mods.md) declare identities and data such as blocks, items, entity types
+and menus in `data/<id>/horizon/`. These declarations supply the game's registry entries, models or
+templates and other data. The startup `blocks` and `items` hooks can submit the same declaration types
+from code and go through the same content checks. Attaching a Part or providing a callback adds behaviour
+to an identity. For example, a menu declaration describes its slots, while a `MenuPart` supplies code for
+that menu's lifecycle. Likewise, the item-scoped `item_decorations` hook draws after the game's default
+item icon decorations in slots, the hotbar and other views that use the shared item decoration path.
+
+### Tracked gaps in registration
+
+The issues below specify registrations still missing at this revision. Use the existing registration
+surface for startup declarations and the owning subsystem's collection hook for tables rebuilt during
+reload. Each builder should collect typed declarations and validate keys before publishing them.
+
+| Builder | Side and contract | Issue |
+| --- | --- | --- |
+| Command argument types | Register codecs, parsing and suggestions before building command trees that use the types. | [#810](https://github.com/arismoko/horizon/issues/810) |
+| Data pack registries | Declare the entry codec before server data loading and rebuild the registry on reload. | [#811](https://github.com/arismoko/horizon/issues/811) |
+| Attribute types | Declare a namespaced attribute and its value rules before entity defaults resolve. | [#812](https://github.com/arismoko/horizon/issues/812) |
+| World generation features | Bind named feature and placement implementations before server worldgen data resolves them. | [#815](https://github.com/arismoko/horizon/issues/815) |
+| Particle providers | Bind client provider factories to particle types before the particle engine spawns instances of those types. | [#822](https://github.com/arismoko/horizon/issues/822) |
+| Entity spawn placement | Bind the server placement rules and predicates to entity types before natural spawning. | [#847](https://github.com/arismoko/horizon/issues/847) |
+| Cauldron interactions | Bind item handlers to the relevant cauldron interaction table before gameplay. | [#854](https://github.com/arismoko/horizon/issues/854) |
+| Entity renderers | Bind client renderer factories to the entity types the renderer table will resolve. | [#860](https://github.com/arismoko/horizon/issues/860) |
+| Biome colour resolvers | Register named client colour resolvers for block rendering and use them when meshing. | [#873](https://github.com/arismoko/horizon/issues/873) |
+| Special item models | Register client special model codecs and bake their renderers when loading item models. | [#876](https://github.com/arismoko/horizon/issues/876) |
+| Custom item models | Resolve named client item model codecs during resource decoding. | [#877](https://github.com/arismoko/horizon/issues/877) |
+| Custom block models | Resolve named client block model codecs during model loading and baking. | [#878](https://github.com/arismoko/horizon/issues/878) |
+| Block-state models | Resolve registered client block-state model types during resource loading. | [#879](https://github.com/arismoko/horizon/issues/879) |
+| Animation types | Resolve client animation type declarations when decoding animation JSON. | [#880](https://github.com/arismoko/horizon/issues/880) |
+| Skull models | Associate client model factories and textures with skull types before rendering. | [#882](https://github.com/arismoko/horizon/issues/882) |
+| Particle groups | Register client render groups before custom particles enter the normal grouping and drawing path. | [#883](https://github.com/arismoko/horizon/issues/883) |
+| Render pipelines | Register typed client pipeline resources before a draw can request them. | [#884](https://github.com/arismoko/horizon/issues/884) |
+| Sprite source types | Resolve custom client sprite source codecs before collecting atlas sprites. | [#885](https://github.com/arismoko/horizon/issues/885) |
+| Texture atlases | Declare client atlas ids and sources so resource loads can stitch and publish them. | [#886](https://github.com/arismoko/horizon/issues/886) |
+| Picture-in-picture renderers | Bind client render-state types to renderer factories before GUI extraction uses them. | [#887](https://github.com/arismoko/horizon/issues/887) |
+| World preset editors | Bind client editor factories to preset ids before the creation screen offers them. | [#888](https://github.com/arismoko/horizon/issues/888) |
+| Entity spectator shaders | Bind client post effects to the types that select them in spectator view. | [#889](https://github.com/arismoko/horizon/issues/889) |
+| Client extensions | Associate typed client extensions with item, block, fluid and effect identities. | [#895](https://github.com/arismoko/horizon/issues/895) |
+| Fluid models | Resolve client fluid model declarations before rendering the fluid in the world. | [#896](https://github.com/arismoko/horizon/issues/896) |
+| Entity render-state modifiers | Register client callbacks keyed to the relevant renderer and apply them during extraction. | [#897](https://github.com/arismoko/horizon/issues/897) |
+| Map decoration types | Register server types whose decorations are saved with maps and synced to clients. Reuse the existing client icon draw path. | [#898](https://github.com/arismoko/horizon/issues/898) |
+
 ## Parts
 
 A per-block, per-item or per-entity moment is a method on a part, as it is a method on `Block` or `Item` in
