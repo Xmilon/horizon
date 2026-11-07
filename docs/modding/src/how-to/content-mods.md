@@ -489,6 +489,24 @@ still add theirs, as a higher data pack does. Since the result depends on load o
 of adds are left out, ...". Tags are the only `minecraft` files a mod may hold: its other content stays in its own
 namespaces.
 
+**Connecting a block to fences, walls or panes**
+
+To make a narrow post connect to oak and other wooden fences, add its id to both
+`data/minecraft/tags/block/fences.json` and `data/minecraft/tags/block/wooden_fences.json`:
+
+```json
+{ "values": ["mymod:rope_post"] }
+```
+
+Use only `fences.json` to join nether brick fences. A fence checks that the neighbour is in
+`minecraft:fences` and that both blocks agree on membership in `minecraft:wooden_fences`.
+A sturdy face toward the fence can also connect, subject to vanilla's connection exceptions.
+Fence gates use their own orientation rule.
+
+Use `data/minecraft/tags/block/walls.json` for a narrow block that should join walls, iron bars
+and glass panes. The tags tell vanilla neighbours to draw their arms. Give the custom block
+its own model and shapes for any arms it needs to draw.
+
 A mod adds to structure sets, template pools and processor lists that are not its own (vanilla's villages, another
 mod's houses) with a set, pool or processor list file in its own namespace holding `horizon:add_to`, a key vanilla data
 never has. Its entries are appended to each set, pool or list named, after every mod's own files, by

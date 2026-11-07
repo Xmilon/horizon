@@ -3188,7 +3188,7 @@ fn shapes_reject_unknown_or_missing_template_values() {
 /// leaves vanilla's chorus plant as it was.
 #[test]
 #[ignore = "full content root: CI and pr_ready run it"]
-fn connecting_blocks_join_themselves_and_their_tag() {
+fn connecting_blocks_and_vanilla_fences_use_content_tags() {
     use horizon_core::position::BlockPos;
     use horizon_core::random::LegacyRandom;
     use horizon_world::level::{Behaviours, LevelAccess, Ticks};
@@ -3216,6 +3216,26 @@ fn connecting_blocks_join_themselves_and_their_tag() {
         (
             "data/cable/tags/block/joins.json",
             r#"{"values": ["cable:machine"]}"#,
+        ),
+        (
+            "data/cable/horizon/block/wooden_post.json",
+            r#"{"template": "minecraft:end_rod"}"#,
+        ),
+        (
+            "data/cable/horizon/block/nether_post.json",
+            r#"{"template": "minecraft:end_rod"}"#,
+        ),
+        (
+            "data/cable/horizon/block/untagged_post.json",
+            r#"{"template": "minecraft:end_rod"}"#,
+        ),
+        (
+            "data/minecraft/tags/block/fences.json",
+            r#"{"values": ["cable:wooden_post", "cable:nether_post"]}"#,
+        ),
+        (
+            "data/minecraft/tags/block/wooden_fences.json",
+            r#"{"values": ["cable:wooden_post"]}"#,
         ),
     ] {
         let path = dir.join(name);
@@ -3332,6 +3352,27 @@ fn connecting_blocks_join_themselves_and_their_tag() {
     let chorus = registry.default_state("minecraft:chorus_plant").unwrap();
     let chorus = b.update_from_neighbour_shapes(&mut level, &mut ticks, at(4, 64, 0), chorus);
     assert!(sides(chorus).is_empty());
+
+    // The same non-sturdy template joins vanilla fences only through the matching tag.
+    let oak = registry.default_state("minecraft:oak_fence").unwrap();
+    let nether = registry
+        .default_state("minecraft:nether_brick_fence")
+        .unwrap();
+    let fence_pos = at(8, 64, 0);
+    let post_pos = at(9, 64, 0);
+    for (id, joins_oak, joins_nether) in [
+        ("cable:untagged_post", false, false),
+        ("cable:wooden_post", true, false),
+        ("cable:nether_post", false, true),
+    ] {
+        let post = registry.default_state(id).unwrap();
+        assert!(!b.is_face_sturdy(post, horizon_core::geometry::Direction::West));
+        b.set_block(&mut level, &mut ticks, post_pos, post, 3);
+        for (fence, joins) in [(oak, joins_oak), (nether, joins_nether)] {
+            let state = b.update_from_neighbour_shapes(&mut level, &mut ticks, fence_pos, fence);
+            assert_eq!(sides(state).contains(&"east"), joins, "{id}");
+        }
+    }
     fs::remove_dir_all(&scratch).unwrap();
 }
 
