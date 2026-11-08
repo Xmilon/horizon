@@ -149,7 +149,7 @@ impl Game<'_> {
     /// `SleepStatus.update`'s counts over the host's player and the guests:
     /// the players not in spectator mode, how many are in bed, and how many
     /// of those have slept 100 ticks.
-    pub(super) fn sleep_counts(&self) -> (i64, i64, i64) {
+    pub(in crate::game) fn sleep_counts(&self) -> (i64, i64, i64) {
         let (mut active, mut sleeping, mut deep) = (0i64, 0i64, 0i64);
         let mut count = |in_bed: bool, timer: u32| {
             active += 1;
@@ -165,16 +165,32 @@ impl Game<'_> {
         }
         if let Some(host) = self.lan.as_ref() {
             // A native mod's ignored players count only once in bed.
-            for g in host.hub.guests.iter().filter(|g| {
-                g.placed
-                    && g.participates_in_player_simulation()
-                    && !g.spectator()
-                    && (g.bed.is_some() || !host.sleep_ignored.contains(&g.uuid))
-            }) {
+            for g in host
+                .hub
+                .guests
+                .iter()
+                .filter(|g| self.guest_counts_for_sleep(g))
+            {
                 count(g.bed.is_some(), g.sleep_timer);
             }
         }
         (active, sleeping, deep)
+    }
+
+    /// Whether `SleepStatus.update` counts the guest: placed and playing, not
+    /// a spectator, and, when a native mod ignored them, only once in bed.
+    pub(in crate::game) fn guest_counts_for_sleep(
+        &self,
+        g: &horizon_client::lan::guest::Guest,
+    ) -> bool {
+        g.placed
+            && g.participates_in_player_simulation()
+            && !g.spectator()
+            && (g.bed.is_some()
+                || !self
+                    .lan
+                    .as_ref()
+                    .is_some_and(|host| host.sleep_ignored.contains(&g.uuid)))
     }
 
     /// `SleepStatus.sleepersNeeded`.

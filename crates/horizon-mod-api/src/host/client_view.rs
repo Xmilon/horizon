@@ -67,11 +67,24 @@ pub trait ClientViewClientHost {
     /// does; the local player's own ref puts it back. True when the view now follows it; false,
     /// with nothing changed, for a stale ref, an entity this window is not shown, or one the
     /// camera cannot follow (only the local player and mobs). While the view is off the player,
-    /// the player sends no moves (`LocalPlayer.isControlledCamera`), and the server sets it back
-    /// when it has the player stop spectating, so a mod that wants to release it calls this with
-    /// the player's ref.
+    /// the player sends no moves (`LocalPlayer.isControlledCamera`). The choice is the client's
+    /// own, so no server resets it: a mod that wants to release it calls this with the player's
+    /// ref, and the game puts the view back on the player itself when the camera entity is
+    /// removed. Call it when the choice changes, not every tick: it looks the entity up each time.
     #[access(WorldOnly)]
     fn set_camera_entity(&mut self, entity: EntityRef) -> bool;
+    /// Side: client.
+    /// Each column's height by `heightmap` in the world this window shows
+    /// (`LevelReader.getHeight(type, x, z)` on a client level): one above the highest block that
+    /// counts on that map, from the blocks the server has sent, none for a column whose chunk this
+    /// client does not hold. `Err`, reading nothing, for no client world (the title screen) or more
+    /// than 65,536 columns (`MAX_COLUMNS`).
+    #[access(WorldOnly)]
+    fn client_surface_heights(
+        &self,
+        columns: &[(i32, i32)],
+        heightmap: NativeHeightmap,
+    ) -> Result<Vec<Option<i32>>, String>;
     /// Side: client.
     /// The ordinary block-or-entity pick (Minecraft.hitResult), using the
     /// game's targeting ray, reach and occlusion. None without a client world

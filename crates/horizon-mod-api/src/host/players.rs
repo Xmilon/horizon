@@ -145,6 +145,60 @@ pub trait PlayersBackend {
     /// Whether a live player handle names a connectionless actor.
     #[access(WorldOnly)]
     fn player_is_fake(&self, player: PlayerRef) -> Option<bool>;
+    /// Side: server.
+    /// `Player.mayUseItemAt(pos, face, stack)`: whether the player may use `stack` at `pos`, the
+    /// block it would be placed in when clicked on its `face`. A player who may build (survival,
+    /// creative) always may; an adventure or spectator player only with a stack whose
+    /// `can_place_on` component matches the clicked block, the one `pos` lies against. The game's
+    /// own use runs the same check (`ItemStack.useOn`, buckets). None for a stale or unavailable
+    /// player, and for one in another level than the one in place.
+    #[access(WorldOnly)]
+    fn player_may_use_item_at(
+        &self,
+        player: PlayerRef,
+        pos: [i32; 3],
+        face: NativeBlockFace,
+        stack: &ItemStack,
+    ) -> Option<bool>;
+    /// Side: server.
+    /// `ServerPlayer.canHarmPlayer(other)`: whether `player` may hurt `other`: the `pvp` game
+    /// rule is on, and their teams allow it (allies on a team without friendly fire cannot,
+    /// `Player.canHarmPlayer`). Attacks, arrows and tridents ask the same. None when either
+    /// handle is stale or unavailable.
+    #[access(WorldOnly)]
+    fn player_can_harm(&self, player: PlayerRef, other: PlayerRef) -> Option<bool>;
+    /// Side: server.
+    /// `ServerPlayer.getRespawnConfig`: where the player comes back after dying: a bed, a
+    /// respawn anchor or a `/spawnpoint`, with the yaw they face and whether it is forced.
+    /// `Some(None)` when they have none and respawn at the world spawn. None for a stale or
+    /// unavailable player.
+    #[access(WorldOnly)]
+    fn player_respawn_config(&self, player: PlayerRef) -> Option<Option<PlayerRespawnConfig>>;
+    /// Side: server.
+    /// `ServerPlayer.isTextFilteringEnabled`: the text-filtering option the player's client
+    /// announced (`ClientInformation.textFilteringEnabled`). False for the player running the
+    /// server and for an acting player with no connection, as for a client that sent none. None
+    /// for a stale or unavailable player.
+    #[access(WorldOnly)]
+    fn player_text_filtering(&self, player: PlayerRef) -> Option<bool>;
+    /// Side: server.
+    /// Whether `player_set_sleep_ignored` left the player out of the night's sleep count. False
+    /// for a player never ignored. None for a stale handle or a player who isn't online.
+    #[access(WorldOnly)]
+    fn player_sleep_ignored(&self, player: PlayerRef) -> Option<bool>;
+    /// Side: server.
+    /// Whether the player counts in the night's sleep count (`SleepStatus.update`): not a
+    /// spectator, not a fake player, and not left out through `player_set_sleep_ignored` while
+    /// out of bed. None for a stale or unavailable player.
+    #[access(WorldOnly)]
+    fn player_counts_for_sleep(&self, player: PlayerRef) -> Option<bool>;
+    /// Side: server.
+    /// `Player.getSleepTimer` (`sleepCounter`): the ticks the player has been in bed, 100 once
+    /// asleep long enough (`isSleepingLongEnough`, what the night skip waits for), then
+    /// counting up 101 to 109 and back to 0 once they are up. None for a stale or unavailable
+    /// player.
+    #[access(WorldOnly)]
+    fn player_sleep_timer(&self, player: PlayerRef) -> Option<u32>;
     /// Side: both.
     /// `Inventory.items`: the non-empty main inventory stacks in slot order, including
     /// their components. None for a stale or unavailable player; on clients only the
@@ -247,6 +301,26 @@ pub trait PlayersBackendMut {
     /// stale or the player isn't online.
     #[access(WorldOnly)]
     fn player_set_sleep_ignored(&mut self, player: PlayerRef, ignored: bool) -> bool;
+    /// Side: server.
+    /// `ServerPlayer.setRespawnPosition`, as `/spawnpoint` sets it: the player's respawn point
+    /// becomes `config`, or is forgotten for None (they then respawn at the world spawn). The
+    /// yaw wraps to -180..180 (`RespawnData.of`) and the `player_set_spawn` hook may cancel the
+    /// change, which refuses it. Kept with the player's record. False for a stale or unavailable
+    /// player, a dead one, a dimension the game doesn't have, a yaw that is not finite and a
+    /// canceled change.
+    #[access(WorldOnly)]
+    fn player_set_respawn_config(
+        &mut self,
+        player: PlayerRef,
+        config: Option<PlayerRespawnConfig>,
+    ) -> bool;
+    /// Side: server.
+    /// Sets the player's `sleepCounter`: 0 to 109, the values the game reaches (see
+    /// `player_sleep_timer`). A player in bed at 100 counts as slept long enough for the night
+    /// skip. False for a value past 109, a stale or unavailable player, a fake player and a
+    /// player in another level than the one in place.
+    #[access(WorldOnly)]
+    fn player_set_sleep_timer(&mut self, player: PlayerRef, ticks: u32) -> bool;
     /// Side: server.
     /// Shows `nickname` in place of that player's name in chat (their
     /// messages, `/me`, `/msg`) and in the Tab list; None shows their name

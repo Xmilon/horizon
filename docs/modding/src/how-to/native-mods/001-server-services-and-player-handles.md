@@ -36,6 +36,18 @@ disconnection, until its world epoch closes. It cannot target arbitrary offline
 UUIDs; retain the handle value, not the borrowed service. Nickname and sleep
 writes still require an online player. The settings survive reconnects.
 
+A player handle also answers the game's own rules for that player, with the checks and state
+the real actions use: `may_use_item_at(host, pos, face, stack)` (`Player.mayUseItemAt`: builders
+always may, adventure and spectator players only with a matching `can_place_on`) and
+`can_harm(host, other)` (`ServerPlayer.canHarmPlayer`: the `pvp` rule and their teams).
+`respawn_config(host)` reads the respawn point (`Some(None)` for none) and
+`set_respawn_config(host, config)` writes it as `/spawnpoint` does, `player_set_spawn` veto
+included. `text_filtering(host)` is the option the player's client announced. For the night skip,
+`sleep_ignored(host)` reads what `set_sleep_ignored` left, `counts_for_sleep(host)` says whether
+the player is counted, and `sleep_timer(host)` / `set_sleep_timer(host, ticks)` read and write
+`Player.sleepCounter` (0 to 109; 100 is slept long enough). Reads take a `Host`, writes a
+`ServerHost`.
+
 These small services exist only on `ServerHost`, not `Host`, `ClientHost` or a
 restricted level host. Native and wasm mods use the same calls: service methods
 are generated imports, and acquiring a service just reborrows the current call's

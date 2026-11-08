@@ -121,7 +121,7 @@ impl Game<'_> {
 
     /// The team an entity is on: a mob's own or its tamed owner's, the
     /// acting player's, a guest's by name.
-    fn native_target_team(
+    pub(super) fn native_target_team(
         &self,
         t: Target,
     ) -> Option<Option<&horizon_client_core::scoreboard::Team>> {

@@ -2,6 +2,8 @@
 //! chunk-generation spawning (`NaturalSpawner`), mob events (attacks,
 //! breeding, conversions, drops), projectiles, player interactions
 //! (feeding, shearing, milking, spawn eggs, throwing) and rendering.
+#[cfg(test)]
+mod mob_dispatch_panic_tests;
 mod pufferfish_player;
 use super::api_values::{TryIntoApi, TryIntoEngine};
 
@@ -1449,6 +1451,7 @@ impl Game<'_> {
         // The level's random and attachments, lent to the mobs (brain behaviours draw from
         // the random, and a hit's damage hooks get both) and taken back after their ticks.
         let mut lent = horizon_client::health::LentLevel::take(&mut self.world);
+        let mut dispatch_panic = None;
         {
             let mut pushes = horizon_client::mobs::PendingPushes::default();
             let mut keep = Vec::with_capacity(mobs.len());
@@ -1525,13 +1528,24 @@ impl Game<'_> {
                     )
                     && let Some(epoch) = self.native_lifecycle.epoch()
                 {
-                    self.native_mob_despawn(
-                        self.dim.id(),
-                        mod_api::MobRef::new(mod_api::EntityRef::new(epoch, m.id)),
-                        &m.kind.id,
-                        [m.position.x, m.position.y, m.position.z],
-                        &mut m.despawn,
-                    );
+                    // The readonly listener runs while the mob and world views
+                    // are borrowed. Defer its unwind until those views end and
+                    // the normal owned-state restoration below has completed.
+                    if let Err(payload) =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            self.native_mob_despawn(
+                                self.dim.id(),
+                                mod_api::MobRef::new(mod_api::EntityRef::new(epoch, m.id)),
+                                &m.kind.id,
+                                [m.position.x, m.position.y, m.position.z],
+                                &mut m.despawn,
+                            );
+                        }))
+                    {
+                        m.despawn = mod_api::NativeDespawn::default();
+                        dispatch_panic = Some(payload);
+                        break;
+                    }
                 }
                 // ServerLevel.tick: every loaded entity checks despawning, but
                 // only those in entity-ticking chunks (within the simulation
@@ -1707,10 +1721,12 @@ impl Game<'_> {
                 horizon_client::mobs::apply_brain_events(&mut mobs, &mut level, &mut events, from);
             }
             laps.lap("creature_loop");
-            let mut flags = keep.into_iter();
-            mobs.retain(|_| flags.next().unwrap_or(true));
-            for m in &mut mobs {
-                horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
+            if dispatch_panic.is_none() {
+                let mut flags = keep.into_iter();
+                mobs.retain(|_| flags.next().unwrap_or(true));
+                for m in &mut mobs {
+                    horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
+                }
             }
         }
         lent.give_back(&mut self.world);
@@ -1730,10 +1746,24 @@ impl Game<'_> {
         // as it is instead of being copied into a new one, every mob a tick.
         self.mobs
             .restore(mobs, horizon_client::join_seq::RestoreOrder::SpawnsFirst);
+        if dispatch_panic.is_some() {
+            // These death callbacks have not run, and the borrowed block writes
+            // must still invalidate paths on the next attempted pass.
+            for mob in &dead {
+                died.remove(&mob.id);
+            }
+            self.world
+                .path_writes
+                .get_or_insert_with(Vec::new)
+                .extend(path_writes);
+        }
         self.died = died;
         snapshot.clear();
         self.creatures.seen_buf = snapshot;
         self.creatures.ticked = ticked;
+        if let Some(payload) = dispatch_panic {
+            std::panic::resume_unwind(payload);
+        }
         self.native_tick_post_batch(round);
         // ... and entity event 60 goes out as it is: the poof.
         // 🤖 Agent: the split follows the poof, as `LivingEntity.tickDeath`

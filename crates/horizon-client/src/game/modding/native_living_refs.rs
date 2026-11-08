@@ -2696,6 +2696,7 @@ mod tests {
                 Some([2, 63, 2]);
             let host: &dyn Host = game;
             assert_eq!(sleeper.bed_orientation(host), Some(Direction::North));
+            assert_eq!(sleeper.can_use_portal(host), Some(false));
             // A sleeping position that is not a bed answers none.
             horizon_client::mobs::villager::ext_mut(&mut game.mobs[0]).sleeping_pos =
                 Some([0, 63, 0]);
@@ -2710,6 +2711,18 @@ mod tests {
             let player = game.living(game.entity(20).unwrap()).unwrap();
             let host: &dyn Host = game;
             assert_eq!(player.bed_orientation(host), Some(Direction::North));
+            // Fox sleeping overrides LivingEntity.isSleeping. These species
+            // may all travel awake; the fox sleep flag vetoes portal use.
+            for name in ["minecraft:fox", "minecraft:bat", "minecraft:cat"] {
+                let kind = game.res.mob_types().get(name).unwrap().clone();
+                let mut mob = Mob::new(31, kind, Vec3::ZERO, 0.0);
+                assert!(horizon_client::mobs::mob_can_use_portal(&mob));
+                if name == "minecraft:fox" {
+                    mob.extra.ints[0] |= horizon_client::mobs::fox::SLEEPING;
+                    assert!(!horizon_client::mobs::mob_can_use_portal(&mob));
+                }
+            }
+            assert!(!game.mob_portal_eligible(&game.mobs[0]));
             game.mobs.clear();
             let host: &dyn Host = game;
             assert_eq!(sleeper.bed_orientation(host), None);
@@ -2737,6 +2750,18 @@ mod tests {
             let living = game.living(game.entity(12).unwrap()).unwrap();
             let host: &dyn Host = game;
             assert_eq!(living.can_use_portal(host), Some(true));
+            game.lan
+                .as_mut()
+                .unwrap()
+                .hub
+                .update_guest(12, |g| g.vehicle = Some(99));
+            let host: &dyn Host = game;
+            assert_eq!(living.can_use_portal(host), Some(false));
+            game.lan
+                .as_mut()
+                .unwrap()
+                .hub
+                .update_guest(12, |g| g.vehicle = None);
             // Asleep: the rule's sleep half answers, over their body.
             game.lan
                 .as_mut()

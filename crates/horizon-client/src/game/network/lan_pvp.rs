@@ -257,6 +257,20 @@ impl Game<'_> {
         }
     }
 
+    /// `ServerPlayer.canHarmPlayer`: the `pvp` game rule is on, and the
+    /// victim's team lets the attacker's hurt it (`Player.canHarmPlayer`:
+    /// allies only with friendly fire on).
+    pub(in crate::game) fn player_may_harm(
+        &self,
+        victim: Option<&horizon_client_core::scoreboard::Team>,
+        attacker: Option<&horizon_client_core::scoreboard::Team>,
+    ) -> bool {
+        self.ui
+            .rules
+            .bool_at(horizon_client::gamerules::vanilla::PVP)
+            && horizon_client::scoreboard::teams_allow_damage(victim, attacker)
+    }
+
     /// A player's projectile on a player: the hit runs as the victim, whose
     /// hurt refuses it when the `pvp` game rule or their teams forbid it
     /// (`ServerPlayer.canHarmPlayer`; `AbstractArrow.onHitEntity` then turns
@@ -281,11 +295,7 @@ impl Game<'_> {
         let target = match victim {
             Victim::Guest(conn) => host.hub.guest(conn).and_then(|g| team_of(self, &g.name)),
         };
-        let refused = !(self
-            .ui
-            .rules
-            .bool_at(horizon_client::gamerules::vanilla::PVP)
-            && horizon_client::scoreboard::teams_allow_damage(target.as_ref(), attacker.as_ref()));
+        let refused = !self.player_may_harm(target.as_ref(), attacker.as_ref());
         let on_player = Hit::Entity {
             who: Who::Player,
             at,
@@ -320,15 +330,13 @@ impl Game<'_> {
         let Some(host) = self.lan.as_ref() else {
             return false;
         };
-        // ServerPlayer.canHarmPlayer: the pvp game rule, then the victim's
-        // team (Player.canHarmPlayer: allies only with friendly fire on).
         let team = match victim {
             Victim::Guest(conn) => host
                 .hub
                 .guest(conn)
                 .and_then(|g| self.score.board.players_team(&g.name)),
         };
-        let harm = horizon_client::scoreboard::teams_allow_damage(team, s.team.as_ref());
+        let harm = self.player_may_harm(team, s.team.as_ref());
         if s.knockback_attack {
             self.audio.play(
                 "minecraft:entity.player.attack.knockback",
@@ -384,12 +392,7 @@ impl Game<'_> {
                 (hurt, thorns)
             })
         };
-        let (hurt, thorns) = if self
-            .ui
-            .rules
-            .bool_at(horizon_client::gamerules::vanilla::PVP)
-            && harm
-        {
+        let (hurt, thorns) = if harm {
             match victim {
                 Victim::Guest(conn) => self.guest_struck_by(conn, land).unwrap_or_default(),
             }

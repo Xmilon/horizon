@@ -3140,12 +3140,17 @@ impl Mob {
 /// `events[from..]` into `pending`, which the caller adds to each mob's
 /// velocity before its tick (and to every mob once all have ticked). The
 /// other events keep their order.
-/// The part of `Entity.canUsePortal` a mob's own state decides: it is alive,
+/// The part of `LivingEntity.canUsePortal` a mob's own state decides: it is alive,
+/// not sleeping (including fox sleep, but not bat resting or cat lying),
 /// it is not a boss that never travels, and — over `Monster.canUsePortal` —
 /// it is not a creaking bound to a heart (`Creaking.canUsePortal`). The
 /// rides and the players a side carries are the caller's half.
 pub fn mob_can_use_portal(m: &Mob) -> bool {
-    m.alive() && m.species() != Species::Wither && creaking::can_use_portal(m)
+    m.alive()
+        && !villager::sleeping(m)
+        && !(m.species() == Species::Fox && fox::flag(m, fox::SLEEPING))
+        && m.species() != Species::Wither
+        && creaking::can_use_portal(m)
 }
 pub fn take_mob_pushes(events: &mut Vec<MobEvent>, from: usize, pending: &mut PendingPushes) {
     // One pass: a crowd's tick holds a push per neighbour, and removing each
@@ -4123,7 +4128,8 @@ impl Mob {
         // touched yet, and only a hit outside `#bypasses_armor` asks at all.
         let armor_hit = (!source.bypasses_armor() && amount > 0.0).then_some(amount);
         let entered = amount;
-        if !source.bypasses_armor() {
+        let armor_ran = !source.bypasses_armor();
+        if armor_ran {
             let (armor, armor_toughness) = armor::values(self);
             if armor > 0.0 {
                 // CombatRules.getDamageAfterAbsorb
@@ -4136,10 +4142,17 @@ impl Mob {
                 amount *= 1.0 - fraction;
             }
         }
+        amount = container.reduce(
+            Reduction::Armor,
+            entered,
+            entered - amount,
+            amount,
+            armor_ran,
+        );
         let after_armor = amount;
-        container.record_reduction(Reduction::Armor, entered - after_armor);
         // LivingEntity.getDamageAfterMagicAbsorb: Resistance takes 20% per level off
         // (`#bypasses_resistance` and `#bypasses_effects` skip it) ...
+        let mut resisted = false;
         if !source.kind.bypasses_effects()
             && !source.kind.bypasses_resistance()
             && let Some(&StoredEffect { amplifier: amp, .. }) = self
@@ -4150,24 +4163,39 @@ impl Mob {
         {
             let remainder = 25i32.wrapping_sub(amp.wrapping_add(1).wrapping_mul(5));
             amount = (amount * remainder as f32 / 25.0).max(0.0);
+            resisted = true;
             // actuallyHurt is void: zero health damage still lets hurtServer set hurt state.
         }
-        container.record_reduction(Reduction::MobEffects, after_armor - amount);
+        amount = container.reduce(
+            Reduction::MobEffects,
+            after_armor,
+            after_armor - amount,
+            amount,
+            resisted,
+        );
         let after_effects = amount;
         // ... then, with damage left and outside `#bypasses_enchantments` (a
         // warden's sonic boom), CombatRules.getDamageAfterMagicAbsorb's
         // enchantment protection (#11308).
-        if amount > 0.0 && !source.kind.bypasses_enchantments() {
+        let enchanted = amount > 0.0 && !source.kind.bypasses_enchantments();
+        if enchanted {
             let epf = gear::protection(self, source.kind);
             if epf > 0.0 {
                 amount *= 1.0 - epf / 25.0;
             }
         }
-        container.record_reduction(Reduction::Enchantments, after_effects - amount);
+        amount = container.reduce(
+            Reduction::Enchantments,
+            after_effects,
+            after_effects - amount,
+            amount,
+            enchanted,
+        );
         let after_enchantments = amount;
         // Witch.getDamageAfterMagicAbsorb: none from its own doing, else
         // 85% less from `#witch_resistant_to`.
-        if self.species() == Species::Witch {
+        let witch = self.species() == Species::Witch;
+        if witch {
             if source.attacker == Some(Who::Mob(self.id)) {
                 amount = 0.0;
             } else if matches!(
@@ -4180,7 +4208,13 @@ impl Mob {
                 amount *= 0.15;
             }
         }
-        container.record_reduction(Reduction::InnateResistance, after_enchantments - amount);
+        amount = container.reduce(
+            Reduction::InnateResistance,
+            after_enchantments,
+            after_enchantments - amount,
+            amount,
+            witch,
+        );
         // Wolf.actuallyHurt: wolf armor takes the damage instead of the wolf.
         let absorbed = self.wolf_armor_absorbs(&source);
         let mut knock = true;
@@ -4190,8 +4224,13 @@ impl Mob {
             return false;
         }
         let mut dealt = if window {
-            container.record_reduction(Reduction::Invulnerability, self.last_hurt);
-            amount - self.last_hurt
+            container.reduce(
+                Reduction::Invulnerability,
+                amount,
+                self.last_hurt,
+                amount - self.last_hurt,
+                true,
+            )
         } else {
             amount
         };
@@ -4210,7 +4249,7 @@ impl Mob {
         if absorbed {
             self.hurt_wolf_armor(dealt);
         } else {
-            through = self.soak_hit(dealt, &source);
+            through = self.soak_hit(dealt, &source, &container);
             container.record_reduction(Reduction::Absorption, dealt - through);
             self.health -= through;
         }
@@ -4731,8 +4770,8 @@ impl Mob {
     }
     /// [`Mob::soak_absorption`] for a hit from `source`: `LivingEntity.actuallyHurt`
     /// credits a `ServerPlayer` attacker with the absorbed damage in tenths.
-    fn soak_hit(&mut self, damage: f32, source: &Damage) -> f32 {
-        let through = self.soak_absorption(damage);
+    fn soak_hit(&mut self, damage: f32, source: &Damage, container: &DamageContainer) -> f32 {
+        let through = self.soak_absorption(damage, container);
         let absorbed = damage - through;
         if absorbed > 0.0
             && absorbed < 3.402_823_5e37
@@ -4746,8 +4785,17 @@ impl Mob {
     }
     /// `LivingEntity.actuallyHurt`: the absorption amount takes the damage first;
     /// what is left reaches the health.
-    pub fn soak_absorption(&mut self, damage: f32) -> f32 {
-        let through = (damage - self.absorption).max(0.0);
+    /// A modifier registered for the absorption reduction (`container`) changes what the
+    /// hearts take, within the damage and the hearts there are.
+    pub fn soak_absorption(&mut self, damage: f32, container: &DamageContainer) -> f32 {
+        let mut through = (damage - self.absorption).max(0.0);
+        if let Some(taken) = container.modified_reduction(
+            Reduction::Absorption,
+            damage - through,
+            damage.min(self.absorption),
+        ) {
+            through = damage - taken;
+        }
         self.absorption = (self.absorption - (damage - through)).max(0.0);
         through
     }

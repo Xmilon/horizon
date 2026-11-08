@@ -321,6 +321,13 @@ pub(super) fn register_debug_entries(role: ExecutionRole) {
     Game::native_register_debug_entries(&RegistrationContext::new(), &mut entries);
     horizon_client::debug_entries::register(entries);
 }
+/// The native mods' map decoration types (`native_map_decoration_types`), frozen once at start on
+/// every side.
+pub(super) fn register_map_decoration_types() {
+    let mut types = Vec::new();
+    Game::native_map_decoration_types(&RegistrationContext::new(), &mut types);
+    horizon_client::map_decoration_types::register(types, Game::is_vanilla_decoration_sprite);
+}
 /// The native mods' HUD layers (`native_register_gui_layers`), placed among vanilla's once at
 /// start.
 pub(super) fn register_gui_layers(role: ExecutionRole) {

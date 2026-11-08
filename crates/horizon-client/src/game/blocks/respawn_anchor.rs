@@ -172,7 +172,12 @@ impl Game<'_> {
     /// The mods' say on a server player's respawn point about to be set to
     /// `pos` in `dim` (`ServerPlayer.setRespawnPosition`, NeoForge's
     /// `PlayerSetSpawnEvent`): true when one canceled.
-    pub(super) fn spawn_point_change(&mut self, dim: Dim, pos: [i32; 3], forced: bool) -> bool {
+    pub(super) fn spawn_point_change(
+        &mut self,
+        dim: Dim,
+        pos: Option<[i32; 3]>,
+        forced: bool,
+    ) -> bool {
         let (Some(player), Some(name)) = (self.lan_acting_uuid, self.lan_acting_name.clone())
         else {
             return false;
@@ -184,11 +189,27 @@ impl Game<'_> {
             player_entity_id: id,
             name: &name,
             dimension: dim.id(),
-            pos: Some(pos),
+            pos,
             forced,
             cancel: &mut cancel,
         });
         cancel
+    }
+    /// `ServerPlayer.setRespawnPosition` for the player in place, as
+    /// `/spawnpoint` sets it: the point becomes `config`, or none for None,
+    /// unless a mod cancels the change (the answer is false then). A point
+    /// replaces the fallback spawn, which the world spawn then stands for.
+    pub(super) fn set_respawn_point(&mut self, config: Option<RespawnConfig>) -> bool {
+        let (dim, pos, forced) =
+            config.map_or((self.dim, None, false), |c| (c.dim, Some(c.pos), c.forced));
+        if self.spawn_point_change(dim, pos, forced) {
+            return false;
+        }
+        if config.is_some() {
+            self.spawn = None;
+        }
+        self.respawn_config = config;
+        true
     }
     /// `RespawnAnchorBlock.useWithoutItem` on a charged anchor: outside the
     /// Nether it explodes; inside, it becomes the respawn point.
@@ -208,7 +229,7 @@ impl Game<'_> {
             .respawn_config
             .is_some_and(|c| c.dim == config.dim && c.pos == config.pos);
         if !same {
-            if self.spawn_point_change(self.dim, pos, false) {
+            if self.spawn_point_change(self.dim, Some(pos), false) {
                 return Ok(());
             }
             // setRespawnPosition(config, true): the message, the point; the

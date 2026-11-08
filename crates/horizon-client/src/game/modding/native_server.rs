@@ -8,7 +8,7 @@
 //! players (the hub's: a dedicated server's, a LAN host's, single player's
 //! server thread's), never on a client's.
 use super::api_values::{TryIntoApi, TryIntoEngine};
-use super::{Dim, Game, commands::execute, lan::LanHost};
+use super::{Dim, Game, commands::execute, lan::LanHost, respawn_anchor::RespawnConfig};
 use mod_api::__private::game::*;
 pub use mod_api::game::NativeExperienceOrb;
 // Their old home, for mixin code that names them here.
@@ -19,12 +19,14 @@ use horizon_client::{
     motion::PlayerMotion,
     text::Text,
 };
+use horizon_core::position::BlockPos;
 use horizon_protocol::packets::play::{self, Clientbound as C};
 use mod_api::LevelRef;
 pub(crate) use mod_api::NativeCommand;
 use mod_api::{
-    ActionOutcome, ActionRefused, FakeEffect, GameMode, NativePlayerAbilities, NativePlayerFood,
-    PlayerAction, PlayerActionSetup, PlayerRef, ScopedActionResult,
+    ActionOutcome, ActionRefused, FakeEffect, GameMode, GlobalPos, Identifier,
+    NativePlayerAbilities, NativePlayerFood, PlayerAction, PlayerActionSetup, PlayerRef,
+    PlayerRespawnConfig, ScopedActionResult,
 };
 use serde_json::{Map, Value, json};
 use std::sync::{
@@ -1280,21 +1282,138 @@ impl Game<'_> {
     /// come back. False when the server list is unavailable, the handle is
     /// stale or the player isn't online.
     pub(super) fn player_set_sleep_ignored(&mut self, player: PlayerRef, ignored: bool) -> bool {
-        let Some(uuid) = self.message_player_uuid(player) else {
+        let Some(uuid) = self.sleep_list_uuid(player) else {
             return false;
         };
         let Some(host) = &mut self.lan else {
             return false;
         };
-        if !host.hub.online_players().any(|g| g.uuid == uuid) {
-            return false;
-        }
         if ignored {
             host.sleep_ignored.insert(uuid);
         } else {
             host.sleep_ignored.remove(&uuid);
         }
         true
+    }
+    /// The UUID of a player the server list holds, whom the sleep count can
+    /// leave out: None when the list is unavailable, the handle is stale or
+    /// the player isn't online.
+    fn sleep_list_uuid(&self, player: PlayerRef) -> Option<u128> {
+        let uuid = self.message_player_uuid(player)?;
+        self.lan
+            .as_ref()?
+            .hub
+            .online_players()
+            .any(|g| g.uuid == uuid)
+            .then_some(uuid)
+    }
+    /// Whether `player_set_sleep_ignored` left the player out of the sleep
+    /// count. None as the write's false.
+    pub(super) fn player_sleep_ignored(&self, player: PlayerRef) -> Option<bool> {
+        let uuid = self.sleep_list_uuid(player)?;
+        Some(self.lan.as_ref()?.sleep_ignored.contains(&uuid))
+    }
+    /// Whether `SleepStatus.update` counts the player: not a spectator, not a
+    /// fake, and not an ignored player who is out of bed (`sleep_counts`'s
+    /// own rule). None for a stale or unavailable player.
+    pub(super) fn player_counts_for_sleep(&self, player: PlayerRef) -> Option<bool> {
+        let ignored = |game: &Self| {
+            game.lan
+                .as_ref()
+                .is_some_and(|host| host.sleep_ignored.contains(&player.uuid()))
+        };
+        Some(match self.player_handle_read(player)? {
+            // The player in place: the host's own, or a guest in their turn.
+            PlayerRead::Acting { .. } => {
+                !self.lan_acting_fake
+                    && !self.spectator()
+                    && (self.sleeping.is_some() || !ignored(self))
+            }
+            PlayerRead::Guest(guest) => self.guest_counts_for_sleep(guest),
+        })
+    }
+    /// `Player.getSleepTimer`: the ticks in bed (`sleepCounter`), in the
+    /// record of a guest or in place for the acting player. None for a
+    /// stale or unavailable player.
+    pub(super) fn player_sleep_timer(&self, player: PlayerRef) -> Option<u32> {
+        Some(match self.player_handle_read(player)? {
+            PlayerRead::Acting { .. } => self.sleep_timer,
+            PlayerRead::Guest(guest) => guest.sleep_timer,
+        })
+    }
+    /// Sets `Player.sleepCounter` to `ticks`, 0 to 109 (what `tick_sleep_timer`
+    /// reaches), through the sleep writes' guard: false for a fake player,
+    /// a guest in another level and a stale player.
+    pub(super) fn player_set_sleep_timer(&mut self, player: PlayerRef, ticks: u32) -> bool {
+        if ticks > super::MAX_SLEEP_TIMER || self.player_handle_read(player).is_none() {
+            return false;
+        }
+        let Some(target) = self.native_entity_target(player.entity()) else {
+            return false;
+        };
+        self.native_player_sleep_write(target, |game| {
+            game.sleep_timer = ticks;
+            true
+        })
+    }
+    /// `ServerPlayer.isTextFilteringEnabled`: what the client's
+    /// `ClientInformation` said, false for the player running the server and
+    /// for an acting player with no connection. None for a stale or
+    /// unavailable player.
+    pub(super) fn player_text_filtering(&self, player: PlayerRef) -> Option<bool> {
+        if let Some(guest) = self.online_player_record(player) {
+            return Some(guest.info.text_filtering);
+        }
+        (self.native_acting_player() == Some(player)).then_some(false)
+    }
+    /// `ServerPlayer.getRespawnConfig`: the player's respawn point as the
+    /// game keeps it (the guest's record, or the acting player's in place),
+    /// `Some(None)` when they have none. None for a stale or unavailable
+    /// player, or a dimension key the API can't name.
+    pub(super) fn player_respawn_config(
+        &self,
+        player: PlayerRef,
+    ) -> Option<Option<PlayerRespawnConfig>> {
+        let saved = match self.player_handle_read(player)? {
+            PlayerRead::Acting { .. } => self.respawn_config.map(|c| c.saved()),
+            PlayerRead::Guest(guest) => guest.respawn_elsewhere.clone(),
+        };
+        let Some((dimension, [x, y, z], yaw, forced)) = saved else {
+            return Some(None);
+        };
+        Some(Some(PlayerRespawnConfig {
+            position: GlobalPos::new(Identifier::parse(&dimension).ok()?, BlockPos::new(x, y, z)),
+            yaw,
+            forced,
+        }))
+    }
+    /// `ServerPlayer.setRespawnPosition`, as `/spawnpoint` sets it (the
+    /// same `set_respawn_point`): `config`, or none for None. False for a
+    /// stale, unavailable or dead player, a dimension the game doesn't
+    /// have, a yaw that isn't finite and a change a mod canceled.
+    pub(super) fn player_set_respawn_config(
+        &mut self,
+        player: PlayerRef,
+        config: Option<PlayerRespawnConfig>,
+    ) -> bool {
+        let stored = match config {
+            Some(config) => {
+                let dimension = config.position.dimension().to_string();
+                if !config.yaw.is_finite() || !Dim::exists(&dimension) {
+                    return false;
+                }
+                let at = config.position.pos();
+                Some(RespawnConfig::wrapped(
+                    Dim::from_id(&dimension),
+                    [at.x, at.y, at.z],
+                    config.yaw,
+                    config.forced,
+                ))
+            }
+            None => None,
+        };
+        let mut set = false;
+        self.native_as_player_handle(player, |game| set = game.set_respawn_point(stored)) && set
     }
     /// Hides that player (a vanish) from the players below permission
     /// `level`, or shows them again (None): from the next tick those players
@@ -4338,6 +4457,190 @@ mod fake_action_tests {
                 game.as_guest(real_conn, |g| g.native_may_board(99)),
                 Some(true)
             );
+        });
+    }
+}
+
+#[cfg(test)]
+mod player_rule_tests {
+    use super::super::native_guest_turn_tests::with_guests;
+    use super::*;
+
+    /// The guests of `with_guests` are rows 0 and 1; both stand in the level in place.
+    fn in_this_level(game: &mut Game<'_>) {
+        let level = game.dim.id().to_owned();
+        game.lan.as_mut().unwrap().hub.guests.update_all(|g| {
+            g.dimension = level.clone();
+        });
+    }
+
+    fn at(dimension: &str, [x, y, z]: [i32; 3]) -> GlobalPos {
+        GlobalPos::new(
+            Identifier::parse(dimension).unwrap(),
+            BlockPos::new(x, y, z),
+        )
+    }
+
+    fn respawn(dimension: &str, pos: [i32; 3], yaw: f32, forced: bool) -> PlayerRespawnConfig {
+        PlayerRespawnConfig {
+            position: at(dimension, pos),
+            yaw,
+            forced,
+        }
+    }
+
+    /// `/spawnpoint`'s write and `getRespawnConfig`'s read, on each player's own record.
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_respawn_point_is_read_and_written_in_the_players_own_record() {
+        with_guests(|game| {
+            let (a, b) = (game.player(12).unwrap(), game.player(13).unwrap());
+            assert_eq!(a.respawn_config(&*game), Some(None), "none until set");
+
+            // The yaw wraps as `RespawnData.of` does: 270 degrees is -90.
+            let nether = "minecraft:the_nether";
+            assert!(a.set_respawn_config(game, Some(respawn(nether, [1, 2, 3], 270.0, true))));
+            assert_eq!(
+                a.respawn_config(&*game),
+                Some(Some(respawn(nether, [1, 2, 3], -90.0, true)))
+            );
+            assert_eq!(
+                game.lan.as_ref().unwrap().hub.guests[0].respawn_elsewhere,
+                Some((nether.into(), [1, 2, 3], -90.0, true)),
+                "the record a respawn reads"
+            );
+            assert_eq!(
+                b.respawn_config(&*game),
+                Some(None),
+                "the other is untouched"
+            );
+
+            // The acting player reads the point swapped into place.
+            let seen = game.as_guest(12, |game| a.respawn_config(&*game)).unwrap();
+            assert_eq!(seen, Some(Some(respawn(nether, [1, 2, 3], -90.0, true))));
+
+            // Refused writes change nothing: a dimension the game does not have, a yaw that is not a number.
+            let nowhere = respawn("test:nowhere", [9, 9, 9], 0.0, false);
+            assert!(!a.set_respawn_config(game, Some(nowhere)));
+            let not_a_number = respawn(nether, [9, 9, 9], f32::NAN, false);
+            assert!(!a.set_respawn_config(game, Some(not_a_number)));
+            assert_eq!(
+                a.respawn_config(&*game),
+                Some(Some(respawn(nether, [1, 2, 3], -90.0, true)))
+            );
+
+            // None forgets it.
+            assert!(a.set_respawn_config(game, None));
+            assert_eq!(a.respawn_config(&*game), Some(None));
+            assert_eq!(
+                game.lan.as_ref().unwrap().hub.guests[0].respawn_elsewhere,
+                None
+            );
+        });
+    }
+
+    /// The write goes through `spawn_point_change`, so a mod's `player_set_spawn` veto refuses it, as it does `/spawnpoint`.
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_mods_veto_refuses_the_respawn_write() {
+        struct Veto;
+        #[mod_api::__subscriptions]
+        impl mod_api::Hooks for Veto {
+            fn player_set_spawn(
+                &self,
+                _: &mut dyn mod_api::ServerHost,
+                _: &mut mod_api::PlayerSetSpawnEvent,
+            ) -> mod_api::Flow {
+                mod_api::Flow::Cancel
+            }
+        }
+        let mods = vec![mod_api::ModEntry::new("veto", Box::new(Veto))].into();
+        mod_api::testing::with_mods(mods, || {
+            with_guests(|game| {
+                let a = game.player(12).unwrap();
+                let overworld = "minecraft:overworld";
+                let config = respawn(overworld, [1, 2, 3], 0.0, false);
+                assert!(!a.set_respawn_config(game, Some(config)));
+                assert_eq!(a.respawn_config(&*game), Some(None));
+            });
+        });
+    }
+
+    /// The client's text-filtering option, as its `ClientInformation` said.
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn text_filtering_is_what_the_clients_information_said() {
+        with_guests(|game| {
+            let (a, b) = (game.player(12).unwrap(), game.player(13).unwrap());
+            game.lan.as_mut().unwrap().hub.guests.update(0, |g| {
+                g.info.text_filtering = true;
+            });
+            assert_eq!(a.text_filtering(&*game), Some(true));
+            assert_eq!(b.text_filtering(&*game), Some(false));
+            // A later `ClientInformation` replaces it.
+            game.lan.as_mut().unwrap().hub.guests.update(0, |g| {
+                g.info.text_filtering = false;
+            });
+            assert_eq!(a.text_filtering(&*game), Some(false));
+        });
+    }
+
+    /// The sleep reads and the counter write, with the night skip's own counts as the oracle.
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn sleep_eligibility_and_the_timer_follow_the_players_state() {
+        with_guests(|game| {
+            in_this_level(game);
+            let (a, b) = (game.player(12).unwrap(), game.player(13).unwrap());
+            let (active, sleeping, deep) = game.sleep_counts();
+            assert_eq!(a.sleep_timer(&*game), Some(0));
+            assert_eq!(a.counts_for_sleep(&*game), Some(true));
+            assert_eq!(a.sleep_ignored(&*game), Some(false));
+
+            // A player in bed at 100 ticks is one of the deep sleepers the night waits for.
+            game.lan.as_mut().unwrap().hub.guests.update(0, |g| {
+                g.bed = Some([5, 64, 5]);
+            });
+            assert!(a.set_sleep_timer(game, 100));
+            assert_eq!(a.sleep_timer(&*game), Some(100));
+            assert_eq!(game.lan.as_ref().unwrap().hub.guests[0].sleep_timer, 100);
+            assert_eq!(game.sleep_counts(), (active, sleeping + 1, deep + 1));
+            // The wake-up fade's last value is allowed; one past it is not, and changes nothing.
+            assert!(a.set_sleep_timer(game, 109));
+            assert!(!a.set_sleep_timer(game, 110));
+            assert_eq!(a.sleep_timer(&*game), Some(109));
+
+            // Ignoring leaves an out-of-bed player out of the count, and an in-bed one in.
+            assert!(b.set_sleep_ignored(game, true));
+            assert_eq!(b.sleep_ignored(&*game), Some(true));
+            assert_eq!(b.counts_for_sleep(&*game), Some(false));
+            assert_eq!(game.sleep_counts().0, active - 1);
+            assert!(a.set_sleep_ignored(game, true));
+            assert_eq!(a.counts_for_sleep(&*game), Some(true), "in bed");
+            game.lan
+                .as_mut()
+                .unwrap()
+                .hub
+                .guests
+                .update(0, |g| g.bed = None);
+            assert_eq!(a.counts_for_sleep(&*game), Some(false), "out of bed");
+            assert!(a.set_sleep_ignored(game, false));
+            assert!(b.set_sleep_ignored(game, false));
+            assert_eq!(a.counts_for_sleep(&*game), Some(true));
+
+            // A spectator is never counted.
+            game.lan.as_mut().unwrap().hub.guests.update(1, |g| {
+                g.game_mode = 3;
+            });
+            assert_eq!(b.counts_for_sleep(&*game), Some(false));
+
+            // The acting player's state is the one in place.
+            let seen = game
+                .as_guest(12, |game| {
+                    (a.sleep_timer(&*game), a.counts_for_sleep(&*game))
+                })
+                .unwrap();
+            assert_eq!(seen, (Some(109), Some(true)));
         });
     }
 }

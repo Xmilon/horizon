@@ -609,6 +609,12 @@ mod plain_name_overlay_tests {
         with_game(|game| {
             game.build_registries();
             game.set_allow_commands(true);
+            // This fixture has no streaming workers; provide the resident chunk
+            // as well as the block-tick chunk before forceload asks for it.
+            game.world.chunks.insert(
+                (0, 0),
+                std::sync::Arc::new(horizon_client::chunk::Chunk::empty(0, 0)),
+            );
             game.block_ticks
                 .add_empty_chunk(BlockPos::new(0, 0, 0).chunk())
                 .unwrap();
@@ -779,6 +785,11 @@ mod styled_name_model_tests {
         with_game(|game| {
             game.build_registries();
             game.set_allow_commands(true);
+            // The name round trip needs a resident chunk, not terrain generation.
+            game.world.chunks.insert(
+                (0, 0),
+                std::sync::Arc::new(horizon_client::chunk::Chunk::empty(0, 0)),
+            );
             game.block_ticks
                 .add_empty_chunk(BlockPos::new(0, 0, 0).chunk())
                 .unwrap();

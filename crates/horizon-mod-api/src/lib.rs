@@ -2579,6 +2579,20 @@ impl std::hash::Hash for GlobalPos {
     }
 }
 
+/// A player's respawn point (`ServerPlayer.RespawnConfig`): the block they come back at, the
+/// way they face there and whether it is forced (`/spawnpoint`) rather than a bed or anchor that
+/// must still be there.
+#[derive(Clone, Debug, PartialEq)]
+// exhaustive: a mod builds it with a literal; the game reads and writes the same three values
+pub struct PlayerRespawnConfig {
+    /// The dimension and block.
+    pub position: GlobalPos,
+    /// The yaw in degrees (`Mth.wrapDegrees`, -180 to 180 when read).
+    pub yaw: f32,
+    /// Whether the point holds without its block (`/spawnpoint`).
+    pub forced: bool,
+}
+
 /// A level of the open world, by its dimension (`minecraft:the_nether`).
 /// `Host::level` makes one, and `entity.level(host)` gives an entity's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

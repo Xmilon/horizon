@@ -885,9 +885,10 @@ pub trait Hooks {
     /// where it comes from (`getSourcePosition`). `victim` is where the entity stands and
     /// looks, and `weapon` the direct entity's weapon (`getWeaponItem`) when it is known.
     /// `container` holds the damage before any reduction: change its `new_damage`, or the
-    /// invulnerability ticks a fresh hit leaves (vanilla's 20), or set `canceled` and nothing
-    /// of `hurtServer` happens (no damage, hurt sound, knockback, cooldown, statistics or
-    /// criteria); a canceled hit on the ender dragon still counts as landed (`EnderDragon.hurt`
+    /// invulnerability ticks a fresh hit leaves (vanilla's 20), add a reduction modifier
+    /// (`add_reduction_modifier`) to change what one reduction takes off this hit, or set
+    /// `canceled` and nothing of `hurtServer` happens (no damage, hurt sound, knockback,
+    /// cooldown, statistics or criteria); a canceled hit on the ender dragon still counts as landed (`EnderDragon.hurt`
     /// returns true whatever `reallyHurt` did). It fires on every damage route, for players,
     /// mobs and the ender dragon. The level is the hit's: its blocks, random and own
     /// attachments; the hurt entity is in the middle of its hit.

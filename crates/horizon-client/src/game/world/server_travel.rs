@@ -387,8 +387,9 @@ impl Game<'_> {
         // `LivingEntity.canUsePortal` (#943): not a passenger — its vehicle
         // goes through and carries it (`carry_riders_through_portals`) — and
         // not asleep.
-        if !riding
-            && !sleeping
+        if g.motion
+            .as_deref()
+            .is_some_and(|p| self.can_use_portal_of(p, riding, sleeping))
             && let Some(pos) = self.nether_portal_inside(at)
         {
             self.portals.player.set_inside(pos, PLAYER_DELAY);
@@ -718,7 +719,7 @@ impl Game<'_> {
                 // PlayerList.respawn: the block was found, so the new player
                 // copies the respawn point (`copyRespawnPosition`). A cancel
                 // leaves it with none.
-                if self.spawn_point_change(config.dim, config.pos, config.forced) {
+                if self.spawn_point_change(config.dim, Some(config.pos), config.forced) {
                     self.respawn_config = None;
                 }
                 Some((at, yaw))
@@ -1190,6 +1191,59 @@ mod tests {
     use super::*;
     use mod_api::ServerHost;
     use std::sync::Arc;
+
+    #[test]
+    #[ignore = "needs prepared resources"]
+    fn guest_portal_entry_uses_body_sleep_and_vehicle() {
+        super::super::native_guest_turn_tests::with_guests(|game| {
+            let mut chunk = horizon_client::chunk::Chunk::empty(0, 0);
+            chunk.lit = true;
+            game.world.chunks.insert((0, 0), Arc::new(chunk));
+            let portal = game
+                .pack
+                .assets
+                .registry
+                .default_state("minecraft:nether_portal")
+                .unwrap();
+            game.world.set(3, 64, 5, portal).unwrap();
+            for (body, dead, sleeping, riding, expected) in [
+                (true, false, false, false, 9),
+                (true, false, true, false, 4),
+                (true, false, false, true, 4),
+                (true, true, false, false, 4),
+                (false, false, false, false, 4),
+            ] {
+                game.lan.as_mut().unwrap().hub.update_guest(12, |g| {
+                    g.position = [3.5, 64.0, 5.5];
+                    g.sleeping = sleeping;
+                    g.vehicle = riding.then_some(99);
+                    g.motion = body.then(|| {
+                        Box::new(
+                            horizon_client::motion::PlayerMotion::new(
+                                game.motion,
+                                Vec3::new(3.5, 64.0, 5.5),
+                            )
+                            .unwrap(),
+                        )
+                    });
+                    if dead {
+                        g.motion.as_mut().unwrap().set_health(0.0, false).unwrap();
+                    }
+                });
+                game.portals.player.process = Some(horizon_client::nether_portal::Process {
+                    entry: BlockPos::new(3, 64, 5),
+                    time: 8,
+                    inside: false,
+                });
+                game.handle_server_portal(12);
+                assert_eq!(
+                    game.portals.player.process.unwrap().time,
+                    expected,
+                    "body={body} dead={dead} sleeping={sleeping} riding={riding}"
+                );
+            }
+        });
+    }
 
     #[test]
     #[ignore = "needs prepared resources"]

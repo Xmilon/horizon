@@ -1,7 +1,7 @@
 //! Game modes beyond survival and creative (`GameType`): adventure players
 //! cannot build, spectators fly through blocks and only watch.
 use super::{Game, Screen};
-use horizon_client::{collisions::SceneCollisions, command::args::GameMode};
+use horizon_client::{collisions::SceneCollisions, command::args::GameMode, items::ItemStack};
 use horizon_world::world_movement::in_range_of_ground;
 
 pub(super) fn mode_from_id(id: i32) -> GameMode {
@@ -149,11 +149,12 @@ impl Game<'_> {
     /// `saveWithFullMetadata` (no block entity fails). `components` is not
     /// looked at on this path.
     fn adventure_predicate(&self, component: &str, pos: [i32; 3]) -> bool {
-        let Some(tag) = self
-            .held()
-            .and_then(|s| s.data())
-            .and_then(|d| d.other(component))
-        else {
+        self.held()
+            .is_some_and(|stack| self.stack_adventure_predicate(stack, component, pos))
+    }
+    /// `adventure_predicate` for any `stack`, not only the main hand's.
+    fn stack_adventure_predicate(&self, stack: &ItemStack, component: &str, pos: [i32; 3]) -> bool {
+        let Some(tag) = stack.data().and_then(|d| d.other(component)) else {
             return false;
         };
         self.adventure_predicate_at(tag, pos)
@@ -265,6 +266,23 @@ impl Game<'_> {
     pub(super) fn can_place_on_in_adventure(&self, clicked: [i32; 3]) -> bool {
         self.adventure_predicate("minecraft:can_place_on", clicked)
     }
+    /// `Player.mayUseItemAt(pos, face, stack)` for a player who `may_build`
+    /// or not: builders always may, anyone else only when `stack`'s
+    /// `can_place_on` matches the block clicked, the one `pos` lies against.
+    pub(super) fn may_use_item_at(
+        &self,
+        may_build: bool,
+        pos: [i32; 3],
+        face: horizon_core::geometry::Direction,
+        stack: &ItemStack,
+    ) -> bool {
+        may_build
+            || self.stack_adventure_predicate(
+                stack,
+                "minecraft:can_place_on",
+                relative(pos, face.opposite()),
+            )
+    }
     /// `ServerPlayer.setGameMode(SPECTATOR)`: `stopRiding`.
     fn dismount_for_spectator(&mut self) {
         let Some(id) = self.riding else {
@@ -280,8 +298,48 @@ impl Game<'_> {
     }
 }
 
+// BlockPos.relative uses Java's wrapping integer arithmetic, including for mod input.
+fn relative(pos: [i32; 3], face: horizon_core::geometry::Direction) -> [i32; 3] {
+    let [dx, dy, dz] = face.normal();
+    [
+        pos[0].wrapping_add(dx),
+        pos[1].wrapping_add(dy),
+        pos[2].wrapping_add(dz),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn face_offsets_wrap_at_integer_boundaries() {
+        use horizon_core::geometry::Direction::*;
+        for (face, axis, positive) in [
+            (East, 0, true),
+            (West, 0, false),
+            (Up, 1, true),
+            (Down, 1, false),
+            (South, 2, true),
+            (North, 2, false),
+        ] {
+            for boundary in [i32::MIN, i32::MAX] {
+                let mut pos = [5; 3];
+                pos[axis] = boundary;
+                let mut expected = pos;
+                expected[axis] = match (positive, boundary) {
+                    (true, i32::MAX) => i32::MIN,
+                    (false, i32::MIN) => i32::MAX,
+                    (true, _) => i32::MIN + 1,
+                    (false, _) => i32::MAX - 1,
+                };
+                assert_eq!(
+                    super::relative(pos, face),
+                    expected,
+                    "{face:?} at {boundary}"
+                );
+            }
+        }
+    }
+
     use super::{loads_chunks, projectile_predicate_supported};
 
     // Added after the frozen old Game proof: unsupported conjuncts must not

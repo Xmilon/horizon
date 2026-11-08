@@ -3488,6 +3488,16 @@ impl Game<'_> {
             r.head_lerps.remove(&id);
             r.pending_items.remove(&id);
         }
+        // The camera entity going away ends the view on it, or the player stays still (a client
+        // mod's `set_camera_entity` has no server camera state to send the reset).
+        let camera = self.remote.as_ref().and_then(|r| r.camera);
+        let after = super::remote_camera::camera_after_removal(camera, id);
+        if after != camera {
+            if let Some(r) = self.remote.as_mut() {
+                r.camera = after;
+            }
+            self.check_entity_post_effect(true);
+        }
     }
     /// Map a menu slot to Horizon's inventory screen slot ids.
     pub(super) fn inventory_screen_slot(menu: &str, slot: i32) -> Option<usize> {

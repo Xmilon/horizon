@@ -14287,7 +14287,7 @@ impl Game<'_> {
                 .is_none_or(|c| (c.dim, c.pos) != (config.dim, config.pos));
             // `canSetSpawn` calls the setter every time, the same bed too (it
             // refreshes the angle).
-            let cancel = self.spawn_point_change(self.dim, head, false);
+            let cancel = self.spawn_point_change(self.dim, Some(head), false);
             if !cancel {
                 self.respawn_config = Some(config);
                 if moved {
@@ -17454,6 +17454,7 @@ pub fn run_with(
     mods::register_layer_definitions(options.execution_role);
     mods::register_debug_entries(options.execution_role);
     mods::register_gui_layers(options.execution_role);
+    mods::register_map_decoration_types();
     mods::register_range_select_item_model_properties(options.execution_role);
     mods::register_select_item_model_properties(options.execution_role);
     mods::register_item_tint_sources(options.execution_role);
@@ -17563,11 +17564,15 @@ fn player_arms(
     })
 }
 
+/// The most `Player.sleepCounter` reaches: 100 asleep, then up to here over the
+/// waking fade.
+const MAX_SLEEP_TIMER: u32 = 109;
+
 // Player.tick: cap the sleeping fade at 100, then fade out over 10 waking ticks.
 fn tick_sleep_timer(timer: u32, sleeping: bool) -> u32 {
     if sleeping {
         (timer + 1).min(100)
-    } else if (1..109).contains(&timer) {
+    } else if (1..MAX_SLEEP_TIMER).contains(&timer) {
         timer + 1
     } else {
         0

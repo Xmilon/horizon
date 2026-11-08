@@ -28,6 +28,14 @@ pub(super) fn camera_after_packet(
     }
 }
 
+/// The camera after entity `removed` leaves the level: back on the player when it was the camera
+/// entity. A server's camera packet follows its own state, but a client mod's `set_camera_entity`
+/// leaves none, so nothing else would end a view on a mob that died or despawned, and the player
+/// would send no moves from then on (`LocalPlayer.isControlledCamera`).
+pub(in crate::game) fn camera_after_removal(current: Option<i32>, removed: i32) -> Option<i32> {
+    current.filter(|camera| *camera != removed)
+}
+
 /// `Camera.alignWithEntity`'s view of a mob or another player: its
 /// interpolated position, `getViewYRot`/`getViewXRot` and eye height, with
 /// its scale and camera distance for a detached view. A living entity's
@@ -122,7 +130,15 @@ impl Game<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{camera_after_packet, entity_post_effect};
+    use super::{camera_after_packet, camera_after_removal, entity_post_effect};
+
+    /// Removing the camera entity puts the view back on the player; any other removal leaves it.
+    #[test]
+    fn a_removed_camera_entity_returns_the_view_to_the_player() {
+        assert_eq!(camera_after_removal(Some(9), 9), None);
+        assert_eq!(camera_after_removal(Some(9), 12), Some(9));
+        assert_eq!(camera_after_removal(None, 9), None);
+    }
 
     /// Only a creeper, spider or enderman has a spectator chain.
     #[test]

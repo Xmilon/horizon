@@ -22,6 +22,20 @@ use mod_api::{
     NeighbourUpdate,
 };
 
+/// The engine's direction of a mod API block face.
+pub(super) fn block_face_direction(face: NativeBlockFace) -> horizon_core::geometry::Direction {
+    use horizon_core::geometry::Direction;
+    match face {
+        NativeBlockFace::Down => Direction::Down,
+        NativeBlockFace::Up => Direction::Up,
+        NativeBlockFace::North => Direction::North,
+        NativeBlockFace::South => Direction::South,
+        NativeBlockFace::West => Direction::West,
+        NativeBlockFace::East => Direction::East,
+        _ => unreachable!("NativeBlockFace: unhandled variant"),
+    }
+}
+
 /// `ProjectileUtil.getEntityHitResult`'s test on each candidate: its box grown by `margin`
 /// and clipped against the segment. Every hit, nearest first; a segment that starts inside a
 /// box does not hit it (`AABB.clip`).
@@ -528,16 +542,7 @@ impl Game<'_> {
         support: NativeSupportType,
     ) -> Option<bool> {
         let state = self.level_block_state(level, pos)?;
-        use horizon_core::geometry::Direction;
-        let direction = match face {
-            NativeBlockFace::Down => Direction::Down,
-            NativeBlockFace::Up => Direction::Up,
-            NativeBlockFace::North => Direction::North,
-            NativeBlockFace::South => Direction::South,
-            NativeBlockFace::West => Direction::West,
-            NativeBlockFace::East => Direction::East,
-            _ => unreachable!("NativeBlockFace: unhandled variant"),
-        };
+        let direction = block_face_direction(face);
         let b = self.res.behaviours();
         if !b.has_cached_support(state) {
             use horizon_client::collisions::SceneCollisions;
