@@ -29,6 +29,7 @@
 - [Design: attachment query joins](concepts/attachment-query-joins.md)
 - [Design: Part instance state](concepts/part-instance-state.md)
 - [Design: general entity types](concepts/general-entity-types.md)
+- [Design: built-in libraries](concepts/built-in-libraries.md)
 - [Design: offline players and selection](concepts/offline-players-and-selection.md)
 - [Design: pending children](concepts/pending-children.md)
 - [Design: mod datapack registries](concepts/mod-datapack-registries.md)
