@@ -2199,19 +2199,13 @@ impl Game<'_> {
     /// `ServerClockManager.getInstance`: commands address clock-keyed state.
     /// Keep the existing Overworld clock tied to the world's canonical day time.
     pub(super) fn command_clock_time(&self, clock: &str) -> i64 {
-        if clock == "minecraft:overworld" {
-            self.world.day_time
-        } else if clock == "minecraft:the_end" {
-            self.world.end_clock
-        } else {
-            self.ui.command_clocks.get(clock).map_or(0, |c| c.0)
-        }
+        self.world
+            .clock(clock)
+            .unwrap_or_else(|| self.ui.command_clocks.get(clock).map_or(0, |c| c.0))
     }
     pub(super) fn set_command_clock_time(&mut self, clock: &str, total: i64) {
-        if clock == "minecraft:overworld" {
-            self.world.day_time = total;
-        } else if clock == "minecraft:the_end" {
-            self.world.end_clock = total;
+        if let Some(ticks) = self.world.clock_mut(clock) {
+            *ticks = total;
         } else {
             self.ui
                 .command_clocks

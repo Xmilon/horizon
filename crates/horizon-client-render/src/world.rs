@@ -218,6 +218,21 @@ impl Weather {
     }
 }
 impl World {
+    /// The total ticks of a clock the world keeps itself: the Overworld's (the day time) and the End's.
+    pub fn clock(&self, name: &str) -> Option<i64> {
+        match name {
+            "minecraft:overworld" => Some(self.day_time),
+            "minecraft:the_end" => Some(self.end_clock),
+            _ => None,
+        }
+    }
+    pub fn clock_mut(&mut self, name: &str) -> Option<&mut i64> {
+        match name {
+            "minecraft:overworld" => Some(&mut self.day_time),
+            "minecraft:the_end" => Some(&mut self.end_clock),
+            _ => None,
+        }
+    }
     pub fn new(air: BlockStateId, seed: i64) -> Self {
         Self {
             shape: LevelShape::OVERWORLD,
