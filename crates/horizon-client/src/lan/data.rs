@@ -508,12 +508,7 @@ impl SyncData {
 
     /// The name of an entry of a synchronized registry, the reverse of `id`.
     pub fn name(&self, registry: &str, id: i32) -> Option<String> {
-        let (n, _) = self
-            .dynamic
-            .registries
-            .get(registry)?
-            .iter()
-            .nth(id as usize)?;
+        let (n, _) = self.dynamic.registries.get(registry)?.get(id as usize)?;
         Some(n.to_string())
     }
 
