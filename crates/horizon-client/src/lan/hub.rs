@@ -2269,18 +2269,18 @@ impl Hub {
                 .clock_ids
                 .iter()
                 .filter_map(|&id| {
-                    let (total_ticks, rate) = if id == overworld {
-                        (world.day_time, rate)
+                    let (total_ticks, partial_tick, rate) = if id == overworld {
+                        (world.day_time, 0.0, rate)
                     } else {
                         // The host lists the others with their pause and `advance_time` applied.
                         let name = self.sync.name("minecraft:world_clock", id)?;
-                        let (_, t, r) = world.clock_net.iter().find(|c| c.0 == name)?;
-                        (*t, *r)
+                        let (_, t, p, r) = world.clock_net.iter().find(|c| c.0 == name)?;
+                        (*t, *p, *r)
                     };
                     Some(play::ClockState {
                         clock: id,
                         total_ticks,
-                        partial_tick: 0.0,
+                        partial_tick,
                         rate,
                     })
                 })

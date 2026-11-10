@@ -111,9 +111,9 @@ pub struct World {
     /// The End's world clock (`WorldClocks.THE_END`, the End sky flash's), saved apart from
     /// the game time and, like every clock, still while `advance_time` is off.
     pub end_clock: i64,
-    /// The other clocks as the network shows them: name, total ticks and the rate clients
+    /// The other clocks as the network shows them: name, total ticks, partial tick and the rate clients
     /// advance them at (0 while paused or `advance_time` is off). The host refreshes it each tick.
-    pub clock_net: Vec<(String, i64, f32)>,
+    pub clock_net: Vec<(String, i64, f32, f32)>,
     pub weather: Weather,
     /// Every block position written since the log was last drained, kept
     /// only while the world is open to the network (see `lan`).

@@ -1950,7 +1950,7 @@ impl Game<'_> {
             .iter()
             .map(|(name, (total, state))| {
                 let total = if name == END_CLOCK { end } else { *total };
-                (name.clone(), total, state.net_rate(advance))
+                (name.clone(), total, state.partial, state.net_rate(advance))
             })
             .collect();
     }
