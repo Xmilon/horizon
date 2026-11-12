@@ -26,6 +26,7 @@ impl Game<'_> {
             }
         }
         self.tick_dropped_items(&mut round);
+        horizon_threads::work::clear_work();
         self.native_tick_post_batch(round);
     }
     /// An item that joined during this tick's entity pass: it first ticks on
@@ -41,6 +42,8 @@ impl Game<'_> {
         let mut cells = horizon_client::entities::ItemCells::new(&items);
         // A LAN or server guest only shows the host's items.
         let merging = self.remote.is_none();
+        // `Entity.checkBelowWorld`: below `Level.getMinY() - 64`.
+        let void = f64::from(self.level_min_y() - 64);
         let mut obstacles =
             horizon_client::entities::ObstacleGrid::new(self.item_entity_collisions());
         let mut nearby = Vec::new();
@@ -55,7 +58,9 @@ impl Game<'_> {
         // `ItemUtils.onContainerDestroyed`: what a destroyed item held, and
         // where it lay, for adding to the level once its own tick is done.
         let mut destroyed: Vec<(ItemStack, Vec3)> = Vec::new();
+        let item_type = horizon_threads::work::entity_id("minecraft:item");
         for i in 0..items.len() {
+            horizon_threads::work::set_entity(item_type);
             if removed[i] {
                 // Merged into an earlier item before its own tick: it never ticked.
                 round.not_ticked(items[i].id);
@@ -144,7 +149,7 @@ impl Game<'_> {
                 2
             };
             if merging
-                && (alive || item.age == 6000 && item.position.y > -128.0)
+                && (alive || item.age == 6000 && item.position.y >= void)
                 && item.ticks.is_multiple_of(rate)
             {
                 let max_stack = |stack: &ItemStack| self.stack_max_size(stack).max(1);
@@ -157,8 +162,8 @@ impl Game<'_> {
                 );
             }
             let item = &mut items[i];
-            let mut alive = alive || (item.age < 6000 && item.position.y > -128.0);
-            if merging && !removed[i] && item.age >= 6000 && item.position.y > -128.0 {
+            let mut alive = alive || (item.age < 6000 && item.position.y >= void);
+            if merging && !removed[i] && item.age >= 6000 && item.position.y >= void {
                 let mut extra_life = 0;
                 self.native_item_expire(item.id, &item.stack, &mut extra_life);
                 if extra_life > 0 {
@@ -497,6 +502,7 @@ impl Game<'_> {
         }
         self.next_entity += 1;
         self.orbs.push(ExperienceOrb {
+            fall_distance: 0.0,
             rotation: [0.0, 0.0],
             join: Default::default(),
             no_gravity: false,
@@ -1046,3 +1052,7 @@ mod escape_tests {
         assert_eq!(game.world.random.next_float(), level.next_float());
     }
 }
+
+#[cfg(test)]
+#[path = "item_void_tests.rs"]
+mod item_void_tests;
