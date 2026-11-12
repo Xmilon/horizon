@@ -121,11 +121,22 @@ pub(crate) fn set_mod_enabled(id: &str, on: bool) -> bool {
     let mut found = false;
     for (entry, disabled) in installed.mods.iter().zip(&*installed.disabled) {
         if entry.id == id {
-            disabled.store(!on, std::sync::atomic::Ordering::Relaxed);
+            if disabled.swap(!on, std::sync::atomic::Ordering::Relaxed) == on {
+                MODS_SWITCHED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             found = true;
         }
     }
     found
+}
+
+/// How many times a mod was switched on or off: what a kept capability compares to tell that a
+/// provider may have come or gone (`BlockCapabilityCache`).
+static MODS_SWITCHED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The count of mod switches so far.
+pub(crate) fn mods_switched() -> u64 {
+    MODS_SWITCHED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether an installed mod subscribes to an injected hook.

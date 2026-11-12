@@ -1417,7 +1417,7 @@ clicks already.
 `dyn LoopContext` is the read-only view for a hook fired inside a menu, recipe or
 player-list loop, where no game is at hand (a catalog entry names it with
 `"context": "loop"`; `menu_slot_rules`, `item_stacked_on_other`, `player_name_format`,
-`player_tab_list_name_format`, `living_jump_power`, `living_speed`, `living_flying_speed`, `living_heal`, `living_breathe`, `living_drown`, `living_fall`, `farmland_trample`, `living_jump`, `ender_entity_teleport`, `fluid_flow`, `player_stays_on_ground_surface`, `block_jump_factor`, `block_speed_factor`, `ingredient_test` and the sound hooks below take it). `side()` is `LoopSide::Server` or
+`player_tab_list_name_format`, `living_jump_power`, `living_speed`, `living_flying_speed`, `living_heal`, `living_breathe`, `living_drown`, `living_fall`, `farmland_trample`, `living_jump`, `ender_entity_teleport`, `fluid_flow`, `player_stays_on_ground_surface`, `block_jump_factor`, `block_speed_factor`, `friction`, `ingredient_test` and the sound hooks below take it). `side()` is `LoopSide::Server` or
 `LoopSide::Client`, `registry(name)` borrows names in registry ID order,
 `setting(mod_id, key)` returns a loaded mod's setting captured when the context was
 built, and `mods()` is the `LoadedMods` view of registration. It has no game Host,
@@ -2326,11 +2326,11 @@ registration path.
   thunder), on a block broken by a player or an explosion and on a mob's death loot; None on the other rolls. The game sets it
   around a roll with `with_native_loot_place`.
 
-- How a mod block burns, and whether it makes a campfire over it a signal fire, on an authoritative server. `native_fire_odds(dimension, state, odds)` answers
-  `FireBlock`'s flammability table (`FireBlock.setFlammable(block, igniteOdds, burnOdds)`) before vanilla's table: put
+- How a mod block burns, and whether it makes a campfire over it a signal fire, on an authoritative server. `native_fire_odds(dimension, state, pos, face, odds)` answers
+  `FireBlock`'s flammability table (`FireBlock.setFlammable(block, igniteOdds, burnOdds)`) before vanilla's table, for the block at `pos` seen from its side `face` (the one facing the fire, or the air fire may take): put
   `(ignite, burn)` in `odds` for your own blocks. Ignite odds above zero let fire stand beside the block and spread
-  to the air around it (planks 5, wool 30); burn odds are how fast fire destroys it (planks 20, wool 60); `(0, 0)` never
-  burns; keep both within vanilla's 0 to 100. A waterlogged state never burns and isn't asked. It runs hundreds of times per fire tick: keep it short.
+  to the air around it (planks 5, wool 30), so a face with ignite odds of zero isn't flammable; burn odds are how fast fire destroys it (planks 20, wool 60); `(0, 0)` never
+  burns; negative answers become zero, burn odds cap at 300 and spread arithmetic saturates. A waterlogged state never burns and isn't asked. It runs hundreds of times per fire tick: keep it short. `native_is_fire_source`, `native_ignited_by_lava` and `native_on_caught_fire` are the block's other fire questions.
   `native_smoke_source(dimension, state, smoke)` answers `CampfireBlock.isSmokeSource` for the block under a campfire,
   as the campfire is placed or that block changes: `Some(true)` makes the campfire a signal fire, as a hay bale does.
   Answer only for your own blocks and leave the answer empty otherwise; the level is read-only. The deprecated in-frame

@@ -215,6 +215,22 @@ impl Wire for crate::ItemResource {
         Ok(Self::of(&input.take()?))
     }
 }
+impl Wire for crate::StoragePage {
+    layout_fields!("entries" => Vec<(crate::ItemResource, u64)>, "limit" => u64);
+    const LAYOUT_SEED: u64 = crate::wire::layout_seed(stringify!(crate::StoragePage));
+    const MIN: usize = 12;
+    fn put(&self, out: &mut Writer) {
+        let (entries, limit) = self.wire_parts();
+        out.put(&entries.to_vec());
+        out.put(&(limit as u64));
+    }
+    fn take(input: &mut Reader<'_>) -> Result<Self, WireError> {
+        // The host's cap bounds what a guest's encoded length may allocate.
+        let entries = input.list_with(crate::MAX_STORAGE_PAGE, Wire::take)?;
+        let limit = input.take()?;
+        Self::from_wire(entries, limit).ok_or(WireError::Invalid("a storage page past its limit"))
+    }
+}
 impl Wire for crate::FluidResource {
     layout_fields!("stack" => crate::FluidStack);
     const LAYOUT_SEED: u64 = crate::wire::layout_seed(stringify!(crate::FluidResource));

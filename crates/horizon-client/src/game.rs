@@ -262,7 +262,7 @@ pub(crate) struct Options {
     no_pause: bool,
     /// Control socket path (`--control`), for `horizon-ctl`.
     control: Option<PathBuf>,
-    /// `HORIZON_SPIKES=MS`: print the timed spans of frames slower than MS.
+    /// `HORIZON_SPIKES=MS`: the slow ring's threshold, with spans on every thread; nothing is logged.
     spikes: Option<f32>,
     /// Render into a texture instead of the window (`--offscreen`), so a
     /// GPU the display cannot present from can still be benchmarked. The
@@ -289,6 +289,10 @@ pub(crate) struct Options {
     transfers: Option<horizon_client::lan::arrivals::Settings>,
     /// `--benchmark SCENARIO`: run the benchmark, write its report and quit.
     benchmark: Option<String>,
+    /// `--benchmark-set SWITCH=VALUE`: a graphics choice for the travel benchmark.
+    benchmark_set: Option<(String, String)>,
+    /// `--profile`: capture the benchmark run in a .hzperf file.
+    benchmark_profile: bool,
     /// Content selection and the compiled native runtime shared with resource loaders.
     mods: mods::ModsState,
     /// What this Game executes; independent of its current server connection.
@@ -382,6 +386,8 @@ impl Options {
             dedicated: None,
             transfers: None,
             benchmark: None,
+            benchmark_set: None,
+            benchmark_profile: false,
             mods: mods::ModsState {
                 dev: context.dev_mods,
                 ..Default::default()
@@ -398,7 +404,7 @@ impl Options {
                 Argument::Switch(arg) => match arg.as_str() {
                     "--help" | "-h" => {
                         println!(
-                            "Horizon — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain), write its report to benchmarks/ and quit\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
+                            "Horizon — Minecraft Java Edition {} in Rust\n\n  --resources PATH        Prepared resources (horizon-prepare)\n  --render-distance N     Chunks, 2..128 (default 12)\n  --world NAME            World folder under saves/ (default \"New World\")\n  --seed N                World seed for new worlds (default 0)\n  --width N, --height N   Window size (default 1280 x 720)\n  --creative              Creative mode (default survival)\n  --test-terrain          Simple test terrain instead of vanilla generation\n  --frames N              Exit after N frames (testing)\n  --world-frames N        Exit after N frames drawn in the world (testing)\n  --smoke-report PATH     Write a JSON report on exit\n  --benchmark SCENARIO    Run a benchmark (standard, village, forest, ocean, mountain, travel, ab:SWITCH), write its report to benchmarks/ and quit\n  --profile               With --benchmark: also write a performance capture that embeds the report\n  --benchmark-set S=V     With --benchmark travel: set gpu-culling, section-cull, section-sides or section-draws\n  --control               Accept horizon-ctl commands on a local socket\n  --control-socket PATH   Control socket path (default $XDG_RUNTIME_DIR/horizon-control.sock)\n  --server HOST[:PORT]    Join a multiplayer server (offline mode) at start\n  --quickPlaySingleplayer WORLD  Open this world of saves/ at start, only if it exists (vanilla's)\n  --quickPlayMultiplayer HOST[:PORT]  The same as --server (vanilla's name)\n  --name NAME             Player name for multiplayer (default: generated once, kept in horizon-player.txt)\n  --session-file PATH     Signed-in account from the launcher (read once, then deleted)\n  --session-stdin         The same account as JSON on standard input\n  --game-dir DIR          Game folder: saves, options.txt, packs, mods (default: the working directory)\n  --home DIR              Logs and crash reports (default $HORIZON_HOME, else the platform data folder)\n  --player-dir DIR        This player's own files when several play in one game folder: options.txt, logs, horizon-player.txt, servers.dat, screenshots\n  --fullscreen            Open the window fullscreen\n  --launch-api            Print the Launch API version and options as JSON (docs/api/launch.md)\n  --dev-mod PATH          A content mod (.hmod or folder) to develop: always on\n  --pregen                Add Horizon's /pregen command (docs/pregeneration.md)\n\nControls: mouse look, WASD move, Space jump, Left Shift sneak, Left Ctrl sprint,\nleft click break, right click place/use, 1-9/scroll hotbar, E inventory,\nQ drop, F3 debug, Esc pause.",
                             horizon_core::VANILLA_VERSION
                         );
                         return Ok(None);
@@ -408,6 +414,7 @@ impl Options {
                         return Ok(None);
                     }
                     "--fullscreen" => o.fullscreen = true,
+                    "--profile" => o.benchmark_profile = true,
                     "--session-stdin" => o.session_stdin = true,
                     "--developer-single-player" => o.developer_single_player = true,
                     "--creative" => o.creative = true,
@@ -489,13 +496,12 @@ impl Options {
                             "--player-dir" => {}
 
                             "--benchmark" => {
-                                if horizon_client::benchmark::scenes(&value).is_none() {
-                                    return Err(format!(
-                                    "unknown benchmark {value}: standard, village, forest, ocean or mountain"
-                                )
-                                .into());
-                                }
+                                horizon_client::benchmark::Scenario::parse(&value)?;
                                 o.benchmark = Some(value);
+                            }
+                            "--benchmark-set" => {
+                                o.benchmark_set =
+                                    Some(horizon_client::benchmark::parse_set(&value)?)
                             }
                             "--server" | "--quickPlayMultiplayer" => o.server = Some(value),
                             "--name" => o.player_name = Some(value),
@@ -526,6 +532,12 @@ impl Options {
                     read().map_err(|e| format!("{arg}: {e}"))?;
                 }
             }
+        }
+        if o.benchmark_set.is_some() && o.benchmark.as_deref() != Some("travel") {
+            return Err("--benchmark-set needs --benchmark travel".into());
+        }
+        if o.benchmark_profile && o.benchmark.is_none() {
+            return Err("--profile needs --benchmark".into());
         }
         o.validate_developer_single_player()?;
         Ok(Some(o))
@@ -1164,15 +1176,7 @@ pub(super) fn armor_slot(index: usize) -> horizon_core::equipment_slot::Equipmen
     }
 }
 
-/// Everything the title and menus draw: the GUI atlas with its font and the
-/// title panorama. Kept apart from the world bundle so the title can appear
-/// before the block sprites, models and gameplay tables are ready.
-pub struct UiResources {
-    /// The GUI, font, particle, map and skin atlas.
-    pub atlas: HudAtlas,
-    /// The title screen's panorama faces.
-    pub panorama: Arc<horizon_client::gfx::panorama::Faces>,
-}
+pub use resource_tables::UiResources;
 
 /// What a resource pack reload replaces (`Minecraft.reloadResourcePacks`):
 /// block models and sprites with their meshing tables, item models,
@@ -1522,6 +1526,8 @@ struct Game<'a> {
     debug: bool,
     /// `horizon-ctl gpu-passes`: time Horizon's own passes on the GPU with F3 shut.
     gpu_passes: bool,
+    /// `horizon-ctl gpu-passes detail`: also dispatch times and counters.
+    gpu_pass_detail: bool,
     screen: Screen,
     screen_state: screen_build::ScreenState,
     window: Option<Arc<Window>>,
@@ -1565,9 +1571,6 @@ struct Game<'a> {
     /// `SpectatorGui`: the menu a spectator opens with the hotbar keys.
     spectator_gui: horizon_client::spectator_menu::SpectatorGui,
     previous: Instant,
-    /// When the last frame's work ended: what runs before the next one starts (`idle`, the
-    /// event loop) shows in HORIZON_SPIKES as the time between frames.
-    frame_end: Instant,
     /// FramerateLimitTracker.latestInputTime.
     last_input: Instant,
     /// Controllers (Horizon's own).
@@ -2044,6 +2047,12 @@ struct Game<'a> {
     /// When an agent's last command came.
     agent_last: Option<Instant>,
     frame_stats: horizon_client::control::FrameStats,
+    /// This thread's and all threads' allocation counts at the last rendered frame.
+    alloc_mark: Option<(
+        horizon_threads::alloc_count::Counts,
+        horizon_threads::alloc_count::Counts,
+    )>,
+    /// This play session's frame and tick times, for opt-in performance statistics.
     perf: horizon_client::telemetry::Session,
     /// Control replies waiting for a rendered frame or a benchmark deadline.
     pending_screenshot: Option<std::sync::mpsc::Sender<String>>,
@@ -2051,7 +2060,7 @@ struct Game<'a> {
     screenshot_sequence: Option<screenshot_sequence::Sequence>,
     /// `render-capture DIR`: replied once the renderer wrote the scene.
     pending_render_capture: Option<std::sync::mpsc::Sender<String>>,
-    pending_bench: Option<(Instant, std::sync::mpsc::Sender<String>)>,
+    pending_bench: Option<(Instant, std::sync::mpsc::Sender<String>, bool)>,
     /// Recent frame times for the performance overlay.
     frame_graph: horizon_client::perf_overlay::FrameGraph,
     /// Horizon's extras (minimap, auto-reconnect; mods' counters): `game/interface/extras.rs`.
@@ -2112,6 +2121,8 @@ struct Game<'a> {
     input_trace: input_trace::InputTrace,
     /// A repro recording, export or replay (game/runtime/repro.rs).
     repro: repro::Repro,
+    /// The health history and client captures (game/profile_capture.rs).
+    profile: profile_capture::Profile,
     /// `HORIZON_TICK_SCRIPT`'s scenario (game/world/tick_script.rs).
     tick_script: tick_script::TickScript,
     /// The overworld's last `sky_darken` and its inputs (time, rain, thunder).
@@ -2873,6 +2884,7 @@ impl Game<'_> {
         if !debug {
             self.tick_scheduled()?;
         }
+        horizon_threads::work::clear_work();
         self.with_level(|b, level, ticks| {
             // The masks the random ticks will read, built on helper threads first while the
             // parallel tick is on (`HORIZON_PARALLEL_TICK`): the draws and ticks don't depend on them.
@@ -2920,6 +2932,7 @@ impl Game<'_> {
                 }
             });
         });
+        horizon_threads::work::clear_work();
         laps = horizon_client::spans::laps();
         let sent = self.lan_broadcast_changes();
         laps.lap("tb_broadcast");
@@ -3967,6 +3980,7 @@ impl Game<'_> {
     fn tick_items(&mut self) {
         let mut round = self.item_update_round();
         self.tick_dropped_items(&mut round);
+        horizon_threads::work::clear_work();
         self.drain_entity_inside();
         self.native_tick_post_batch(round);
     }
@@ -4034,7 +4048,9 @@ impl Game<'_> {
         // `ItemUtils.onContainerDestroyed`: what a destroyed item held, and
         // where it lay, for adding to the level once its own tick is done.
         let mut destroyed: Vec<(ItemStack, Vec3)> = Vec::new();
+        let item_type = horizon_threads::work::entity_id("minecraft:item");
         for i in 0..items.len() {
+            horizon_threads::work::set_entity(item_type);
             if removed[i] {
                 // Merged into an earlier item before its own tick: it never ticked.
                 round.not_ticked(items[i].id);
@@ -5936,6 +5952,7 @@ impl Game<'_> {
                 }
                 // TurtleEggBlock.playerDestroy: after the drops, one egg of a
                 // mined stack is taken and the rest stay.
+                horizon_threads::work::clear_work();
                 self.with_level(|b, level, ticks| {
                     b.turtle_egg_destroyed_by_player(
                         level,
@@ -5951,6 +5968,7 @@ impl Game<'_> {
                 .as_ref()
                 .is_some_and(|h| h.enchantment_level("minecraft:silk_touch") > 0);
             if removed {
+                horizon_threads::work::clear_work();
                 self.with_level(|b, level, ticks| {
                     b.ice_destroyed_by_player(
                         level,
@@ -10854,11 +10872,9 @@ impl Game<'_> {
         // between worlds.
         lan::forget_sync_data();
         lan::forget_server_sources();
-        let mut title = Title::new(
-            std::env::current_dir()?.join("saves"),
-            &self.options.resources,
-        )
-        .with_user(|| self.options.player_name());
+        let mut title = self
+            .new_title(std::env::current_dir()?.join("saves"))
+            .with_user(|| self.options.player_name());
         title.last_server = self.settings.file.string("lastServer");
         title.skip_multiplayer_warning = self.settings.file.bool("skipMultiplayerWarning");
         self.show_title(title);
@@ -14241,8 +14257,14 @@ impl Game<'_> {
         let mut prepared_draws = std::mem::take(&mut *self.prepared_model_draws.borrow_mut());
         let result = match self.renderer.as_mut() {
             Some(renderer) => {
-                renderer.set_pass_timing(debug_passes || self.gpu_passes);
-                renderer.set_pass_timing_gap(if self.gpu_passes {
+                use horizon_client::client_perf::request::GpuSwitch;
+                let capture_gpu = self.profile.gpu();
+                let recording = capture_gpu != GpuSwitch::Off;
+                renderer.set_pass_timing(debug_passes || self.gpu_passes || recording);
+                renderer.set_keep_timed_frames(recording);
+                renderer.set_pass_detail(self.gpu_pass_detail || capture_gpu == GpuSwitch::Detail);
+                // `gpu_passes` and a capture's `--gpu` are measurements: they take every sample they can.
+                renderer.set_pass_timing_gap(if self.gpu_passes || recording {
                     Duration::ZERO
                 } else {
                     horizon_client::debug_overlay::GPU_TIMING_GAP
@@ -14435,7 +14457,7 @@ impl Game<'_> {
             self.clear_lod();
             self.all_sections_changed();
         }
-        self.prepare_lod();
+        horizon_client::spans::time("prepare_lod", || self.prepare_lod());
         // The columns the single-player server changed in bulk without sending them, which far terrain still drew
         // as this window last saw them: summarized again (taken every tick, far terrain on or off, so none waits).
         if self.remote.is_some() {
@@ -14571,7 +14593,8 @@ impl Game<'_> {
         if self.remote.is_none() {
             horizon_client::spans::time("sync_tick_chunks", || self.sync_tick_chunks());
         }
-        let (far_distance, far_reduced) = self.far_terrain_choice();
+        let (far_distance, far_reduced) =
+            horizon_client::spans::time("far_terrain_choice", || self.far_terrain_choice());
         // Terrain still on its way from the server (single player's integrated one
         // too): the view's outermost columns not all in, or its events not all handled.
         let radius = match &self.remote {
@@ -14671,6 +14694,7 @@ impl Game<'_> {
                     AUTO_UPLOAD_TIME
                 };
                 let started = Instant::now();
+                let upload_span = horizon_client::spans::guard("upload_queue");
                 while let Some((_, mesh)) = pending.last() {
                     if auto && count > 0 && started.elapsed() >= auto_time {
                         break;
@@ -14689,6 +14713,7 @@ impl Game<'_> {
                     count += 1;
                     bytes += size;
                 }
+                drop(upload_span);
                 self.streaming.free(spent);
             }
             renderer.remove_columns(unloaded.iter().map(|c| (c.x, c.z)));
@@ -14829,6 +14854,9 @@ impl<'a> Game<'a> {
         let inventory = vec![None; 36];
         let now = Instant::now();
         let look = options.look;
+        let slow_frame_ms = options
+            .spikes
+            .unwrap_or(horizon_client::client_perf::SLOW_FRAME_MS);
         let particles = horizon_client::particles::ParticleEngine::new(
             &pack.source,
             &gui.atlas.sprites,
@@ -14953,6 +14981,7 @@ impl<'a> Game<'a> {
             pause: false,
             debug: false,
             gpu_passes: false,
+            gpu_pass_detail: false,
             screen: Screen::Playing,
             screen_state: screen_build::ScreenState::default(),
             window: None,
@@ -14977,7 +15006,6 @@ impl<'a> Game<'a> {
             started: now,
             spectator_gui: Default::default(),
             previous: now,
-            frame_end: now,
             last_input: now,
             pad: Default::default(),
             frames: 0,
@@ -15252,6 +15280,7 @@ impl<'a> Game<'a> {
             agent_control_on: false,
             agent_last: None,
             frame_stats: Default::default(),
+            alloc_mark: None,
             perf: Default::default(),
             pending_screenshot: None,
             screenshot_sequence: None,
@@ -15262,6 +15291,7 @@ impl<'a> Game<'a> {
             events: Default::default(),
             input_trace: Default::default(),
             repro: Default::default(),
+            profile: profile_capture::Profile::new(slow_frame_ms),
             tick_script: tick_script::TickScript::from_env(),
             agent: agent::Agent::default(),
             view_frustum: None,
@@ -16142,16 +16172,13 @@ pub(crate) fn run_with(
         horizon_threads::catch_stop_signals();
     }
     let started = Instant::now();
-    // A dedicated server writes its slow ticks to the log with the spans
-    // they spent their time in (`HORIZON_SPIKES`'s line; the variable still
-    // sets another threshold), so a lag spike players felt can be traced
-    // from the log alone. Timing the spans costs microseconds a tick.
+    // A dedicated server times its spans always, so its slow ring holds the steps of a lag spike (microseconds a tick).
     if options.spikes.is_none()
         && options.execution_role == execution_role::ExecutionRole::DedicatedServer
     {
         options.spikes = Some(dedicated::SLOW_TICK_MS);
     }
-    horizon_client::spans::enable(options.spikes.is_some());
+    tick_profile::want_spans(tick_profile::SPANS_SPIKES, options.spikes.is_some());
     // A player who allows performance statistics also says what their slow frames spent their
     // time in: this thread, which draws the frames, times its steps (wall time only).
     if options.execution_role.is_client()

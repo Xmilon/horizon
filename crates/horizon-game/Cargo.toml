@@ -30,6 +30,7 @@ friends = ["horizon-client/friends"]
 rng-trace = ["horizon-client/rng-trace"]
 system-allocator = ["horizon-client/system-allocator"]
 alloc-census = ["horizon-client/alloc-census"]
+alloc-count = ["horizon-client/alloc-count"]
 windows-mimalloc = ["horizon-client/windows-mimalloc"]
 windows-segment-heap = ["horizon-client/windows-segment-heap"]
 

@@ -4,6 +4,8 @@
 //! saving and `AbstractBoatRenderer` with animated paddles.
 mod below_world;
 #[cfg(test)]
+mod friction_tests;
+#[cfg(test)]
 mod lifetime_tests;
 mod placement;
 pub(super) use placement::OutlineFluidRay;
@@ -427,6 +429,8 @@ impl Boat {
     /// The vanilla entity type id (`oak_boat`, `bamboo_chest_raft`), also
     /// the item it drops.
     pub(super) fn entity_type(&self) -> String {
+        #[cfg(test)]
+        friction_tests::TYPE_BUILDS.with(|n| n.set(n.get() + 1));
         let chest = if self.chest { "chest_" } else { "" };
         if &*self.wood == "bamboo" {
             format!("minecraft:bamboo_{chest}raft")
@@ -651,7 +655,7 @@ impl Game<'_> {
             return Status::InWater;
         }
 
-        let friction = self.boat_ground_friction(bb);
+        let friction = self.boat_ground_friction(b, bb);
         if friction > 0.0 {
             b.land_friction = friction;
             Status::OnLand
@@ -661,7 +665,7 @@ impl Game<'_> {
     }
     /// `AbstractBoat.getGroundFriction`: average friction of the blocks whose
     /// collision shape meets a thin slab just under the hull (lily pads skipped).
-    fn boat_ground_friction(&self, bb: Aabb) -> f32 {
+    fn boat_ground_friction(&self, b: &Boat, bb: Aabb) -> f32 {
         let (lo, hi) = (bb.min_position(), bb.max_position());
         let ground = Aabb::new(
             Vec3::new(lo.x, lo.y - 0.001, lo.z),
@@ -712,7 +716,8 @@ impl Game<'_> {
                         .join_is_not_empty(&slab, ShapeOp::AND)
                         .unwrap_or(false)
                     {
-                        friction += f.friction;
+                        friction +=
+                            self.boat_friction(b, BlockPos::new(x, y, z), state, f.friction);
                         count += 1;
                     }
                 }

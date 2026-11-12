@@ -161,6 +161,9 @@ pub trait CapabilitiesCapabilityProviders {
     /// Whether any mod registered capability `name` for the things `by` names. This presence
     /// check includes disabled mods; enumeration skips their providers.
     fn provided(&self, by: ProvidedBy, name: &str) -> bool;
+    /// How many times a mod was switched on or off, as the game counts it: a kept capability
+    /// compares it to tell that a provider may have come or gone (`BlockCapabilityCache`).
+    fn mods_switched(&self) -> u64;
 }
 
 impl CapabilitiesCapabilityProviders for InstalledProviders {
@@ -171,6 +174,9 @@ impl CapabilitiesCapabilityProviders for InstalledProviders {
             ProvidedBy::Item => installed.keys.item_capabilities.contains_key(name),
             ProvidedBy::Entity => installed.keys.entity_capabilities.contains_key(name),
         })
+    }
+    fn mods_switched(&self) -> u64 {
+        crate::runtime::mods_switched()
     }
 }
 

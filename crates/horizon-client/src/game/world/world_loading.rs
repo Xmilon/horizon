@@ -265,6 +265,15 @@ impl WorldRequest {
         if created {
             level.allow_commands.get_or_insert(creative);
         }
+        // The biome regions are fixed before any chunk generates: a new world records the
+        // installed mods' regions; an existing one opens only with a record that reads and a
+        // recorded choice for each missing mod's region.
+        if created {
+            horizon_client::save::biome_regions::create(&save_root)?;
+        } else {
+            horizon_client::save::biome_regions::open(&save_root)
+                .map_err(|why| format!("Failed to load world \"{folder}\": {why}"))?;
+        }
         if let Some(d) = &options.dimension {
             level.dimension = d.clone();
             level.position = None;
@@ -1163,7 +1172,9 @@ pub(super) fn make_streaming(
         let saved_stem = horizon_client::save::world_gen_settings(world_root)
             .and_then(|s| s.get("dimensions")?.get(dim.id()).cloned())
             .map(|stem| horizon_client::scoreboard::tag_to_json(&stem));
-        let mut inner = VanillaTerrain::for_world_with_settings(terrain_resources, &overrides, seed, preset, dim.id(), structures, saved_stem.as_ref()).map_err(|e| {
+        let regions = horizon_client::save::biome_regions::layout(world_root, dim.id())
+            .map_err(|e| format!("Failed to read the world's biome regions: {e}"))?;
+        let mut inner = VanillaTerrain::for_world_with_settings(terrain_resources, &overrides, seed, preset, dim.id(), structures, saved_stem.as_ref(), regions).map_err(|e| {
                 if overrides.is_empty() {
                     format!("{e}\nPrepare the worldgen bundle with the launcher, or: horizon-prepare --prepare")
                 } else {
@@ -1621,6 +1632,76 @@ mod tests {
         );
         assert!(open(Dim::Overworld).is_none());
         let _ = std::fs::remove_dir_all(world);
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES and scratch homes"]
+    fn both_server_roles_record_regions_before_world_generation() {
+        mod_platform::__private::initialize().unwrap();
+        use super::super::native_entity_refs::tests::with_game_role;
+        use execution_role::ExecutionRole::{DedicatedServer, IntegratedServer};
+        struct Regions;
+        #[mod_api::__subscriptions]
+        impl mod_api::Hooks for Regions {
+            fn register(
+                &self,
+                registrar: &mut dyn mod_api::Registrar,
+                _: &mod_api::RegistrationContext,
+            ) {
+                registrar
+                    .declare_biome_region(
+                        "ice",
+                        mod_api::BiomeRegion::new(
+                            "minecraft:overworld".into(),
+                            3,
+                            vec![mod_api::BiomePoint {
+                                biome: "minecraft:ice_spikes".into(),
+                                temperature: (-2., 2.),
+                                humidity: (-2., 2.),
+                                continentalness: (-2., 2.),
+                                erosion: (-2., 2.),
+                                depth: (-2., 2.),
+                                weirdness: (-2., 2.),
+                                offset: 0.,
+                            }],
+                        ),
+                    )
+                    .unwrap();
+            }
+        }
+        let root = PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
+        for role in [IntegratedServer, DedicatedServer] {
+            let scratch = tempfile::tempdir().unwrap();
+            let world = scratch.path().join("world");
+            mod_api::testing::with_dispatch(
+                vec![mod_api::ModEntry::new("region_fixture", Box::new(Regions))].into(),
+                || {
+                    with_game_role(root.clone(), role, |game| {
+                        let request = WorldRequest {
+                            owner: None,
+                            save_root: world.clone(),
+                            folder: "world".into(),
+                            name: Some("Region fixture".into()),
+                            seed: Some(12345),
+                            creative: true,
+                            create: None,
+                            rule_registry: Level::default().rule_registry,
+                        };
+                        game.load_world(request).unwrap();
+                        let layout = horizon_client::save::biome_regions::layout(
+                            &world,
+                            "minecraft:overworld",
+                        )
+                        .unwrap()
+                        .unwrap();
+                        assert_eq!(layout.regions.len(), 1, "{role:?}");
+                        assert_eq!(layout.regions[0].id, "region_fixture:ice");
+                        assert_eq!(layout.regions[0].weight, 3);
+                        assert_eq!(layout.regions[0].points[0].biome, "minecraft:ice_spikes");
+                    });
+                },
+            );
+        }
     }
 
     #[test]

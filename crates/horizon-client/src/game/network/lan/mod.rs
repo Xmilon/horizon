@@ -1518,7 +1518,7 @@ impl Game<'_> {
                 Ok(Some(json!({ "ok": true })))
             }
             Some("status") => Ok(Some(self.lan_status())),
-            _ => Err("lan open|close|status".into()),
+            _ => Err("lan open|close|status|op".into()),
         }
     }
 

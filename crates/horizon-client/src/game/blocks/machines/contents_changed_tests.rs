@@ -561,10 +561,7 @@ fn notices_come_in_first_write_order_once_each_whatever_the_journal_keeps() {
                     Ok::<_, ()>(())
                 })?;
                 assert_eq!(first.insert(host, tx, 1, &sticks, 1), 1);
-                assert!(
-                    changes.0.lock().unwrap().is_empty(),
-                    "nothing told before the commit"
-                );
+                assert!(changes.0.lock().unwrap().is_empty(), "nothing told before the commit");
                 Ok::<_, ()>(())
             });
             assert_eq!(committed, Ok(()));

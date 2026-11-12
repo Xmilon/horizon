@@ -816,7 +816,10 @@ impl Game<'_> {
         }
         self.bind_player_attachments(conn, false);
         self.as_guest(conn, |g| {
-            g.trigger_dimension(source, target, [from.x, from.y, from.z])
+            g.trigger_dimension(source, target, [from.x, from.y, from.z]);
+            if source != target && !credits_respawn {
+                g.stop_active_item_use();
+            }
         });
         self.server_trips.push(Trip {
             conn,

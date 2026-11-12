@@ -140,6 +140,8 @@ mod update;
 mod weather;
 
 #[cfg(test)]
+mod fire_tests;
+#[cfg(test)]
 mod growth_tests;
 #[cfg(test)]
 mod piston_carry_tests;
@@ -769,12 +771,56 @@ pub trait LevelAccess: BlockEntityNeighbors {
     fn is_client_side(&self) -> bool {
         false
     }
-    /// `FireBlock`'s flammability table for `state`'s block, before the
-    /// table answers it: `(igniteOdds, burnOdds)`, as `FireBlock.setFlammable`
-    /// sets them. Fire spread, burning out and where fire can stand read it;
-    /// a waterlogged state never burns and isn't asked. An answer put in
-    /// `odds` is the result. The default does nothing.
-    fn before_fire_odds(&self, _state: BlockStateId, _odds: &mut Option<(i32, i32)>) {}
+    /// `FireBlock`'s flammability table for `state` at `pos`, asked from its
+    /// side `face` (the one facing the fire, or the air fire may take), before
+    /// the table answers it: `(igniteOdds, burnOdds)`, as
+    /// `FireBlock.setFlammable` sets them. Fire spread, burning out and where
+    /// fire can stand read it; a waterlogged state never burns and isn't
+    /// asked. An answer put in `odds` is the result, clamped to 0 to 100. The
+    /// default does nothing.
+    fn before_fire_odds(
+        &self,
+        _state: BlockStateId,
+        _pos: BlockPos,
+        _face: Direction,
+        _odds: &mut Option<(i32, i32)>,
+    ) {
+    }
+    /// Whether the block `state` at `pos`, under a fire, keeps it burning
+    /// (`FireBlock.tick`'s `DimensionType.infiniburn` check), before the
+    /// dimension's tag answers it. An answer put in `source` is the result.
+    /// The default does nothing.
+    fn before_is_fire_source(
+        &self,
+        _state: BlockStateId,
+        _pos: BlockPos,
+        _source: &mut Option<bool>,
+    ) {
+    }
+    /// `LavaFluid.isFlammable` for the block `state` at `pos`, asked from its
+    /// side `face` (the one facing the air the fire would take), before the
+    /// state's `IGNITED_BY_LAVA` flag answers it. An answer put in `ignites`
+    /// is the result. The default does nothing.
+    fn before_ignited_by_lava(
+        &self,
+        _state: BlockStateId,
+        _pos: BlockPos,
+        _face: Direction,
+        _ignites: &mut Option<bool>,
+    ) {
+    }
+    /// Fire burned the block `state` at `pos` from its side `face`, the one
+    /// facing the fire (`FireBlock.checkBurnOut`), after the cell became fire
+    /// or air and after a TNT-class block primed. `ticks` schedules the ticks
+    /// the level's writes schedule. The default does nothing.
+    fn on_caught_fire(
+        &mut self,
+        _ticks: &mut Ticks,
+        _state: BlockStateId,
+        _pos: BlockPos,
+        _face: Direction,
+    ) {
+    }
     /// `CampfireBlock.isSmokeSource(state)` for the block under a campfire,
     /// before vanilla's rule (a hay bale) answers it: true makes the campfire
     /// a signal fire. An answer put in `smoke` is the result. The default

@@ -238,6 +238,16 @@ fn handler_error_or_epoch_cancellation_publishes_no_staged_work_or_replies() {
             assert_eq!(probe.events.stats().reserved_bytes, 0);
             assert_eq!(probe.events.stats().queued_items, 0);
             assert_eq!(reply_count(&*out), 0);
+            if mode == Mode::Error {
+                // The player is told which mod's handler failed, never its reason.
+                let sent = out();
+                let has = |text: &[u8]| {
+                    sent.iter()
+                        .any(|packet| packet.windows(text.len()).any(|w| w == text))
+                };
+                assert!(has(b"a mod's network handler failed (executor_probe)"));
+                assert!(!has(b"deliberate handler error"));
+            }
         });
     }
 }

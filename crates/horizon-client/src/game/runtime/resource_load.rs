@@ -521,7 +521,13 @@ pub(super) fn load_resources(
         if headless {
             UiResources::server(source)
         } else {
-            UiResources::load(source)
+            UiResources::load(source).map(|ui| {
+                ui.with_splashes(
+                    source,
+                    vanilla_root,
+                    settings.extras.skip_modded_splashes_if_vanilla_modified,
+                )
+            })
         }
     };
     // The menu bundle loads on this thread while workers build the world

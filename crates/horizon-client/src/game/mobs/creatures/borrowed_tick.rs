@@ -420,9 +420,12 @@ impl Game<'_> {
                     ticked.insert(m.id);
                     // `horizon-report`'s cost by mob type (tick_profile.rs).
                     let sampled = if resuming {
+                        horizon_threads::work::set_entity(horizon_threads::work::entity_id(
+                            &mobs[i].kind.id,
+                        ));
                         resume_sampled.take()
                     } else {
-                        super::super::tick_profile::start().map(|t| (t, mobs[i].kind.clone()))
+                        super::super::tick_profile::start_mob(&mobs[i].kind)
                     };
                     let run_tick = || {
                         if resuming {
@@ -495,12 +498,11 @@ impl Game<'_> {
                             resume_sampled = sampled;
                             resume_guest = seen_guest;
                             pause = Some(decision);
+                            horizon_threads::work::clear_work();
                             break;
                         }
                     };
-                    if let Some((started, kind)) = sampled {
-                        super::super::tick_profile::add(level_id, &kind, started);
-                    }
+                    super::super::tick_profile::end_mob(level_id, sampled);
                     let m = &mut mobs[i];
                     // Each teleport in its tick, then where the tick left it: one position update
                     // each (`EntityInLevelCallback.onMove` for each).

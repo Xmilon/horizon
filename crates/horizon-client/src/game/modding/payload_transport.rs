@@ -153,9 +153,14 @@ impl Game<'_> {
                 endpoint.disconnect(reason);
             }
         } else if let Some(error) = failure {
+            // The reason goes to the log; the player is told only which mod's handler failed.
+            log::warn!("payload {} failed: {error}", id.0);
             endpoint.disconnect(Text::translate(
                 "disconnect.genericReason",
-                vec![Text::literal(format!("payload {} failed: {error}", id.0))],
+                vec![Text::literal(format!(
+                    "a mod's payload handler failed ({})",
+                    horizon_client::raw_payloads::mod_of(&id)
+                ))],
             ));
         } else if let Some(reason) = reason {
             endpoint.disconnect(reason);

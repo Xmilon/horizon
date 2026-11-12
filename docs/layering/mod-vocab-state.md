@@ -66,6 +66,7 @@ OUT_DIR file checked by the generator before writing it.
 | `parts/shared.rs::TEST_PARTS` | `Cell<Option<&'staticInstalled>>` | Parts lookup table | Per-thread installed lookup inventory for isolated engine tests. |
 | `parts/shared.rs::requested_keys::EMPTY` | `LazyLock<horizon_mod_runtime::registry_keys::Requests>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
 | `runtime.rs::MODS` | `OnceLock<Installed>` | dispatch table | Dependency-ordered hook routing and its per-mod enabled bits remain engine-owned. |
+| `runtime.rs::MODS_SWITCHED` | `std::sync::atomic::AtomicU64` | dispatch table | Counts changes to the per-mod enabled bits it sits beside; read through the host's capability provider table, never by a guest's own copy. |
 | `runtime.rs::TEST_MODS` | `std::cell::Cell<Option<&'staticInstalled>>` | dispatch table | Thread-local dispatch inventory for isolated engine tests. |
 | `wire/wire_resources.rs::ACCESS` | `OnceLock<ResourceAccess>` | set-once socket | Set-once platform callback registration; mutable platform storage lives above the engine. |
 | `wire/wire_resources.rs::shared::MARKER` | `std::sync::OnceLock<std::sync::Arc<Unsupported>>` | immutable cache | Shared immutable unsupported-resource marker with no writable payload. |

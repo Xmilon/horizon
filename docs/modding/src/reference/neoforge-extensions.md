@@ -31,8 +31,8 @@ It does not answer `IEntityExtension` methods; those are covered only where a gl
 
 | Interface | Public methods | Covered | Partial | Missing | n/a |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `IBlockExtension` | 60 | 14 | 17 | 29 | 0 |
-| `IBlockStateExtension` | 57 | 13 | 16 | 28 | 0 |
+| `IBlockExtension` | 60 | 20 | 13 | 27 | 0 |
+| `IBlockStateExtension` | 57 | 19 | 12 | 26 | 0 |
 | `IItemExtension` | 46 | 19 | 10 | 17 | 0 |
 | `IEntityExtension` | 33 | 1 | 16 | 16 | 0 |
 | `ILivingEntityExtension` | 6 | 0 | 3 | 3 | 0 |
@@ -58,10 +58,10 @@ same facts is `StateFacts` in `crates/horizon-items/src/blocks.rs`.
 
 | Method | Verdict | Horizon | Notes |
 | --- | --- | --- | --- |
-| `getFriction(state, level, pos, entity)` | Partial | `BlockProperties.friction` → `StateFacts.friction` | Static; the entity is not consulted. |
+| `getFriction(state, level, pos, entity)` | Covered | `BlockPart::friction` (`hooks/friction.rs`) | Asked where an entity on the block reads its friction, with the entity's id and type and the position, from the block's own value; an answer that is not finite or is outside `0..=2` is dropped. Players, mobs, armor stands, items, experience orbs, boats and leads. The part answers from its inputs, without the level. |
 | `hasDynamicLightEmission(state)` | Covered | `BlockProperties.dynamic_light` → `StateFacts.dynamic_light` | Content data, per block, not per state: it sits on the block's row, so every state of a declared block is asked and a block with mixed states pays for all of them. An undeclared block is never asked, where NeoForge's declaration only gates a chunk's first lighting. |
 | `getLightEmission(state, level, pos)` | Covered | `BlockPart::light_emission` (`hooks/light_emission.rs`), for a block declaring `dynamic_light` | Asked with the position as a chunk comes in, as an edit sets the block and at `LevelRef::check_light` (`LevelLightEngine.checkBlock`), where vanilla's engine reads emission again, only on the thread that owns the level. A client also asks again for the sections a server's light update changed, at most once per cell per update, a Horizon addition. Not asked for the block's own rendered light, ambient occlusion or the spawn rule, which take the state's light, nor from a light worker. The answer is clamped to 15 at the engine, where NeoForge clamps only its light manager's stored value. Without `dynamic_light`, `BlockProperties.light` is static. |
-| `ignitedByLava(state, level, pos, direction)` | Partial | template state flag (`StateFacts`, `state_flags::IGNITED_BY_LAVA`) | Inherited from the template's prepared data; no content field or Part changes it. |
+| `ignitedByLava(state, level, pos, direction)` | Covered | `BlockPart::ignited_by_lava` (`hooks/ignited_by_lava.rs`) | Asked from the face toward the air lava would light, where `LavaFluid.isFlammable` reads it; with no answer the template's `IGNITED_BY_LAVA` state flag (`StateFacts`) decides. No content field sets it. |
 | `isLadder(state, level, pos, entity)` | Covered | `BlockPart::is_ladder` (`hooks/is_ladder.rs`) | Asked of the block a living entity stands in, with the entity id, after the `#climbable` tag: the part's answer replaces the tag's, either way. Players and mobs; armor stands never ask. |
 | `makesOpenTrapdoorAboveClimbable(state, level, pos, stateAbove)` | Missing | — | Engine rule in the climbing code; not exposed. |
 | `isBurning(state, level, pos)` | Missing | — | No per-block burning query; `block_burn` is fire removing a block. |
@@ -92,11 +92,11 @@ same facts is `StateFacts` in `crates/horizon-items/src/blocks.rs`.
 | `isSlimeBlock(state)` | Covered | `BlockPart::is_slime_block` (`hooks/block_sticky.rs`) | Server only, asked by the piston structure resolver for its slime-beside-honey rule. A piston moving a slime block still bounces the entities it pushes off vanilla's slime block alone. |
 | `isStickyBlock(state)` | Covered | `BlockPart::is_sticky_block` (`hooks/block_sticky.rs`) | Server only, asked by the piston structure resolver; starts with vanilla's slime and honey. |
 | `canStickTo(state, otherState)` | Covered | `BlockPart::can_stick_to` (`hooks/block_sticky.rs`) | The part of `state` answers; the resolver asks both sides and needs both to say yes. |
-| `isFlammable(state, level, pos, direction)` | Partial | `BlockPart::fire_odds` (`hooks/base.rs`) | Sets ignite and burn odds (`0, 0` = never burns), but there is no boolean flammable predicate. [#1038](https://github.com/arismoko/horizon/issues/1038). |
-| `getFireSpreadSpeed(state, level, pos, direction)` | Partial | `BlockPart::fire_odds` (`hooks/base.rs`) | Ignite/spread odds (the first element of `fire_odds`'s `(ignite, burn)` tuple) replace vanilla's table for the block. The answer is state-based, with no position or direction as in NeoForge's contextual override. |
-| `getFlammability(state, level, pos, direction)` | Partial | `BlockPart::fire_odds` (`hooks/base.rs`) | Burn/destruction odds (the second element of `fire_odds`'s `(ignite, burn)` tuple) replace vanilla's table for the block. The answer is state-based, with no position or direction as in NeoForge's contextual override. |
-| `onCaughtFire(state, level, pos, direction, igniter, stack)` | Missing | — | No per-block caught-fire callback. |
-| `isFireSource(state, level, pos, direction)` | Missing | — | Fire-source rules are engine-owned. |
+| `isFlammable(state, level, pos, direction)` | Covered | `BlockPart::fire_odds` (`hooks/fire_odds.rs`) | Flammable is ignite odds above zero, as `FireBlock.canBurn` reads it, so the odds answer it for each position and face; no separate predicate. |
+| `getFireSpreadSpeed(state, level, pos, direction)` | Covered | `BlockPart::fire_odds` (`hooks/fire_odds.rs`) | Ignite/spread odds (the first element of `fire_odds`'s `(ignite, burn)` tuple) replace vanilla's table, with the block's position and the face toward the fire. |
+| `getFlammability(state, level, pos, direction)` | Covered | `BlockPart::fire_odds` (`hooks/fire_odds.rs`) | Burn/destruction odds (the second element of `fire_odds`'s `(ignite, burn)` tuple) replace vanilla's table, with the block's position and the face toward the fire. |
+| `onCaughtFire(state, level, pos, direction, igniter, stack)` | Partial | `BlockPart::on_caught_fire` (`hooks/on_caught_fire.rs`) | A notice after the burn roll and spread/burn/ignite cancel gates, before replacing the block, with its old state and face toward the fire. Writes at that position are overwritten; TNT primes afterward. Fire has no igniter and an empty stack. Lava, lightning, spread into air, flint and steel, TNT use, burning projectiles, redstone and dispensers do not fire this spread-only hook. |
+| `isFireSource(state, level, pos, direction)` | Covered | `BlockPart::is_fire_source` (`hooks/is_fire_source.rs`) | Asked of the block under a fire on each fire tick, before the dimension's `infiniburn` tag: yes makes the fire endless, no refuses a tagged block. The direction is always up. |
 | `canEntityDestroy(state, level, pos, entity)` | Missing | — | Mob-grief checks are engine rules; `entity_mob_griefing` is a global event at a different moment. |
 | `canDropFromExplosion(state, level, pos, explosion)` | Partial | `explosion_detonate` (`hooks/base.rs`) | Removes positions from the blast before blocks are hit; no per-block keep/drop query. |
 | `onBlockExploded(state, level, pos, explosion)` | Partial | `explosion_detonate` (`hooks/base.rs`) | Same global pre-blast hook; no per-block callback after the block is removed. [#1038](https://github.com/arismoko/horizon/issues/1038). |
@@ -131,7 +131,7 @@ the parameters shifted by one. Three block methods have no state-receiver form:
 | `getMapColor(state, level, pos, defaultColor)` | Partial (content `map_color`) |
 | `makesOpenTrapdoorAboveClimbable(state, level, pos, stateAbove)` | Missing |
 
-Counts: 13 covered, 16 partial, 28 missing among the 57. The handful of signature differences (`canStickTo` takes
+Counts: 19 covered, 12 partial, 26 missing among the 57. The handful of signature differences (`canStickTo` takes
 the neighbour state; `getCloneItemStack` reorders its arguments; `getEnchantPowerBonus` takes a `LevelReader`)
 do not change any verdict.
 
@@ -257,7 +257,7 @@ are reachable through `BlockEntityRef`.
 | `onLoad()` | Partial | `BlockEntityPart::block_entity` (`hooks/base.rs`) | Initial saved data is set at creation, before the saved NBT is applied; no after-load notice. |
 | `requestModelDataUpdate()` | Missing | — | No model-data invalidation API. |
 | `getModelData()` | Missing | — | No `ModelData`; drawing uses `block_entity_submit` and the model path. |
-| `invalidateCapabilities()` | n/a | capability providers are queried per lookup (`crates/horizon-mod-vocab/src/parts/block_entities.rs`) | There is no cached handler to invalidate. |
+| `invalidateCapabilities()` | Partial | `BlockCapabilityCache::invalidate` (`crates/horizon-mod-vocab/src/item/capability_cache.rs`) | Providers are queried per lookup; a `BlockCapabilityCache` keeps one and checks it by polling. A provider whose answer changes with nothing the cache compares asks its caches' owners to `invalidate`; there is no broadcast to every cache. |
 | `applyStructureRotation(mirror, rotation)` | Missing | — | Structure rotation is engine-owned; no callback. |
 
 ## `IFluidExtension`
@@ -299,8 +299,8 @@ construct a menu.
 their rows have landed or become partial since and should be narrowed when they are filed:
 
 - **Changed on the block side:** `shouldCheckWeakPower` and `should_redstone_wire_connect_to` (the issue says
-  reuse them) are Parts; `getFlammability` / `getFireSpreadSpeed` are now `fire_odds` (state-based, without a
-  position or direction); `canSustainPlant` is `can_sustain_plant` (the soil) before `may_place_on` (the
+  reuse them) are Parts; `getFlammability` / `getFireSpreadSpeed` are now `fire_odds` (with position and face), with `is_fire_source`, `ignited_by_lava` and
+  `on_caught_fire` for the other fire questions; `canSustainPlant` is `can_sustain_plant` (the soil) before `may_place_on` (the
   plant); `canHarvestBlock` is `can_harvest_block` before `player_harvest_check`; `isLadder` is `is_ladder`;
   `getToolModifiedState` is `tool_modified_state` before `block_tool_modification`; `onDestroyedByPlayer` is
   `on_destroyed_by_player`.
