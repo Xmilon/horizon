@@ -31,7 +31,16 @@ index holds when it holds that (`capacity`, none where it may not go), and `inse
 (`host.transaction(|host, tx| …)`, below), and to try one, abort it. `move_resources(host, &from, &to, filter, max,
 tx)` (NeoForge's `ResourceHandlerUtil.move`) moves what `filter` accepts, up to `max`, index by index out of `from`
 into wherever `to` takes it, each move all or nothing: what `to` won't take stays put. It answers how much moved, or
-`Overanswered` (below). Hoppers use a mod's handler
+`Overanswered` (below). `move_first` and `move_first_stacking` (`moveFirst`, `moveFirstStacking`) move only the
+first resource that goes, and answer which. NeoForge's stock handlers come ready to compose: `CombinedResourceHandler`
+(several handlers' indices one after another), `RangedResourceHandler` (indices `start..end` of one),
+`EmptyResourceHandler`, `InfiniteResourceHandler` (a creative tank) and `VoidingResourceHandler` (a trash can).
+`ResourceHandlerUtil`'s queries are methods on any handler, a `Capability` included: `index_of`, `contains`,
+`is_empty`, `is_full`, `accepts` (`isValid`), `comparator_signal` (vanilla's container formula, 0 to 15),
+`insert_stacking` (indices holding the resource before empty ones), `extract_first` and `find_extractable`. A
+handler that can be written whole, as a menu slot is, overrides `set` (`IndexModifier`); others refuse it.
+`KeyedResource` reads the registry key and own components of an `ItemResource` or a `FluidResource` alike.
+Hoppers use a mod's handler
 where one is registered, by block entity type or by block, each move in a transaction of its own. A mod's own capability is a
 `CapabilityKey::new("mymod:chemicals")`, answered only by parts.
 
