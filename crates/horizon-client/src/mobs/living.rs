@@ -1710,7 +1710,19 @@ impl Mob {
         let x = self.position.x.floor() as i32;
         let z = self.position.z.floor() as i32;
         let y = (self.position.y - 0.500_001).floor() as i32;
-        w.facts.get(w.world.block(x, y, z)).friction
+        self.friction_at(w, [x, y, z])
+    }
+    /// The friction of the block at `[x, y, z]` under the mob, as the block's parts answer
+    /// (`IBlockExtension.getFriction`).
+    pub(super) fn friction_at(&self, w: &MobWorld, [x, y, z]: [i32; 3]) -> f32 {
+        crate::motion::block_friction(
+            w.loop_context,
+            self.id,
+            &self.kind.id,
+            w.world,
+            w.facts,
+            BlockPos::new(x, y, z),
+        )
     }
     /// `getAttributeValue(BOUNCINESS)`.
     fn entity_bounciness(&self) -> f64 {

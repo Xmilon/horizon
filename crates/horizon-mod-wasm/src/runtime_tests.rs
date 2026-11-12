@@ -1902,3 +1902,22 @@ fn subscription_stack_refusal_is_not_cached() {
         assert!(matches!(subscriptions, [Some(mod_api::HookId::ServerTick)]));
     });
 }
+
+#[test]
+fn a_guest_call_that_answers_nothing_names_why() {
+    assert_eq!(
+        fault_reason(&wasmtime::Error::new(wasmtime::Trap::Interrupt), 100),
+        "epoch deadline: the call ran past its budget of 100 ticks (about 100 ms)"
+    );
+    assert_eq!(
+        fault_reason(&wasmtime::Error::new(wasmtime::Trap::StackOverflow), 100),
+        "wasm trap: call stack exhausted"
+    );
+    note("its group has stopped after an earlier fault".into());
+    assert_eq!(
+        take_refusal(),
+        "its group has stopped after an earlier fault"
+    );
+    // Taken once: a later call that answers nothing without a reason does not reuse it.
+    assert_eq!(take_refusal(), "refused");
+}

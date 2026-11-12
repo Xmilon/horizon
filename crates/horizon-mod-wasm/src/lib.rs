@@ -16,6 +16,8 @@ mod no_hooks;
 mod points;
 mod registration_capabilities;
 mod runtime;
+// Why this thread's last guest call answered nothing, for the generated proxies' errors.
+use runtime::take_refusal as wasm_call_refusal;
 #[allow(
     dead_code,
     unused_variables,

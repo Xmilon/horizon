@@ -1160,14 +1160,14 @@ impl Game<'_> {
         };
         let changed = self.player_selected_slot(player) != Some(slot);
         if !self.native_as_player_handle(player, |game| {
-            game.selected = slot;
             if changed
                 && game
                     .using
                     .is_some_and(|(held, _)| held != crate::game::shield::OFFHAND_SLOT)
             {
-                game.using = None;
+                game.stop_active_item_use();
             }
+            game.selected = slot;
         }) {
             return false;
         }

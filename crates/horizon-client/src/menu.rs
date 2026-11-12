@@ -4435,6 +4435,15 @@ pub(crate) mod tests {
                 is_ladder: |context, _, _, _, ladder| {
                     *ladder |= context.setting("rules_mod", "stack").is_some();
                 },
+                friction: |context, _, kind, _, _, friction| {
+                    if context.setting("rules_mod", "stack").is_some() {
+                        *friction = match kind {
+                            "minecraft:player" => 0.98,
+                            "minecraft:cow" => f32::NAN,
+                            _ => 3.0,
+                        };
+                    }
+                },
                 player_stays_on_ground_surface: |context, _, staying| {
                     *staying |= context.setting("rules_mod", "stack").is_some();
                 },
@@ -4606,6 +4615,24 @@ pub(crate) mod tests {
         };
         assert!(!ladder(&before));
         assert!(ladder(&after));
+        // A block's friction reads it too; an answer that is NaN or outside 0..=2 keeps the
+        // block's own.
+        let friction = |context: &LoopContext, kind: &str| {
+            let mut friction = 0.6;
+            crate::motion::native_friction(
+                context,
+                1,
+                kind,
+                horizon_core::position::BlockPos::new(0, 0, 0),
+                horizon_world::registry::BlockStateId(0),
+                &mut friction,
+            );
+            friction
+        };
+        assert_eq!(friction(&before, "minecraft:player"), 0.6);
+        assert_eq!(friction(&after, "minecraft:player"), 0.98);
+        assert_eq!(friction(&after, "minecraft:cow"), 0.6);
+        assert_eq!(friction(&after, "minecraft:item"), 0.6);
         // The edge backoff and the fluid current read it too.
         let movement = |context: &LoopContext| {
             let (mut staying, mut flow) = (false, [0.25, 0.0, 0.0]);

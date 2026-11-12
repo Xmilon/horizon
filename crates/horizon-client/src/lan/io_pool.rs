@@ -155,6 +155,10 @@ impl Outbox {
             worker: worker.clone(),
         }))
     }
+    /// The packets queued and not taken by the thread yet.
+    pub(super) fn queued(&self) -> usize {
+        self.queue().bodies.len()
+    }
     fn queue(&self) -> MutexGuard<'_, Queue> {
         self.queue.lock().unwrap_or_else(PoisonError::into_inner)
     }

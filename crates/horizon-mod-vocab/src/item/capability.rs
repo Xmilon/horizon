@@ -59,7 +59,7 @@ impl<T: ?Sized> Capability<T> {
     }
     /// `answer`, the handler's amount for a request of `asked` at `at`: itself, or none beyond
     /// `asked`, a mod bug warned once naming the mod. The caller aborts the move.
-    pub(crate) fn checked(&self, answer: u32, asked: u32, at: &dyn Debug) -> Option<u32> {
+    pub(crate) fn checked<N: PartialOrd>(&self, answer: N, asked: N, at: &dyn Debug) -> Option<N> {
         if answer > asked {
             crate::block::item_place::warn_broken(self.owner, at);
             return None;

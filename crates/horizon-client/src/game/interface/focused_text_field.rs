@@ -280,6 +280,7 @@ mod tests {
                 let mut menu = title::Title::new(
                     std::path::PathBuf::from("/nonexistent-field-fixture/saves"),
                     std::path::Path::new("/nonexistent-field-fixture"),
+                    "",
                 );
                 menu.mode = title::Mode::Multiplayer(multiplayer::Screen::Direct {
                     address: "\u{1f600}".into(),

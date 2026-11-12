@@ -109,6 +109,11 @@
     "category": "dispatch table",
     "reason": "Dependency-ordered hook routing and its per-mod enabled bits remain engine-owned."
   },
+  "runtime.rs::MODS_SWITCHED": {
+    "type": "std::sync::atomic::AtomicU64",
+    "category": "dispatch table",
+    "reason": "Counts changes to the per-mod enabled bits it sits beside; read through the host's capability provider table, never by a guest's own copy."
+  },
   "runtime.rs::TEST_MODS": {
     "type": "std::cell::Cell<Option<&'staticInstalled>>",
     "category": "dispatch table",

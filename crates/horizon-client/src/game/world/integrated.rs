@@ -36,6 +36,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "integrated/capture.rs"]
+pub(super) mod capture;
+
 /// How long the window waits for the server thread to answer a `call`.
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
 /// The error of a `call` without an answer: the server stopped, or it was
@@ -717,10 +720,12 @@ impl Game<'_> {
         ready: &Sender<Ready>,
         opening: Opening,
     ) -> Result<()> {
-        self.run_server_lifecycle(false, |game, startup_began| {
+        let result = self.run_server_lifecycle(false, |game, startup_began| {
             *startup_began = true;
             game.run_integrated_inner(launch, flags, tasks, ready, opening)
-        })
+        });
+        self.finish_server_capture();
+        result
     }
 
     fn run_integrated_inner(
@@ -742,6 +747,13 @@ impl Game<'_> {
             // cannot add wall-clock-dependent world ticks to oracle output.
             return self.run_command_harness(script.as_ref(), output.as_ref());
         }
+        let slow_ms = self
+            .options
+            .spikes
+            .unwrap_or(super::dedicated::SLOW_TICK_MS);
+        self.profile
+            .server
+            .get_or_insert_with(|| capture::ServerSide::new(slow_ms));
         self.integrated_tick_loop(&flags)
     }
 
@@ -777,11 +789,11 @@ impl Game<'_> {
                     was_paused = paused;
                     if paused {
                         // Only the connections run.
-                        self.tick_server_timed(true)?;
+                        self.tick_server_measured(true)?;
                     } else {
                         self.follow_distances(flags);
                         let started = Instant::now();
-                        self.tick_server_timed(false)?;
+                        self.tick_server_measured(false)?;
                         // MinecraftServer.tickServer's tick times, for /tick query.
                         self.clock.record(started.elapsed());
                         self.debug_charts.log_tick(started, started.elapsed());
@@ -818,7 +830,19 @@ impl Game<'_> {
             self.publish_load_view();
             self.wait_for_next_server_tick(&mut next, paused);
         }
+        if failure.is_none() {
+            self.finish_server_capture();
+        }
         if let Some(error) = failure {
+            let finished = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.finish_server_capture();
+            }));
+            if let Err(payload) = finished {
+                log::error!(
+                    "Horizon: the server capture could not be closed after the crash: {}",
+                    super::dedicated::panic_message(payload.as_ref())
+                );
+            }
             let stopped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 self.stop_after_crash(&error.to_string())
             }));

@@ -18,11 +18,9 @@ impl Game<'_> {
         }
         self.perf.world_opening();
         if self.title.is_none() {
-            let title = Title::new(
-                std::env::current_dir()?.join("saves"),
-                &self.options.resources,
-            )
-            .with_user(|| self.options.player_name());
+            let title = self
+                .new_title(std::env::current_dir()?.join("saves"))
+                .with_user(|| self.options.player_name());
             self.show_title(title);
         }
         self.pending_entry = Some(entry);

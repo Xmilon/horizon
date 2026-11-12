@@ -169,11 +169,7 @@ impl LevelAccess for GameLevel<'_> {
         })
     }
     fn allow_block_ignite(&self, pos: BlockPos, cause: &'static str) -> bool {
-        let mut cancel = false;
-        if self.native_authoritative {
-            self.native_block_ignite(self.dimension, self.native_player, pos, cause, &mut cancel);
-        }
-        !cancel
+        self.block_ignite_allowed(pos, cause)
     }
     fn block_grow_feature<'a>(
         &mut self,
@@ -207,11 +203,7 @@ impl LevelAccess for GameLevel<'_> {
         }
     }
     fn allow_block_burn(&self, pos: BlockPos) -> bool {
-        let mut cancel = false;
-        if self.native_authoritative {
-            self.native_block_burn(self.dimension, pos, &mut cancel);
-        }
-        !cancel
+        self.block_burn_allowed(pos)
     }
     fn allow_leaves_decay(&self, pos: BlockPos) -> bool {
         let mut cancel = false;
@@ -611,15 +603,38 @@ impl LevelAccess for GameLevel<'_> {
             self.native_perform_bonemeal(ticks, self.dimension, pos, state);
         }
     }
-    fn before_fire_odds(&self, state: BlockStateId, odds: &mut Option<(i32, i32)>) {
-        if self.native_authoritative {
-            self.native_fire_odds(self.dimension, state, odds);
-        }
+    fn before_fire_odds(
+        &self,
+        state: BlockStateId,
+        pos: BlockPos,
+        face: Direction,
+        odds: &mut Option<(i32, i32)>,
+    ) {
+        self.answer_fire_odds(state, pos, face, odds);
+    }
+    fn before_is_fire_source(&self, state: BlockStateId, pos: BlockPos, source: &mut Option<bool>) {
+        self.answer_is_fire_source(state, pos, source);
+    }
+    fn before_ignited_by_lava(
+        &self,
+        state: BlockStateId,
+        pos: BlockPos,
+        face: Direction,
+        ignites: &mut Option<bool>,
+    ) {
+        self.answer_ignited_by_lava(state, pos, face, ignites);
+    }
+    fn on_caught_fire(
+        &mut self,
+        ticks: &mut Ticks,
+        state: BlockStateId,
+        pos: BlockPos,
+        face: Direction,
+    ) {
+        self.caught_fire(ticks, state, pos, face);
     }
     fn before_smoke_source(&self, state: BlockStateId, smoke: &mut Option<bool>) {
-        if self.native_authoritative {
-            self.native_smoke_source(self.dimension, state, smoke);
-        }
+        self.answer_smoke_source(state, smoke);
     }
     fn world_surface(&self, x: i32, z: i32) -> i32 {
         self.world.world_surface(x, z, |s| self.facts.is_air(s))
@@ -748,26 +763,10 @@ impl LevelAccess for GameLevel<'_> {
     /// than the `fire_spread_radius_around_player` rule to the block's corner
     /// (`ChunkMap.anyPlayerCloseEnoughTo`); -1 spreads everywhere.
     fn can_spread_fire_around(&self, pos: BlockPos) -> bool {
-        let radius = self.rules.fire_spread_radius_around_player;
-        radius == -1
-            || self.fire_players.iter().any(|p| {
-                let d = [
-                    p[0] - f64::from(pos.x),
-                    p[1] - f64::from(pos.y),
-                    p[2] - f64::from(pos.z),
-                ];
-                d[0] * d[0] + d[1] * d[1] + d[2] * d[2] < f64::from(radius) * f64::from(radius)
-            })
+        self.player_near_fire(pos)
     }
     fn increased_fire_burnout(&self, pos: BlockPos) -> bool {
-        self.world
-            .chunks
-            .get(&(pos.x >> 4, pos.z >> 4))
-            .is_some_and(|chunk| {
-                self.biomes
-                    .get(chunk.biome(pos.x, pos.y, pos.z))
-                    .increased_fire_burnout
-            })
+        self.biome_burns_out_fire(pos)
     }
     fn block_state(&self, pos: BlockPos) -> BlockStateId {
         self.world.block(pos.x, pos.y, pos.z)

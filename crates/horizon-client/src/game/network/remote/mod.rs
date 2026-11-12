@@ -955,11 +955,9 @@ impl Game<'_> {
                     title.failed(error);
                 }
                 None => {
-                    let mut title = horizon_client::title::Title::new(
-                        std::env::current_dir()?.join("saves"),
-                        &self.options.resources,
-                    )
-                    .with_user(|| self.options.player_name());
+                    let mut title = self
+                        .new_title(std::env::current_dir()?.join("saves"))
+                        .with_user(|| self.options.player_name());
                     title.skip_multiplayer_warning = skip;
                     title.failed(error);
                     self.show_title(title);
@@ -1627,7 +1625,8 @@ impl Game<'_> {
             r.clear_sections(self.world.layout());
         }
         let saves = std::env::current_dir()?.join("saves");
-        let mut title = horizon_client::title::Title::new(saves.clone(), &self.options.resources)
+        let mut title = self
+            .new_title(saves.clone())
             .with_user(|| self.options.player_name());
         title.last_server = self.settings.file.string("lastServer");
         title.skip_multiplayer_warning = self.settings.file.bool("skipMultiplayerWarning");
@@ -2284,7 +2283,9 @@ impl Game<'_> {
                 forgotten_credits.push(item.into_event_credit());
                 continue;
             }
-            self.forget_remote_columns(&mut forgotten, true);
+            horizon_client::spans::time("pr_forget", || {
+                self.forget_remote_columns(&mut forgotten, true)
+            });
             forgotten_credits.clear();
             let chunk = matches!(item, Received::Chunk(_, _));
             if chunk && !overdue && chunks >= CHUNK_PACKETS_PER_FRAME {
@@ -2313,7 +2314,9 @@ impl Game<'_> {
                     };
                     self.observe_client_packet(&packet);
                     if let C::LevelChunkWithLight(p) = *packet {
-                        self.remote_chunk(&p, Some((&format, column)));
+                        horizon_client::spans::time("pr_chunk", || {
+                            self.remote_chunk(&p, Some((&format, column)))
+                        });
                     }
                     chunks += started.map_or(Duration::ZERO, |t| t.elapsed());
                     continue;
@@ -2482,7 +2485,12 @@ impl Game<'_> {
                     return Ok(());
                 }
                 Event::RawPayload(incoming) => self.receive_client_payload(*incoming)?,
-                Event::Packet(packet) => self.handle_packet(*packet)?,
+                Event::Packet(packet) => match *packet {
+                    C::CustomPayload(p) if p.channel == horizon_client::perf_net::CHANNEL => {
+                        self.remote_perf_reply(&p.data)
+                    }
+                    packet => self.handle_packet(packet)?,
+                },
             }
             chunks += started.map_or(Duration::ZERO, |t| t.elapsed());
             if self.remote.is_none() {
@@ -2490,7 +2498,9 @@ impl Game<'_> {
             }
         }
         if self.remote.is_some() {
-            self.forget_remote_columns(&mut forgotten, true);
+            horizon_client::spans::time("pr_forget", || {
+                self.forget_remote_columns(&mut forgotten, true)
+            });
         }
         if let Some(r) = self.remote.as_mut() {
             r.backlog_since = if events.is_empty() {
@@ -14036,7 +14046,7 @@ mod tests {
         use super::super::{
             Game, native_entity_refs::tests::with_client_game, native_lifecycle::NativeLifecycle,
         };
-        use horizon_client::{level_loading::Reason, motion::PlayerMotion, title::Title};
+        use horizon_client::{level_loading::Reason, motion::PlayerMotion};
         use horizon_core::geometry::Vec3;
         use horizon_protocol::{
             connection::Pipe,
@@ -14127,7 +14137,7 @@ mod tests {
                 .unwrap();
             assert_eq!(camera(game), Some(local));
 
-            game.title = Some(Title::new(game.save.root.clone(), &game.options.resources));
+            game.title = Some(game.new_title(game.save.root.clone()));
             assert!(
                 camera(game).is_none(),
                 "the title screen has no camera entity"

@@ -135,7 +135,7 @@ be declared, and a raw id that a typed payload also registers refuses load,
 naming both mods. `PlayerRef::announced_channels` reads what the client
 announced in `minecraft:register` (less `minecraft:unregister`), in
 configuration and play: at most 128 channels of up to 64 bytes. Raw channels
-are server-side only and take exact ids; a namespace wildcard may follow.
+are server-side only and take exact ids. Namespace wildcards are not supported.
 
 A trait mod declares its raw channels in its own `Hooks::register`, through the
 same registrar as typed payloads; no Part and no manifest entry are needed:

@@ -96,6 +96,7 @@ impl StartupMenu {
         root: PathBuf,
         settings: &Settings,
         additional_data: Arc<[Arc<horizon_client::datapack::DataPack>]>,
+        splashes: &str,
     ) {
         horizon_client::ui::load_metadata(
             &horizon_assets::resource_source::ResourceSource::directory(root.to_path_buf()),
@@ -111,6 +112,7 @@ impl StartupMenu {
             let mut title = Title::new(
                 std::env::current_dir().unwrap_or_default().join("saves"),
                 &self.root,
+                splashes,
             );
             title.last_server = settings.file.string("lastServer");
             title.skip_multiplayer_warning = settings.file.bool("skipMultiplayerWarning");
@@ -1481,6 +1483,7 @@ mod tests {
             panorama: Arc::new(horizon_client::gfx::panorama::Faces::colour([
                 96, 110, 111, 255,
             ])),
+            splashes: Arc::from(""),
         }
     }
 
@@ -1532,7 +1535,7 @@ mod tests {
                 let saves = std::env::temp_dir()
                     .join(format!("horizon-startup-rules-{}", std::process::id()));
                 let _ = std::fs::remove_dir_all(&saves);
-                let mut title = Title::new(saves, &game.options.resources);
+                let mut title = game.new_title(saves);
                 title.enter_singleplayer();
                 let Action::Create { mut options, .. } = title.create_action() else {
                     panic!("creation")
@@ -1693,8 +1696,7 @@ mod tests {
         assert!(loading.settings.resource_packs.is_empty());
 
         super::super::native_entity_refs::tests::with_client_game(|game| {
-            let root = game.options.resources.clone();
-            game.title = Some(Title::new(PathBuf::from("saves"), &root));
+            game.title = Some(game.new_title(PathBuf::from("saves")));
             game.open_options_at(true, Page::Packs);
             game.handle_window_event_inner(
                 &Loop,

@@ -44,7 +44,7 @@ impl Game<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use horizon_client::title::{Mode, Title, WorldOptions};
+    use horizon_client::title::{Mode, WorldOptions};
     use mod_api::{
         Hooks, ModEntry, RegisterPresetEditorsEvent, ScreenKeyPressedPreEvent,
         ScreenRenderPostEvent,
@@ -112,8 +112,7 @@ mod tests {
                         &mut editors,
                     );
                     assert_eq!(editors.len(), 1);
-                    let mut title =
-                        Title::new(game.save.root.join("editor-saves"), &game.options.resources);
+                    let mut title = game.new_title(game.save.root.join("editor-saves"));
                     title.set_preset_data_source(game.pack.data_changes.clone());
                     let dimensions = horizon_core::nbt::Tag::compound([(
                         "minecraft:overworld",

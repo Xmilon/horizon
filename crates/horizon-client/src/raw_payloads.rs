@@ -16,7 +16,7 @@ mod raw_channel_tests;
 pub mod staging_probe;
 #[cfg(test)]
 mod wasm_tests;
-pub use executor::dispatch;
+pub use executor::{dispatch, mod_of};
 mod main_queue;
 pub use main_queue::MainQueue;
 #[cfg(test)]

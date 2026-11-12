@@ -236,6 +236,19 @@ impl Game<'_> {
         }
         self.stop_using_item(stack);
     }
+    /// Ends the current use through [`Self::stop_using_item`]. With no stack left in
+    /// the use's slot there is nothing to vibrate, but the use still ends.
+    pub(super) fn stop_active_item_use(&mut self) {
+        match self
+            .using
+            .and_then(|(slot, _)| self.stack_in(slot))
+            .cloned()
+        {
+            Some(stack) => self.stop_using_item(&stack),
+            None => self.using = None,
+        }
+    }
+
     /// `LivingEntity.stopUsingItem`: the use of `stack` is over (`useItem` and
     /// its remaining ticks are cleared), and when the use effects of the stack
     /// ask for it, `ItemStack.causeUseVibration` sends an `ITEM_INTERACT_FINISH`
