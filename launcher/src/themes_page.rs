@@ -2,6 +2,7 @@
 use super::*;
 use crate::glass_ui as ui;
 use crate::servers_page::Field;
+use crate::theme::Night;
 use gpui::{
     canvas, fill, point, size, Bounds, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point,
@@ -73,33 +74,162 @@ impl Launcher {
         crate::theme::from_settings(&self.settings, window.appearance())
     }
 
-    /// Settings' launcher theme: Horizon's own sky, First Light or Nord, free for everyone.
-    /// Picking one brings its accent too; the accent row can change it after.
+    /// Picks a launcher theme: the accent picked under the theme left is kept for it, and the
+    /// new one brings back its own (`themes::starting_accent`). The page and its scroll stay.
+    fn pick_theme(&mut self, id: Option<&'static str>) {
+        let left = themes::accent_key(self.settings.theme.as_deref()).to_string();
+        self.settings
+            .theme_accents
+            .insert(left, self.settings.accent);
+        self.settings.theme = id.map(str::to_owned);
+        self.settings.accent = themes::starting_accent(id, &self.settings.theme_accents);
+        self.save_settings();
+        self.restyle = true;
+    }
+
+    /// Settings' launcher theme: a card for each, drawn in its own colours (a text sample, a
+    /// field and its main button) under the appearance on screen. Free for everyone.
     pub(super) fn launcher_theme_row(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let current = themes::theme(self.settings.theme.as_deref()).map(|th| th.id);
-        let mut options: Vec<(Option<&'static str>, &'static str)> = vec![(None, "Horizon")];
-        options.extend(themes::THEMES.iter().map(|th| (Some(th.id), th.name)));
+        let mut options: Vec<(Option<&'static str>, &'static str, Night, Night)> =
+            vec![(None, "Horizon", theme::night::NIGHT, theme::night::DAWN)];
+        options.extend(themes::THEMES.iter().map(|th| {
+            let (dark, light) = th.palette.map_or_else(
+                || {
+                    let mut dark = theme::night::NIGHT;
+                    dark.sky = th.sky;
+                    (dark, theme::night::DAWN)
+                },
+                |(d, l)| (*d, *l),
+            );
+            (Some(th.id), th.name, dark, light)
+        }));
+        let mut cards = div().flex().flex_wrap().gap(px(10.));
+        for (id, name, dark, light) in options {
+            let p = if t.dark { dark } else { light };
+            let accent = themes::starting_accent(id, &self.settings.theme_accents).rgb();
+            let label = horizon_theme::glass::Glass::new(accent, 0., 0.).on_accent;
+            let chosen = current == id;
+            let preview = div()
+                .flex()
+                .flex_col()
+                .gap(px(8.))
+                .p(px(10.))
+                .h(px(92.))
+                .rounded(px(10.))
+                .bg(gpui::rgb(p.page))
+                .border_1()
+                .border_color(gpui::rgb(theme::night::over(p.stroke, 0.3, p.page)))
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .text_color(gpui::rgb(p.ink))
+                        .child(tr("Aa Text")),
+                )
+                .child(
+                    div()
+                        .h(px(14.))
+                        .w_full()
+                        .rounded(px(4.))
+                        .bg(gpui::rgb(theme::night::over(p.card, p.card_alpha, p.page)))
+                        .border_1()
+                        .border_color(gpui::rgb(theme::night::over(p.stroke, 0.4, p.page))),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h(px(22.))
+                        .w(px(64.))
+                        .rounded(px(6.))
+                        .bg(gpui::rgb(accent))
+                        .text_size(px(12.))
+                        .text_color(gpui::rgb(label))
+                        .child(tr("Play")),
+                );
+            cards = cards.child(
+                keyboard(
+                    div().id(SharedString::from(format!(
+                        "theme-{}",
+                        id.unwrap_or(themes::HORIZON)
+                    ))),
+                    &t,
+                )
+                .flex()
+                .flex_col()
+                .gap(px(6.))
+                .w(px(136.))
+                .p(px(4.))
+                .rounded(px(14.))
+                .cursor_pointer()
+                .border_2()
+                .border_color(if chosen {
+                    t.accent
+                } else {
+                    gpui::transparent_black()
+                })
+                .when(!chosen, |d| d.hover(|s| s.bg(ui::white(0.06))))
+                .child(preview)
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.))
+                        .px(px(4.))
+                        .pb(px(2.))
+                        .text_size(px(13.))
+                        .text_color(t.ink)
+                        .child(tr(name))
+                        .when(chosen, |d| d.child(ui::icon("tick-02", 14., t.accent))),
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if themes::theme(this.settings.theme.as_deref()).map(|th| th.id) != id {
+                        this.pick_theme(id);
+                        cx.notify();
+                    }
+                })),
+            );
+        }
+        let note = Some(
+            div()
+                .child(tr(
+                    "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.",
+                ))
+                .into_any_element(),
+        );
+        ui::setting_row_stacked(tr("Theme"), note, cards.into_any_element())
+    }
+
+    /// Reduced motion: follow the system's, hold everything still, or keep it moving.
+    pub(super) fn motion_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
         let this = cx.entity().downgrade();
-        let picker = segments("launcher-theme", &options, current, &t, move |id, _, cx| {
-            let _ = this.update(cx, |this, cx| {
-                this.settings.theme = id.map(str::to_owned);
-                this.settings.accent = match themes::theme(id) {
-                    Some(picked) => picked.accent.accent(),
-                    None => Accent::VIOLET,
-                };
-                this.save_settings();
-                this.restyle = true;
-                cx.notify();
-            });
-        });
+        let picker = segments(
+            "reduce-motion",
+            &[
+                (None, "System"),
+                (Some(true), "Reduced"),
+                (Some(false), "Full"),
+            ],
+            self.settings.reduce_motion,
+            &t,
+            move |choice, _, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    this.settings.reduce_motion = choice;
+                    this.save_settings();
+                    cx.notify();
+                });
+            },
+        );
         index_row(
             0,
-            tr("Launcher theme"),
+            tr("Motion"),
             Some(
                 div()
                     .child(tr(
-                        "Free for everyone. First Light paints the sky just before sunrise behind the light appearance, with a blue accent.",
+                        "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.",
                     ))
                     .into_any_element(),
             ),
@@ -290,87 +420,98 @@ impl Launcher {
         let f = (value / knob.max()).clamp(0., 1.);
         let area = self.look_sliders.areas[knob as usize].clone();
         let t = self.theme;
-        let track = keyboard(
-            div().id(SharedString::from(format!("look-slider-{knob:?}"))),
-            &t,
-        )
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .w(px(TRACK))
-        .h(px(36.))
-        .rounded(px(8.))
-        .cursor_pointer()
-        .child(
-            canvas(move |bounds, _, _| area.set(Some(bounds)), |_, _, _, _| {})
-                .absolute()
-                .size_full(),
-        )
-        .child(
-            div()
-                .h(px(6.))
-                .w_full()
-                .rounded_full()
-                .overflow_hidden()
-                .bg(ui::white(0.12))
-                .child(
-                    div()
-                        .h_full()
-                        .w(relative(f))
-                        .rounded_full()
-                        .bg(ui::color(ui::look().accent_soft)),
-                ),
-        )
-        .child(
-            div()
-                .absolute()
-                .left(px(thumb_centre(f, TRACK) - THUMB / 2.))
-                .size(px(THUMB))
-                .rounded_full()
-                .bg(ui::paper()),
-        )
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                this.grab_look(knob, ev.position);
-                this.look_sliders.dragging = Some(knob);
-                this.pick_look(knob, ev.position, cx);
-            }),
-        )
-        .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
-            let now = this.look_value(knob);
-            let to = match ev.keystroke.key.as_str() {
-                "left" | "down" => now - 1.,
-                "right" | "up" => now + 1.,
-                "pagedown" => now - knob.page(),
-                "pageup" => now + knob.page(),
-                "home" => 0.,
-                "end" => knob.max(),
-                _ => return,
-            };
-            cx.stop_propagation();
-            if this.set_look(knob, to) {
-                this.save_settings();
-                cx.notify();
-            }
-        }))
-        .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
-            if ev.pressed_button == Some(MouseButton::Left)
-                && this.look_sliders.dragging == Some(knob)
-            {
-                this.pick_look(knob, ev.position, cx);
-            }
-        }))
-        .on_mouse_up(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
-        )
-        // A drag released off the track saves too.
-        .on_mouse_up_out(
-            MouseButton::Left,
-            cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
-        );
+        // A slider the look doesn't use is shown dimmed, says why, and takes no input.
+        let unused = self.look_unused();
+        let about = unused.unwrap_or(about);
+        let base = div().id(SharedString::from(format!("look-slider-{knob:?}")));
+        let base = if unused.is_none() {
+            keyboard(base, &t).cursor_pointer()
+        } else {
+            base.opacity(0.4)
+        };
+        let track = base
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .w(px(TRACK))
+            .h(px(36.))
+            .rounded(px(8.))
+            .child(
+                canvas(move |bounds, _, _| area.set(Some(bounds)), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
+            .child(
+                div()
+                    .h(px(6.))
+                    .w_full()
+                    .rounded_full()
+                    .overflow_hidden()
+                    .bg(ui::white(0.12))
+                    .child(
+                        div()
+                            .h_full()
+                            .w(relative(f))
+                            .rounded_full()
+                            .bg(ui::color(ui::look().accent_soft)),
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(thumb_centre(f, TRACK) - THUMB / 2.))
+                    .size(px(THUMB))
+                    .rounded_full()
+                    .bg(ui::paper()),
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                    if this.look_unused().is_some() {
+                        return;
+                    }
+                    this.grab_look(knob, ev.position);
+                    this.look_sliders.dragging = Some(knob);
+                    this.pick_look(knob, ev.position, cx);
+                }),
+            )
+            .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+                if this.look_unused().is_some() {
+                    return;
+                }
+                let now = this.look_value(knob);
+                let to = match ev.keystroke.key.as_str() {
+                    "left" | "down" => now - 1.,
+                    "right" | "up" => now + 1.,
+                    "pagedown" => now - knob.page(),
+                    "pageup" => now + knob.page(),
+                    "home" => 0.,
+                    "end" => knob.max(),
+                    _ => return,
+                };
+                cx.stop_propagation();
+                if this.set_look(knob, to) {
+                    this.save_settings();
+                    cx.notify();
+                }
+            }))
+            .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
+                if ev.pressed_button == Some(MouseButton::Left)
+                    && this.look_sliders.dragging == Some(knob)
+                {
+                    this.pick_look(knob, ev.position, cx);
+                }
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
+            )
+            // A drag released off the track saves too.
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
+            );
         let control = div().flex().items_center().gap(px(16.)).child(track).child(
             ui::text(13., FontWeight::NORMAL, 0.6)
                 .w(px(48.))
@@ -423,6 +564,19 @@ impl Launcher {
         let f = fraction_at(across - self.look_sliders.grab, width);
         if self.set_look(knob, f * knob.max()) {
             cx.notify();
+        }
+    }
+
+    /// Why Glass and Blur change nothing in the look on screen, if they don't.
+    fn look_unused(&self) -> Option<&'static str> {
+        if !self.theme.dark {
+            Some("Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.")
+        } else if self.settings.performance() {
+            Some("Performance mode draws solid panels, without glass or blur.")
+        } else if !self.theme.scene {
+            Some("This theme's night draws solid panels, without glass or blur.")
+        } else {
+            None
         }
     }
 
@@ -730,6 +884,7 @@ fn reset_look(s: &mut Settings) {
     s.glass = None;
     s.blur = None;
     s.background = None;
+    s.theme_accents.clear();
 }
 
 #[cfg(test)]
@@ -761,6 +916,8 @@ mod tests {
             glass: Some(3.),
             blur: Some(9.),
             background: Some("mine.png".into()),
+            theme_accents: [("sunrise".to_string(), Accent::TEAL)].into(),
+            reduce_motion: Some(true),
             language: Some(i18n::Language::French),
             skip_opening: true,
             game_args: "-Xmx4G".into(),
@@ -769,6 +926,7 @@ mod tests {
         };
         reset_look(&mut s);
         assert_eq!(s.accent, Accent::VIOLET);
+        assert!(s.theme_accents.is_empty());
         assert_eq!(
             (s.theme, s.glass, s.blur, s.background),
             (None, None, None, None)
@@ -777,5 +935,7 @@ mod tests {
         assert!(s.skip_opening);
         assert_eq!(s.game_args, "-Xmx4G");
         assert_eq!(s.while_playing, backend::WhilePlaying::Hide);
+        // Motion is accessibility, not the look: a reset never turns it back on.
+        assert_eq!(s.reduce_motion, Some(true));
     }
 }

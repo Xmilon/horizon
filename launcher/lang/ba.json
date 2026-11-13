@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Тема",
+  "Motion": "Хәрәкәт",
+  "Reduced": "Кәметелгән",
+  "Full": "Тулы",
+  "Aa Text": "Aa Текст",
+  "Prepare & play": "Әҙерләп уйна",
+  "Name it, pick what it plays, then an icon.": "Исемен бир, нимә уйнаясағын һайла, шунан значок.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Бөтәһенә лә бушлай. Һәр теманың яҡты һәм ҡараңғы күренеше бар, ул аҫтында һайлаған акцент төҫөн иҫтә тота.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Кәметелгән күкте, күсереүҙәрҙе һәм шыуыуҙарҙы туҡтата; төймәләр шунда уҡ яуап бирә. Система компьютерығыҙҙың көйләүенә эйәрә.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Яҡты йәки ҡараңғы, тема, акцент төҫө, быяла, томанлау һәм Төп биттең төше Horizon нисек ебәрһә, шулай була.",
+  "The launcher's look is back to how Horizon ships": "Лаунчерҙың тышҡы ҡиәфәте Horizon нисек ебәрһә, шулай булып ҡалды",
+  "The launcher's look is reset for now, but it could not be saved": "Лаунчерҙың тышҡы ҡиәфәте әлегә кире ҡайтарылды, ләкин һаҡланманы",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Быяла һәм Томанлау ҡараңғы күренештең мат панелдәрен формалаштыра; яҡтыһы ҡаты аҡ панелдәр һүрәтләй.",
+  "Performance mode draws solid panels, without glass or blur.": "Һөҙөмтәлелек режимы быялаһыҙ һәм томанлауһыҙ ҡаты панелдәр һүрәтләй.",
+  "This theme's night draws solid panels, without glass or blur.": "Ошо теманың төнө быялаһыҙ һәм томанлауһыҙ ҡаты панелдәр һүрәтләй."
 }

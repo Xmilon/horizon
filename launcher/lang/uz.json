@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Mavzu",
+  "Motion": "Harakat",
+  "Reduced": "Kamaytirilgan",
+  "Full": "To'liq",
+  "Aa Text": "Aa Matn",
+  "Prepare & play": "Tayyorlang va o'ynang",
+  "Name it, pick what it plays, then an icon.": "Nom bering, nimani o'ynatishini tanlang, keyin belgicha.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Hamma uchun bepul. Har bir mavzuning yorug' va qorong'i ko'rinishi bor va u ostida tanlagan urg'u rangini eslab qoladi.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Kamaytirilgan osmonni, so'nishlarni va sirg'alishlarni to'xtatadi; tugmalar baribir zudlik bilan javob beradi. Tizim kompyuteringiz sozlamasiga amal qiladi.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Yorug' yoki qorong'i, mavzu, urg'u rangi, shisha, xiralash va Bosh sahifa fon Horizon'ning asl holatiga qaytadi.",
+  "The launcher's look is back to how Horizon ships": "Launcher ko'rinishi Horizon'ning asl holatiga qaytdi",
+  "The launcher's look is reset for now, but it could not be saved": "Launcher ko'rinishi hozircha tiklandi, lekin saqlanmadi",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Shisha va Xiralash qorong'i ko'rinishning xira panellarini shakllantiradi; yorug'i qattiq oq panellar chizadi.",
+  "Performance mode draws solid panels, without glass or blur.": "Unumdorlik rejimi shisha va xiralashsiz qattiq panellar chizadi.",
+  "This theme's night draws solid panels, without glass or blur.": "Bu mavzuning tuni shisha va xiralashsiz qattiq panellar chizadi."
 }

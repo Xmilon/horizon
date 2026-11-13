@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "主题",
+  "Motion": "动效",
+  "Reduced": "减少",
+  "Full": "完整",
+  "Aa Text": "Aa 文本",
+  "Prepare & play": "准备并开始游戏",
+  "Name it, pick what it plays, then an icon.": "起个名字，选择它运行什么，再选一个图标。",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "对所有人免费。每个主题都有浅色和深色外观，并记住你在其中选择的强调色。",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "减少会停用天空、淡入淡出和滑动动画；按钮仍会立即响应。跟随系统会随电脑的设置切换。",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "浅色或深色、主题、强调色、玻璃、模糊和主页背景恢复为 Horizon 的默认设置。",
+  "The launcher's look is back to how Horizon ships": "启动器外观已恢复为 Horizon 的默认设置",
+  "The launcher's look is reset for now, but it could not be saved": "启动器外观已暂时重置，但未能保存",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "玻璃和模糊塑造深色外观的磨砂面板；浅色外观绘制纯白面板。",
+  "Performance mode draws solid panels, without glass or blur.": "性能模式绘制纯色面板，不带玻璃或模糊效果。",
+  "This theme's night draws solid panels, without glass or blur.": "此主题的夜间模式绘制纯色面板，不带玻璃或模糊效果。"
 }

@@ -37,10 +37,23 @@ impl ThemeAccent {
     }
 }
 
+/// How a theme with its own palette draws the launcher.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Look {
+    /// The same glass pages as Horizon's own, over the theme's skies: the dark one is the pixel
+    /// sunset in the accent's hue, the light one the theme's light sky.
+    Glass,
+    /// The glass pages with solid plates and a thin edge over the theme's own dark sky (true black
+    /// for OLED screens) instead of the sunset; the light appearance as [`Look::Glass`].
+    Oled,
+    /// The square, solid Blocks look (Nord, kept as it was).
+    Solid,
+}
+
 /// A launcher theme: free for everyone in Settings › Appearance, never sold or claimed. Each
 /// has a sky (six stops, top to bottom, behind the light appearance) and the accent it brings.
-/// A theme that brings a whole palette carries its dark and light [`Night`] and paints every
-/// surface with it; the other themes only change the sky.
+/// A theme that brings a whole palette carries its dark and light [`Night`] and paints with it
+/// as its [`Look`] says; the other themes only change the sky.
 pub struct Theme {
     /// Its name in `Settings::theme`.
     pub id: &'static str,
@@ -50,6 +63,8 @@ pub struct Theme {
     pub accent: ThemeAccent,
     /// The theme's own palette (dark, light), for a theme that is more than a sky.
     pub palette: Option<(&'static Night, &'static Night)>,
+    /// How the palette is drawn; unused without one.
+    pub look: Look,
 }
 
 /// Nord's polar night and snow storm, with the frost accent.
@@ -124,6 +139,7 @@ pub const FIRST_LIGHT: Theme = Theme {
     sky: [0x0b1030, 0x1d2a63, 0x3d4c94, 0x7f78c0, 0xe2a0b0, 0xffd6a0],
     accent: ThemeAccent::Hue(246.),
     palette: None,
+    look: Look::Glass,
 };
 
 /// Nord: the Nord palette's polar night, snow storm and frost.
@@ -133,10 +149,183 @@ pub const NORD: Theme = Theme {
     sky: NORD_DARK.sky,
     accent: ThemeAccent::Colour(0x88c0d0),
     palette: Some((&NORD_DARK, &NORD_LIGHT)),
+    look: Look::Solid,
 };
 
-/// The launcher themes past Horizon's own sky.
-pub const THEMES: [Theme; 2] = [FIRST_LIGHT, NORD];
+/// Sunrise's night: the website's Dawn palette (plum canvas, rose and peach, warm white text).
+pub const SUNRISE_DARK: Night = Night {
+    sky: [0x170c19, 0x1f0f20, 0x2c1229, 0x5a1d3a, 0x9c3a5a, 0xf08a6a],
+    page: 0x170c19,
+    side: 0x130a15,
+    card: 0x2a1428,
+    card_alpha: 0.88,
+    card_hi: 0x3a1c36,
+    card_hi_alpha: 0.92,
+    stroke: 0xffb3cf,
+    stroke_alpha: 0.12,
+    rule_alpha: 0.10,
+    ink: 0xfff1f6,
+    ink_soft: 0xf1d3df,
+    muted: 0xcfa9bb,
+    accent: 0xc2366f,
+    accent_hi: 0xff9ec0,
+    on_accent: 0xffffff,
+    success: 0x6fdba0,
+    warn: 0xffc48f,
+    danger: 0xff9a9a,
+    dark: true,
+    art: SkyArt {
+        sun: [0xffe0a8, 0xffc48f, 0xff9a6e],
+        far: 0x3d1a3a,
+        near: 0x1a0c1a,
+        cloud: [0x4a1e44, 0x8a3460, 0xd96a86],
+        lit: [0x6a2c5a, 0xb4507a, 0xffb08f],
+        shade: 0x2a1228,
+        star: 0xfff1f6,
+    },
+};
+
+/// Sunrise's day: warm off-white and blush, dark plum text, a deeper rose.
+pub const SUNRISE_LIGHT: Night = Night {
+    sky: [0xf6e9f2, 0xfbe7ec, 0xffe6e2, 0xffe2d6, 0xffdcc6, 0xffe9d2],
+    page: 0xfff7f5,
+    side: 0xfbeff0,
+    card: 0xffffff,
+    card_alpha: 0.88,
+    card_hi: 0xffffff,
+    card_hi_alpha: 0.95,
+    stroke: 0x5a2348,
+    stroke_alpha: 0.14,
+    rule_alpha: 0.10,
+    ink: 0x32182e,
+    ink_soft: 0x4f2a48,
+    muted: 0x6e4a66,
+    accent: 0x9d285b,
+    accent_hi: 0x8f2252,
+    on_accent: 0xffffff,
+    success: 0x1f6a3a,
+    warn: 0x7a4a00,
+    danger: 0xa3262c,
+    dark: false,
+    art: SkyArt {
+        sun: [0xfffaf0, 0xffeacc, 0xffd2b0],
+        far: 0xf0d6e2,
+        near: 0xdcb8cc,
+        cloud: [0xfdf0f4, 0xffeef0, 0xfff3e6],
+        lit: [0xffffff; 3],
+        shade: 0xecd3df,
+        star: 0xffffff,
+    },
+};
+
+/// Hypr Neon's night: true black, lavender, blue and pink, thin visible edges (after the
+/// player's Hypr OLED NEON Discord theme; its colours only, nothing of its CSS).
+pub const HYPR_DARK: Night = Night {
+    sky: [0x000000, 0x000000, 0x020205, 0x05050c, 0x0a0a16, 0x120f22],
+    page: 0x000000,
+    side: 0x000000,
+    card: 0x09090e,
+    card_alpha: 0.96,
+    card_hi: 0x12121b,
+    card_hi_alpha: 0.97,
+    stroke: 0xcba6f7,
+    stroke_alpha: 0.22,
+    rule_alpha: 0.12,
+    ink: 0xe6e9f8,
+    ink_soft: 0xc8cce0,
+    muted: 0x9aa0bd,
+    accent: 0xcba6f7,
+    accent_hi: 0xcba6f7,
+    on_accent: 0x100a1f,
+    success: 0xa6e3a1,
+    warn: 0xf9e2af,
+    danger: 0xf38ba8,
+    dark: true,
+    art: SkyArt {
+        sun: [0xf5c2e7, 0xcba6f7, 0x89b4fa],
+        far: 0x0d0d18,
+        near: 0x050508,
+        cloud: [0x0b0b14, 0x10101c, 0x161626],
+        lit: [0x1a1a2e, 0x22223a, 0x2c2c4a],
+        shade: 0x08080f,
+        star: 0xcdd6f4,
+    },
+};
+
+/// Hypr Neon's day ("paper"): pale lavender-white, dark ink, deeper lavender. Not OLED.
+pub const HYPR_LIGHT: Night = Night {
+    sky: [0xf6f3fb, 0xf3effa, 0xefeaf8, 0xebe5f6, 0xe6e0f4, 0xe2dcf2],
+    page: 0xf6f3fb,
+    side: 0xefeaf8,
+    card: 0xffffff,
+    card_alpha: 0.94,
+    card_hi: 0xffffff,
+    card_hi_alpha: 0.97,
+    stroke: 0x6940a5,
+    stroke_alpha: 0.22,
+    rule_alpha: 0.12,
+    ink: 0x211b2e,
+    ink_soft: 0x3a3150,
+    muted: 0x5a5170,
+    accent: 0x6940a5,
+    accent_hi: 0x5e3896,
+    on_accent: 0xffffff,
+    success: 0x2c6e2a,
+    warn: 0x7a5200,
+    danger: 0xb0244a,
+    dark: false,
+    art: SkyArt {
+        sun: [0xffffff, 0xf5ecff, 0xe6d8fb],
+        far: 0xe2d8f2,
+        near: 0xcfc2e8,
+        cloud: [0xfbf9ff, 0xf6f1ff, 0xf1eaff],
+        lit: [0xffffff; 3],
+        shade: 0xe0d6f0,
+        star: 0xffffff,
+    },
+};
+
+/// Sunrise: the Sunrise website's warm dawn, on Horizon's glass pages.
+pub const SUNRISE: Theme = Theme {
+    id: "sunrise",
+    name: "Sunrise",
+    sky: SUNRISE_DARK.sky,
+    accent: ThemeAccent::Colour(0xc2366f),
+    palette: Some((&SUNRISE_DARK, &SUNRISE_LIGHT)),
+    look: Look::Glass,
+};
+
+/// Hypr Neon: OLED black with neon lavender, on Horizon's pages with solid plates.
+pub const HYPR_NEON: Theme = Theme {
+    id: "hypr_neon",
+    name: "Hypr Neon",
+    sky: HYPR_DARK.sky,
+    accent: ThemeAccent::Colour(0xcba6f7),
+    palette: Some((&HYPR_DARK, &HYPR_LIGHT)),
+    look: Look::Oled,
+};
+
+/// The launcher themes past Horizon's own sky: the featured families first, then the older ones.
+pub const THEMES: [Theme; 4] = [SUNRISE, HYPR_NEON, FIRST_LIGHT, NORD];
+
+/// Horizon's own theme's key in `Settings::theme_accents`.
+pub const HORIZON: &str = "horizon";
+
+/// A theme's key in `Settings::theme_accents`: its id, or [`HORIZON`].
+pub fn accent_key(id: Option<&str>) -> &str {
+    theme(id).map_or(HORIZON, |t| t.id)
+}
+
+/// The accent a theme starts with: the one last picked under it, else its own (violet for
+/// Horizon's).
+pub fn starting_accent(
+    id: Option<&str>,
+    kept: &std::collections::BTreeMap<String, Accent>,
+) -> Accent {
+    kept.get(accent_key(id))
+        .copied()
+        .unwrap_or_else(|| theme(id).map_or(Accent::VIOLET, |t| t.accent.accent()))
+}
 
 /// The theme named `id` (`Settings::theme`); None for Horizon's own sky or a name this launcher
 /// doesn't know.

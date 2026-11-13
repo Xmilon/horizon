@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Bevegelse",
+  "Reduced": "Redusert",
+  "Full": "Full",
+  "Aa Text": "Aa Tekst",
+  "Prepare & play": "Forbered og spill",
+  "Name it, pick what it plays, then an icon.": "Gi den et navn, velg hva den spiller, og så et ikon.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Gratis for alle. Hvert tema har et lyst og et mørkt utseende og husker aksentfargen du velger under det.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Redusert stopper himmelen, toningen og glidningene; knapper svarer fortsatt med en gang. Systemet følger innstillingen på datamaskinen din.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Lys eller mørk, tema, aksentfarge, glass, uskarphet og bakgrunnen til Hjem går tilbake til slik Horizon leveres.",
+  "The launcher's look is back to how Horizon ships": "Utseendet til launcheren er tilbake til slik Horizon leveres",
+  "The launcher's look is reset for now, but it could not be saved": "Utseendet til launcheren er tilbakestilt foreløpig, men kunne ikke lagres",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glass og Uskarphet former de matte panelene i det mørke utseendet; det lyse tegner ensfargede hvite paneler.",
+  "Performance mode draws solid panels, without glass or blur.": "Ytelsesmodus tegner ensfargede paneler, uten glass eller uskarphet.",
+  "This theme's night draws solid panels, without glass or blur.": "Natten til dette temaet tegner ensfargede paneler, uten glass eller uskarphet."
 }

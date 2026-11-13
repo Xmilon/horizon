@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tèma",
+  "Motion": "Moviment",
+  "Reduced": "Redusit",
+  "Full": "Complèt",
+  "Aa Text": "Aa Tèxt",
+  "Prepare & play": "Preparar e jogar",
+  "Name it, pick what it plays, then an icon.": "Balia un nom, causís çò que lança, puèi una icòna.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Gratuit per totes. Cada tèma a un aspècte clar e un escur, e se remembra de la color d'accent que causissís dedins.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Redusit arresta lo cèl, los fonduts e los lisatges; los botons respondon totjorn sul còp. Sistèma seguís lo paramètre de vòstre ordenador.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Clar o escur, lo tèma, la color d'accent, lo veire, lo flou e el fondal de l'Acuèlh tornan a cossí Horizon s'expedís.",
+  "The launcher's look is back to how Horizon ships": "L'aspècte del lançaire es tornat a cossí Horizon s'expedís",
+  "The launcher's look is reset for now, but it could not be saved": "L'aspècte del lançaire es reïnicializat pel moment, mas a pas pogut èsser enregistrat",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Veire e Flou fòrman los panèls givrats de l'aspècte escur; lo clar dessenha de panèls blancs solids.",
+  "Performance mode draws solid panels, without glass or blur.": "Mòde performància dessenha de panèls solids, sens veire nimai flou.",
+  "This theme's night draws solid panels, without glass or blur.": "La nuèch d'aqueste tèma dessenha de panèls solids, sens veire nimai flou."
 }

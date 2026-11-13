@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Movimento",
+  "Reduced": "Ridoto",
+  "Full": "Complète",
+  "Aa Text": "Aa Testo",
+  "Prepare & play": "Prepara e zuga",
+  "Name it, pick what it plays, then an icon.": "Seghe un nome, sieli cosa che'l fa xirare, po' n'icona.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Gratis par tuti. Ogni tema el gà un aspèto ciaro e un scuro e se recorda el cołor de asento che ti sièli drento de łù.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Ridoto el ferma el çiel, i sfumaduri e i corimenti; i botoni i respondi subito. El sistema el va drio a ła inpostasion del to computer.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Ciaro o scuro, tema, cołor de asento, véro, sfocatura e 'l fondo de ła Caxa i va indrìo a come Horizon el vien spedìo.",
+  "The launcher's look is back to how Horizon ships": "L'aspèto del lansador el xe tornà a come Horizon el vien spedìo",
+  "The launcher's look is reset for now, but it could not be saved": "L'aspèto del lansador el xe stà reseta par deso, ma no'l xe stà salvà",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Véro e Sfocatura i forma i paneti opachi de l'aspèto scuro; quel ciaro el disegna paneti bianchi sołidi.",
+  "Performance mode draws solid panels, without glass or blur.": "Modałità prestasion ła disegna paneti sołidi, sensa véro né sfocatura.",
+  "This theme's night draws solid panels, without glass or blur.": "La note de sto tema ła disegna paneti sołidi, sensa véro né sfocatura."
 }

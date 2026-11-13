@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "ಥೀಮ್",
+  "Motion": "ಚಲನೆ",
+  "Reduced": "ಕಡಿಮೆ",
+  "Full": "ಪೂರ್ಣ",
+  "Aa Text": "Aa ಪಠ್ಯ",
+  "Prepare & play": "ಸಿದ್ಧಗೊಳಿಸಿ ಮತ್ತು ಆಡಿ",
+  "Name it, pick what it plays, then an icon.": "ಇದಕ್ಕೆ ಹೆಸರಿಡಿ, ಇದು ಏನು ಆಡುತ್ತದೆ ಎಂದು ಆಯ್ಕೆಮಾಡಿ, ನಂತರ ಐಕಾನ್.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "ಎಲ್ಲರಿಗೂ ಉಚಿತ. ಪ್ರತಿ ಥೀಮ್‌ಗೆ ಬೆಳಕಿನ ಮತ್ತು ಕತ್ತಲೆಯ ನೋಟ ಇದೆ, ಅದು ಅದರ ಅಡಿಯಲ್ಲಿ ನೀವು ಆಯ್ಕೆಮಾಡಿದ ಒತ್ತು ಬಣ್ಣವನ್ನು ನೆನಪಿಟ್ಟುಕೊಳ್ಳುತ್ತದೆ.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "ಕಡಿಮೆ ಆಕಾಶ, ಮಸುಕುಗೊಳಿಸುವಿಕೆ ಮತ್ತು ಜಾರುವಿಕೆಗಳನ್ನು ನಿಲ್ಲಿಸುತ್ತದೆ; ಗುಂಡಿಗಳು ಇನ್ನೂ ತಕ್ಷಣ ಪ್ರತಿಕ್ರಿಯಿಸುತ್ತವೆ. ಸಿಸ್ಟಮ್ ನಿಮ್ಮ ಕಂಪ್ಯೂಟರ್‌ನ ಸೆಟ್ಟಿಂಗ್ ಅನ್ನು ಅನುಸರಿಸುತ್ತದೆ.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "ಬೆಳಕು ಅಥವಾ ಕತ್ತಲೆ, ಥೀಮ್, ಒತ್ತು ಬಣ್ಣ, ಗಾಜು, ಮಸುಕು ಮತ್ತು ಮುಖಪುಟದ ಹಿನ್ನೆಲೆ Horizon ಹೇಗೆ ಬರುತ್ತದೆಯೋ ಹಾಗೆ ಹಿಂದಿರುಗುತ್ತವೆ.",
+  "The launcher's look is back to how Horizon ships": "ಲಾಂಚರ್‌ನ ನೋಟ Horizon ಹೇಗೆ ಬರುತ್ತದೆಯೋ ಹಾಗೆ ಹಿಂದಿರುಗಿದೆ",
+  "The launcher's look is reset for now, but it could not be saved": "ಲಾಂಚರ್‌ನ ನೋಟ ಸದ್ಯಕ್ಕೆ ಮರುಹೊಂದಿಸಲಾಗಿದೆ, ಆದರೆ ಉಳಿಸಲಾಗಲಿಲ್ಲ",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ಗಾಜು ಮತ್ತು ಮಸುಕು ಕತ್ತಲೆ ನೋಟದ ಹಿಮಗಟ್ಟಿದ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ರೂಪಿಸುತ್ತದೆ; ಬೆಳಕಿನ ನೋಟ ಘನ ಬಿಳಿ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ಚಿತ್ರಿಸುತ್ತದೆ.",
+  "Performance mode draws solid panels, without glass or blur.": "ಕಾರ್ಯಕ್ಷಮತೆ ಮೋಡ್ ಗಾಜು ಅಥವಾ ಮಸುಕಿಲ್ಲದೆ ಘನ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ಚಿತ್ರಿಸುತ್ತದೆ.",
+  "This theme's night draws solid panels, without glass or blur.": "ಈ ಥೀಮ್‌ನ ರಾತ್ರಿ ಗಾಜು ಅಥವಾ ಮಸುಕಿಲ್ಲದೆ ಘನ ಪ್ಯಾನೆಲ್‌ಗಳನ್ನು ಚಿತ್ರಿಸುತ್ತದೆ."
 }

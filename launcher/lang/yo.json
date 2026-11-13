@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Àkórí",
+  "Motion": "Ìrìn",
+  "Reduced": "Dínkù",
+  "Full": "Kíkún",
+  "Aa Text": "Aa Ọrọ̀",
+  "Prepare & play": "Ṣetán ki o si ṣeré",
+  "Name it, pick what it plays, then an icon.": "Fún lorúkọ, yan ohun tí ó ń ṣeré, lẹ́yìn náà àwọ̀n ìránilọ́wọ́.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Ọ̀fẹ́ fún gbogbo ènìyàn. Àkórí kọ̀ọ̀kan ní ìrísí ìmọ́lẹ̀ àti ìrísí dudu, ó sì ń rántí àwọ̀ afihan tí o yan abẹ́ rẹ̀.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Dínkù dá ìwọ̀ oòrùn, ìparun àti ìgbe lọ dúró; bátànì náà ń dáhùn lẹsẹkẹsẹ. Eto tẹle ètò kọmputa rẹ.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Ìmọ́lẹ̀ tabi dudu, àkórí, àwọ̀ afihan, gíláàsì, ìdàrú àti èyí tí ó wà ní ẹ̀yìn Ilé padà bí Horizon ti wá.",
+  "The launcher's look is back to how Horizon ships": "Irísi ifilọlẹ ti padà bí Horizon ti wá",
+  "The launcher's look is reset for now, but it could not be saved": "Irísi ifilọlẹ ti tunto fún àsìkò yìí, ṣùgbọ́n kò lè fi pamọ́",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Gíláàsì àti Ìdàrú ń ṣe àwọn pánẹ́lì tí ó farapamọ́ tí ìrísí dudu; ìmọ́lẹ̀ ń fa pánẹ́lì funfun lile.",
+  "Performance mode draws solid panels, without glass or blur.": "Ipò iṣẹ́ ṣíṣe ń fa pánẹ́lì lile, láìsí gíláàsì tàbí ìdàrú.",
+  "This theme's night draws solid panels, without glass or blur.": "Òru àkórí yìí ń fa pánẹ́lì lile, láìsí gíláàsì tàbí ìdàrú."
 }

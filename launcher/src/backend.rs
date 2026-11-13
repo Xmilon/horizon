@@ -4300,6 +4300,15 @@ pub struct Settings {
     /// Managed cache limit in GiB (unset: 25; zero: no automatic cleanup). Player data isn't cache.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit_gib: Option<u64>,
+    /// The accent picked under each launcher theme, by its id (`themes::HORIZON` for Horizon's
+    /// own), so going back to a theme brings back its colour. A launcher older than this map
+    /// drops it when it saves: the themes then only start from their own accents again.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub theme_accents: std::collections::BTreeMap<String, crate::themes::Accent>,
+    /// Reduced motion: unset follows the system's, true keeps the launcher still, false lets it
+    /// move even when the system asks for less.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reduce_motion: Option<bool>,
 }
 
 impl Settings {
@@ -4351,6 +4360,22 @@ impl Settings {
                 if fields.get(key).is_some_and(|v| !v.is_number()) {
                     fields.remove(key);
                 }
+            }
+            // An accent per theme that isn't one is dropped alone; a map that isn't one, whole.
+            match fields.get_mut("theme_accents") {
+                Some(serde_json::Value::Object(accents)) => accents.retain(|_, a| {
+                    serde_json::from_value::<crate::themes::Accent>(a.clone()).is_ok()
+                }),
+                Some(_) => {
+                    fields.remove("theme_accents");
+                }
+                None => {}
+            }
+            if fields
+                .get("reduce_motion")
+                .is_some_and(|v| !v.is_boolean() && !v.is_null())
+            {
+                fields.remove("reduce_motion");
             }
             // A language this launcher doesn't have yet follows the system's.
             if fields.get("language").is_some_and(|l| {
@@ -5417,6 +5442,24 @@ pub fn {f}("
         assert_eq!(offered(before, &["v0.2.0"]), None);
         assert_eq!(offered(before, &["v0.2.12", "v0.2.0"]), None);
         assert_eq!(CHECK_EVERY.as_secs(), 30 * 60);
+    }
+
+    /// A wrong accent under one theme, or a motion choice that isn't one, loses only itself.
+    #[test]
+    fn theme_accents_and_motion_survive_bad_entries() {
+        let s = Settings::parse(
+            r##"{"theme_accents": {"sunrise": "#c2366f", "nord": 12, "horizon": "teal"},
+                "reduce_motion": "yes", "game_args": "--x"}"##,
+        );
+        assert_eq!(s.game_args, "--x");
+        assert_eq!(s.reduce_motion, None);
+        assert_eq!(s.theme_accents.len(), 2);
+        assert_eq!(s.theme_accents["horizon"], crate::themes::Accent::TEAL);
+        let s = Settings::parse(r#"{"theme_accents": [1], "reduce_motion": true}"#);
+        assert!(s.theme_accents.is_empty());
+        assert_eq!(s.reduce_motion, Some(true));
+        let saved = serde_json::to_string(&Settings::default()).unwrap();
+        assert!(!saved.contains("theme_accents") && !saved.contains("reduce_motion"));
     }
 
     #[test]

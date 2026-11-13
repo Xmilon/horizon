@@ -162,31 +162,115 @@ const STAR_LEVELS: [f32; 4] = [0.95, 0.6, 0.3, 0.6];
 /// different layers share frames: two a second at most.
 const STAR_PERIODS: [f32; 4] = [4., 6., 8., 10.];
 
-/// How the sky moves: not at all under the system's reduced motion (macOS) or with
+/// How the sky moves: not at all under reduced motion (the player's choice in Settings, else the
+/// system's: Windows' "Show animations", macOS's "Reduce motion") or with
 /// `HORIZON_LAUNCHER_MOTION=off`; while the window is in front (and 10 s after); or always, with
 /// `HORIZON_LAUNCHER_MOTION=always`, for recordings.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) enum Motion {
     Still,
     InFront,
     Always,
 }
 
+/// The player's choice (`Settings::reduce_motion`): 0 follows the system, 1 still, 2 moves.
+static PREFERENCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Takes the player's choice: `None` follows the system, `Some(true)` holds everything still.
+pub(crate) fn set_preference(reduce: Option<bool>) {
+    let v = match reduce {
+        None => 0,
+        Some(true) => 1,
+        Some(false) => 2,
+    };
+    PREFERENCE.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
 pub(crate) fn motion() -> Motion {
-    static MOTION: LazyLock<Motion> = LazyLock::new(|| {
-        match std::env::var("HORIZON_LAUNCHER_MOTION").as_deref() {
-            Ok("off" | "reduced") => return Motion::Still,
-            Ok("always") => return Motion::Always,
-            Ok("full") => return Motion::InFront,
-            _ => {}
-        }
-        #[cfg(target_os = "macos")]
-        if objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion() {
-            return Motion::Still;
-        }
+    static FORCED: LazyLock<Option<Motion>> =
+        LazyLock::new(
+            || match std::env::var("HORIZON_LAUNCHER_MOTION").as_deref() {
+                Ok("off" | "reduced") => Some(Motion::Still),
+                Ok("always") => Some(Motion::Always),
+                Ok("full") => Some(Motion::InFront),
+                _ => None,
+            },
+        );
+    if let Some(forced) = *FORCED {
+        return forced;
+    }
+    let still = match PREFERENCE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => true,
+        2 => false,
+        _ => system_reduces_motion(),
+    };
+    if still {
+        Motion::Still
+    } else {
         Motion::InFront
-    });
-    *MOTION
+    }
+}
+
+/// The system's reduced motion, asked again at most every 2 s, so turning it on or off applies
+/// without restarting the launcher.
+fn system_reduces_motion() -> bool {
+    static ASKED: std::sync::Mutex<Option<(Instant, bool)>> = std::sync::Mutex::new(None);
+    let mut asked = ASKED.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    match *asked {
+        Some((at, reduce)) if now.duration_since(at) < Duration::from_secs(2) => reduce,
+        _ => {
+            let reduce = ask_system();
+            *asked = Some((now, reduce));
+            reduce
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn ask_system() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETCLIENTAREAANIMATION,
+    };
+    let mut animate: i32 = 1;
+    // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL through the pointer it is given.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            (&mut animate as *mut i32).cast(),
+            0,
+        )
+    };
+    ok != 0 && animate == 0
+}
+
+#[cfg(target_os = "macos")]
+fn ask_system() -> bool {
+    objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion()
+}
+
+/// GNOME's "Animations" switch (`org.gnome.desktop.interface enable-animations`), read by
+/// `gsettings` on a worker thread: the answer lands for the next ask, and a desktop without the
+/// key or the tool answers "moves".
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn ask_system() -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static REDUCE: AtomicBool = AtomicBool::new(false);
+    static ASKING: AtomicBool = AtomicBool::new(false);
+    if !ASKING.swap(true, Ordering::AcqRel) {
+        std::thread::spawn(|| {
+            let off = std::process::Command::new("gsettings")
+                .args(["get", "org.gnome.desktop.interface", "enable-animations"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "false");
+            REDUCE.store(off, Ordering::Relaxed);
+            ASKING.store(false, Ordering::Release);
+        });
+    }
+    REDUCE.load(Ordering::Relaxed)
 }
 
 /// The animation's own time: it runs only while the sky moves, so a window that comes back

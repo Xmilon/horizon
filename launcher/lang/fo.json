@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Rørsla",
+  "Reduced": "Minkað",
+  "Full": "Full",
+  "Aa Text": "Aa Tekstur",
+  "Prepare & play": "Ger klár og spæl",
+  "Name it, pick what it plays, then an icon.": "Gev tínavn, vel hvat tað spælir, og so eyðkunn.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Ókeypis til øll. Hvert tema hevur eina ljósa og eina myrka útsjónd og minnir til aksentlitin, tú velur undir tí.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Minkað stðsar himmalin, fyrifarnar og skriðingar; knøttir svara beint. Skipanin fylgir stillingini á telduni tíni.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Ljóst ella myrkt, tema, aksentlitur, glas, sløring og bakgrundin á Heimanum fara aftur til, hvussu Horizon skipar.",
+  "The launcher's look is back to how Horizon ships": "Útsjóndin á sjósetaranum er aftur til, hvussu Horizon skipar",
+  "The launcher's look is reset for now, but it could not be saved": "Útsjóndin á sjósetaranum er nullstillað í løtuni, men hon kundi ikki goymast",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Glas og Sløring forða teir frostuðu panelini í myrku útsjóndini; tær ljósu teikna reinføst hvít panel.",
+  "Performance mode draws solid panels, without glass or blur.": "Avrikshátturin tekna reinføst panel, uttan glas ella sløring.",
+  "This theme's night draws solid panels, without glass or blur.": "Náttin í hesum tema tekna reinføst panel, uttan glas ella sløring."
 }

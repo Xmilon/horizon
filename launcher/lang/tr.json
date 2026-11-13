@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Hareket",
+  "Reduced": "Azaltılmış",
+  "Full": "Tam",
+  "Aa Text": "Aa Metin",
+  "Prepare & play": "Hazırla ve oyna",
+  "Name it, pick what it plays, then an icon.": "Bir ad ver, ne oynattığını seç, sonra bir simge.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Herkese ücretsiz. Her temanın açık ve koyu bir görünümü vardır ve altında seçtiğin vurgu rengini hatırlar.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Azaltılmış gökyüzünü, geçişleri ve kaydırmaları durdurur; düğmeler yine de anında yanıt verir. Sistem, bilgisayarınızın ayarını izler.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Açık ya da koyu, tema, vurgu rengi, cam, bulanıklık ve Ana Sayfa arka planı Horizon'un varsayılanlarına döner.",
+  "The launcher's look is back to how Horizon ships": "Başlatıcının görünümü Horizon'un varsayılanlarına döndü",
+  "The launcher's look is reset for now, but it could not be saved": "Başlatıcının görünümü şimdilik sıfırlandı, ancak kaydedilemedi",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Cam ve Bulanıklık, koyu görünümün buzlu panellerini şekillendirir; açık görünüm düz beyaz paneller çizer.",
+  "Performance mode draws solid panels, without glass or blur.": "Performans modu cam veya bulanıklık olmadan düz paneller çizer.",
+  "This theme's night draws solid panels, without glass or blur.": "Bu temanın gecesi cam veya bulanıklık olmadan düz paneller çizer."
 }

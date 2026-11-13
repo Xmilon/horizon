@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Тема",
+  "Motion": "Рух",
+  "Reduced": "Зменшений",
+  "Full": "Повний",
+  "Aa Text": "Aa Текст",
+  "Prepare & play": "Підготувати і грати",
+  "Name it, pick what it plays, then an icon.": "Дайте назву, оберіть, що вона запускає, потім значок.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Безкоштовно для всіх. Кожна тема має світлий і темний вигляд і запам'ятовує колір акценту, який ви обрали в ній.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Зменшений зупиняє небо, згасання і зсуви; кнопки реагують одразу. «Як у системі» повторює налаштування вашого комп'ютера.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Світла чи темна, тема, колір акценту, скло, розмиття і фон Головної повертаються до початкових у Horizon.",
+  "The launcher's look is back to how Horizon ships": "Вигляд лаунчера знову як початковий у Horizon",
+  "The launcher's look is reset for now, but it could not be saved": "Вигляд лаунчера поки скинуто, але не вдалося зберегти",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Скло і Розмиття формують матові панелі темного вигляду; світлий малює суцільні білі панелі.",
+  "Performance mode draws solid panels, without glass or blur.": "Режим продуктивності малює суцільні панелі, без скла і розмиття.",
+  "This theme's night draws solid panels, without glass or blur.": "Ніч цієї теми малює суцільні панелі, без скла і розмиття."
 }

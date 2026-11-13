@@ -48,6 +48,8 @@ struct Pieces {
     /// Performance mode: plates are a solid colour instead of glass over the scene, so nothing
     /// is blurred, tinted or sampled.
     plain: bool,
+    /// Solid plates' 1 px edge (an OLED theme's), opaque.
+    edge: Option<u32>,
     /// Full-window backdrop images baked once per window size/look/generation.
     full_glass: Option<Arc<RenderImage>>,
     full_float: Option<Arc<RenderImage>>,
@@ -69,6 +71,7 @@ thread_local! {
         retired: Vec::new(),
         light: false,
         plain: false,
+        edge: None,
         full_glass: None,
         full_float: None,
         full_size: (0., 0.),
@@ -76,14 +79,31 @@ thread_local! {
     });
 }
 
-/// Performance mode's plates: solid, with no glass behind them.
-pub fn set_plain(plain: bool) {
+/// Performance mode's plates, and an OLED theme's: solid, with no glass behind them, and the
+/// theme's edge around them if it has one.
+pub fn set_plain(plain: bool, edge: Option<u32>) {
     PIECES.with_borrow_mut(|p| {
-        if p.plain != plain {
+        if p.plain != plain || p.edge != edge {
             p.plain = plain;
+            p.edge = edge;
             p.generation += 1;
         }
     });
+}
+
+/// A solid plate's fill: the look's plate in the dark, white at a light plate's opacity in the
+/// light (the dark plate under the light look's dark text did not read).
+fn solid_fill(p: &Pieces, kind: Kind) -> gpui::Hsla {
+    if p.light {
+        let a = if kind == Kind::Float {
+            LIGHT_FLOAT
+        } else {
+            LIGHT_GLASS
+        };
+        gpui::white().opacity(a)
+    } else {
+        rgb(p.look.plate).into()
+    }
 }
 
 /// The scene was built again (a new window size or tint), or the blur changed: plates take
@@ -171,15 +191,18 @@ pub fn begin_build(window: &mut Window) {
 /// A plate's backdrop with its corners: put it first inside a `relative` element, the content
 /// after it. In performance mode it is a solid colour: no backdrop, no glass.
 pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
-    let (plain, look) = PIECES.with_borrow(|p| (p.plain, p.look));
-    if plain {
+    let plain = PIECES.with_borrow(|p| p.plain.then(|| (solid_fill(p, kind), p.edge, p.light)));
+    if let Some((colour, edge, light)) = plain {
         return div()
             .absolute()
             .top_0()
             .left_0()
             .size_full()
             .rounded(px(radius))
-            .bg(rgb(look.plate))
+            .bg(colour)
+            .when_some(edge.filter(|_| !light), |d, edge| {
+                d.border_1().border_color(rgb(edge))
+            })
             .into_any_element();
     }
     canvas(
@@ -214,7 +237,8 @@ pub fn float(radius: f32) -> Div {
 fn image_at(bounds: Bounds<Pixels>, kind: Kind, fillet: f32) -> Option<Arc<RenderImage>> {
     PIECES.with_borrow_mut(|p| {
         let light = p.light;
-        if !light && p.backdrop.is_none() {
+        // Solid plates have square inner corners: no glass fillet beside them.
+        if p.plain || (!light && p.backdrop.is_none()) {
             return None;
         }
         let key = (
@@ -274,6 +298,16 @@ fn build_dark_full_image(
 }
 
 fn paint(bounds: Bounds<Pixels>, kind: Kind, corners: Corners<Pixels>, window: &mut Window) {
+    // Solid plates need no backdrop (an OLED theme draws none): a plain quad.
+    let plain = PIECES.with_borrow(|p| p.plain.then(|| (solid_fill(p, kind), p.edge, p.light)));
+    if let Some((colour, edge, light)) = plain {
+        let mut quad = gpui::fill(bounds, colour).corner_radii(corners);
+        if let Some(edge) = edge.filter(|_| !light) {
+            quad = quad.border_widths(px(1.)).border_color(rgb(edge));
+        }
+        window.paint_quad(quad);
+        return;
+    }
     let viewport = window.viewport_size();
     let (vw, vh) = (f32::from(viewport.width), f32::from(viewport.height));
     if vw <= 0. || vh <= 0. {

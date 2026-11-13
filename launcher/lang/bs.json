@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Kretanje",
+  "Reduced": "Smanjeno",
+  "Full": "Potpuno",
+  "Aa Text": "Aa Tekst",
+  "Prepare & play": "Pripremi i igraj",
+  "Name it, pick what it plays, then an icon.": "Imenuj ga, odaberi šta igra, pa ikonu.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Besplatno za sve. Svaka tema ima svijetli i tamni izgled i pamti boju akcenta koju odabereš u njoj.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Smanjeno zaustavlja nebo, blijeđenja i klizanja; dugmad odmah reaguje. Sistem prati postavku tvog računara.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Svijetlo ili tamno, tema, boja akcenta, staklo, zamućenje i pozadina početne stranice vraćaju se na ono s čim Horizon dolazi.",
+  "The launcher's look is back to how Horizon ships": "Izgled launchera je vraćen na ono s čim Horizon dolazi",
+  "The launcher's look is reset for now, but it could not be saved": "Izgled launchera je vraćen za sada, ali nije mogao biti sačuvan",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Staklo i Zamućenje oblikuju mat panele tamnog izgleda; svijetli crta puni bijele panele.",
+  "Performance mode draws solid panels, without glass or blur.": "Režim performansi crta pune panele, bez stakla i zamućenja.",
+  "This theme's night draws solid panels, without glass or blur.": "Noć ove teme crta pune panele, bez stakla i zamućenja."
 }

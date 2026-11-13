@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Тақырып",
+  "Motion": "Қозғалыс",
+  "Reduced": "Азайтылған",
+  "Full": "Толық",
+  "Aa Text": "Aa Мәтін",
+  "Prepare & play": "Дайындап ойнау",
+  "Name it, pick what it plays, then an icon.": "Атауын беріңіз, нені ойнататынын таңдаңыз, содан кейін белгіше.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Барлығына тегін. Әр тақырыптың жарық және қараңғы көрінісі бар, ол астында таңдаған екпін түсін есте сақтайды.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Азайтылған аспанды, біртіндеп өшулерді және сырғанақтарды тоқтатады; түймелер бірден жауап береді. Жүйе компьютеріңіздің параметрін қадағалайды.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Жарық немесе қараңғы, тақырып, екпін түсі, шыны, бұлыңғырлық және Үй бетінің фоны Horizon-ның бастапқы күйіне қайтады.",
+  "The launcher's look is back to how Horizon ships": "Іске қосу құралының көрінісі Horizon-ның бастапқы күйіне қайта орнады",
+  "The launcher's look is reset for now, but it could not be saved": "Іске қосу құралының көрінісі әзірге қалпына келтірілді, бірақ сақталмады",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Шыны мен Бұлыңғырлық қараңғы көріністің бұлыңғыр панельдерін қалыптастырады; жарық көрініс қатты ақ панельдер салады.",
+  "Performance mode draws solid panels, without glass or blur.": "Өнімділік режимі шынысыз және бұлыңғырлықсыз қатты панельдер салады.",
+  "This theme's night draws solid panels, without glass or blur.": "Осы тақырыптың түні шынысыз және бұлыңғырлықсыз қатты панельдер салады."
 }

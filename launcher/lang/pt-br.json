@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Movimento",
+  "Reduced": "Reduzido",
+  "Full": "Completo",
+  "Aa Text": "Aa Texto",
+  "Prepare & play": "Preparar e jogar",
+  "Name it, pick what it plays, then an icon.": "Dê um nome, escolha o que ele joga e depois um ícone.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Grátis para todo mundo. Cada tema tem uma aparência clara e uma escura, e lembra a cor de destaque que você escolhe nele.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Reduzido para o céu, os fades e os deslizamentos; os botões continuam respondendo na hora. Sistema acompanha a configuração do seu computador.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Claro ou escuro, tema, cor de destaque, vidro, desfoque e o fundo da Tela inicial voltam ao padrão do Horizon.",
+  "The launcher's look is back to how Horizon ships": "A aparência do launcher voltou ao padrão do Horizon",
+  "The launcher's look is reset for now, but it could not be saved": "A aparência do launcher foi redefinida por enquanto, mas não pôde ser salva",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Vidro e Desfoque moldam os painéis foscos da aparência escura; a clara desenha painéis brancos sólidos.",
+  "Performance mode draws solid panels, without glass or blur.": "Modo de desempenho desenha painéis sólidos, sem vidro nem desfoque.",
+  "This theme's night draws solid panels, without glass or blur.": "A noite deste tema desenha painéis sólidos, sem vidro nem desfoque."
 }

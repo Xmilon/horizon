@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Teema",
+  "Motion": "Liike",
+  "Reduced": "Vähennetty",
+  "Full": "Täysi",
+  "Aa Text": "Aa Teksti",
+  "Prepare & play": "Valmistele ja pelaa",
+  "Name it, pick what it plays, then an icon.": "Anna nimi, valitse mitä se pelaa ja sitten kuvake.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Ilmainen kaikille. Jokaisessa teemassa on vaalea ja tumma ulkoasu, ja se muistaa siinä valitsemasi korostusvärin.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Vähennetty pysäyttää taivaan, häivytykset ja liukumat; painikkeet vastaavat heti. Järjestelmä seuraa tietokoneesi asetusta.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Vaalea tai tumma, teema, korostusväri, lasi, sumennus ja Kodin tausta palaavat Horizonin oletuksiin.",
+  "The launcher's look is back to how Horizon ships": "Käynnistimen ulkoasu on palannut Horizonin oletuksiin",
+  "The launcher's look is reset for now, but it could not be saved": "Käynnistimen ulkoasu on alustettu toistaiseksi, mutta sitä ei voitu tallentaa",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Lasi ja Sumennus muovaavat tumman ulkoasun huurretuita paneeleja; vaalea piirtää yhtenäiset valkoiset paneelit.",
+  "Performance mode draws solid panels, without glass or blur.": "Suorituskykytila piirtää yhtenäiset paneelit ilman lasia ja sumennusta.",
+  "This theme's night draws solid panels, without glass or blur.": "Tämän teeman yö piirtää yhtenäiset paneelit ilman lasia ja sumennusta."
 }

@@ -80,13 +80,31 @@ pub struct Theme {
     /// Whether the pages draw the redesign's glass look: both appearances do (light with ink
     /// for white and light plates, `glass_ui::light`).
     pub glass: bool,
+    /// Whether the dark glass look draws the pixel sunset (`scene.rs`) behind its plates; an OLED
+    /// theme draws its own black sky instead, with solid plates.
+    pub scene: bool,
+    /// The solid plates' 1 px edge, when the theme draws one (Hypr Neon's night).
+    pub edge: Option<u32>,
 }
 
 /// The light appearance's look: the soft accent (links, ticks, the sliders) is the accent
-/// itself, which reads on white where the dark look's half-white mix would not.
-fn light_look(mut look: tokens::glass::Glass) -> tokens::glass::Glass {
+/// itself, which reads on white where the dark look's half-white mix would not. An accent too
+/// light for that (Hypr Neon's lavender, a pale typed colour) is darkened until it reads.
+fn light_look(look: tokens::glass::Glass) -> tokens::glass::Glass {
+    let mut look = tokens::glass::Glass::new(readable_on_white(look.accent), look.tint, look.blur);
     look.accent_soft = look.accent;
     look
+}
+
+/// `c`, darkened in small OKLab steps until it reads at 4.5:1 on white; unchanged if it does.
+fn readable_on_white(mut c: u32) -> u32 {
+    for _ in 0..60 {
+        if tokens::contrast(c, 0xffffff) >= 4.5 {
+            break;
+        }
+        c = tokens::glass::mix_oklab(c, 0x000000, 0.95);
+    }
+    c
 }
 
 fn c(hex: u32) -> Hsla {
@@ -130,6 +148,16 @@ impl Theme {
         };
         let night = if self.dark { *dark } else { *light };
         let accent = self.accent_choice;
+        if picked.look != themes::Look::Solid {
+            // The same glass pages as Horizon's own: only the skies, the plates and the accent
+            // change, so a theme never changes how a page is laid out or works.
+            let mut themed = Self::from(accent.apply(night.blocks()), night, accent).glass(accent);
+            if themed.dark && picked.look == themes::Look::Oled {
+                themed.scene = false;
+                themed.edge = Some(night::over(night.stroke, night.stroke_alpha, night.card));
+            }
+            return themed;
+        }
         // A theme with its own palette draws the square, solid Blocks look: no glass plates, no
         // rounded corners. The glass look's own colours stay the mockup's violet ones.
         let mut themed = Self::from(accent.apply(night.blocks()), night, accent);
@@ -146,6 +174,10 @@ impl Theme {
         self.look = tokens::glass::Glass::new(self.look.accent, tint, blur);
         if !self.dark {
             self.look = light_look(self.look);
+        } else if !self.scene {
+            // No sunset to frost: the plates are the theme's own solid card.
+            self.look.plate = self.night.card;
+            self.look.plate_alpha = 1.;
         }
         self
     }
@@ -242,6 +274,8 @@ impl Theme {
             accent_choice: accent,
             dark: p.dark,
             glass: false,
+            scene: true,
+            edge: None,
         }
     }
 }
@@ -272,6 +306,49 @@ mod tests {
         assert_eq!(theme.night.page, 0x2e3440);
         assert_eq!(theme.night.accent, 0x88c0d0);
         assert_eq!(theme.accent_choice.rgb(), 0x88c0d0);
+    }
+
+    /// Sunrise and Hypr Neon keep Horizon's glass pages in both appearances (so no page changes
+    /// how it works), with their own skies; Hypr's night is solid black plates with an edge.
+    #[test]
+    fn the_new_families_keep_the_glass_pages() {
+        for (id, oled) in [("sunrise", false), ("hypr_neon", true)] {
+            for (appearance, dark) in [(Appearance::Dark, true), (Appearance::Light, false)] {
+                let settings = Settings {
+                    appearance,
+                    accent: horizon_launcher::themes::starting_accent(
+                        Some(id),
+                        &Default::default(),
+                    ),
+                    theme: Some(id.into()),
+                    ..Settings::default()
+                };
+                let theme = from_settings(&settings, WindowAppearance::Dark);
+                assert!(theme.glass, "{id} {dark}: glass pages");
+                assert_eq!(theme.dark, dark);
+                assert_eq!(theme.scene, !(oled && dark), "{id} {dark}: scene");
+                assert_eq!(theme.edge.is_some(), oled && dark);
+                if oled && dark {
+                    assert_eq!(theme.look.plate, theme.night.card);
+                    assert_eq!(theme.night.page, 0x000000);
+                }
+                // Text on the main action, and the light look's accent on white.
+                let label = tokens::contrast(theme.look.on_accent, theme.look.accent);
+                assert!(label >= 4.5, "{id} {dark}: label {label:.2}");
+                if !dark {
+                    let soft = tokens::contrast(theme.look.accent_soft, 0xffffff);
+                    assert!(soft >= 4.5, "{id}: accent on white {soft:.2}");
+                }
+            }
+        }
+    }
+
+    /// The light look keeps Horizon's violet as it is and darkens only accents too pale for white.
+    #[test]
+    fn the_light_accent_reads_on_white() {
+        assert_eq!(super::readable_on_white(0x6b4bff), 0x6b4bff);
+        let pale = super::readable_on_white(0xcba6f7);
+        assert!(tokens::contrast(pale, 0xffffff) >= 4.5, "{pale:06x}");
     }
 
     /// `top` at `alpha` over `under`, as the GPU blends them.

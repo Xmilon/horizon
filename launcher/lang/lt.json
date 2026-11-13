@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Judesys",
+  "Reduced": "Sumažintas",
+  "Full": "Pilnas",
+  "Aa Text": "Aa Tekstas",
+  "Prepare & play": "Paruošti ir žaisti",
+  "Name it, pick what it plays, then an icon.": "Suteikite pavadinimą, pasirinkite, ką paleidžia, tada piktogramą.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Nemokama visiems. Kiekviena tema turi šviesią ir tamsią išvaizdą ir prisimena joje pasirinktą akcento spalvą.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Sumažintas stabdo dangų, blankimus ir slinkimus; mygtukai vis tiek reaguoja iškart. Sistema seka jūsų kompiuterio nustatymą.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Šviesu arba tamsu, tema, akcento spalva, stiklas, suliejimas ir Pradžios fonas grįžta į numatytąsias Horizon reikšmes.",
+  "The launcher's look is back to how Horizon ships": "Paleidyklės išvaizda grįžo į numatytąją Horizon išvaizdą",
+  "The launcher's look is reset for now, but it could not be saved": "Paleidyklės išvaizda kol kas atkurta, bet jos nepavyko išsaugoti",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Stiklas ir Suliejimas formuoja tamsios išvaizdos matinius skydus; šviesioji piešia vientisus baltus skydus.",
+  "Performance mode draws solid panels, without glass or blur.": "Našumo režimas piešia vientisus skydus, be stiklo ir suliejimo.",
+  "This theme's night draws solid panels, without glass or blur.": "Šios temos naktis piešia vientisus skydus, be stiklo ir suliejimo."
 }

@@ -13,9 +13,10 @@ use crate::glass_ui::{self as ui, white};
 use horizon_theme::glass::{fill, ink, radius};
 
 /// The list's entries: name and icon. The settings sections.
-const SECTIONS: [(&str, &str); 9] = [
+const SECTIONS: [(&str, &str); 10] = [
     ("Account", "user"),
     ("Updates", "refresh"),
+    ("Appearance", "color-picker"),
     ("Launcher", "computer"),
     ("Network", "globe-02"),
     ("Game", "game-controller-01"),
@@ -374,7 +375,7 @@ impl Launcher {
                 Some(b.prune.into_any_element()),
                 &t,
             ));
-        let launcher = card()
+        let appearance = card()
             .child(index_row(
                 0,
                 tr("Appearance"),
@@ -387,7 +388,10 @@ impl Launcher {
             .child(self.look_slider_row(themes_page::LookKnob::Glass, cx))
             .child(self.look_slider_row(themes_page::LookKnob::Blur, cx))
             .child(self.performance_row(cx))
+            .child(self.motion_row(cx))
             .child(self.home_background_row(cx))
+            .child(self.reset_look_row(cx));
+        let launcher = card()
             .child(self.language_row(cx))
             .child(self.while_playing_row(n, cx))
             .child(index_row(
@@ -396,8 +400,7 @@ impl Launcher {
                 note("The wordmark, while the release list loads."),
                 Some(b.opening.into_any_element()),
                 &t,
-            ))
-            .child(self.reset_look_row(cx));
+            ));
         let network = card().child(self.proxy_row(n, cx));
         let game = card()
             .child(self.game_architecture_row(n, cx))
@@ -450,6 +453,7 @@ impl Launcher {
         vec![
             account,
             updates,
+            appearance,
             launcher,
             network,
             game,

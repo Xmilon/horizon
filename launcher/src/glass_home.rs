@@ -442,19 +442,16 @@ impl Launcher {
                     })),
             ),
             None => {
+                let owner = if horizon_launcher::developer_offline::selected() {
+                    Some(true)
+                } else {
+                    self.owner
+                };
+                let press = play_press(ready, owner, false);
                 let (label, icon) = match &update {
                     Some(_) => (tr("Update"), "download-04"),
-                    None => (tr("Play"), "play"),
+                    None => (tr(play_label(press, owner)), "play"),
                 };
-                let press = play_press(
-                    ready,
-                    if horizon_launcher::developer_offline::selected() {
-                        Some(true)
-                    } else {
-                        self.owner
-                    },
-                    false,
-                );
                 let main = body(label.into(), icon).id("play").cursor_pointer();
                 let main = match (&update, press) {
                     (Some(_), _) => main.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {

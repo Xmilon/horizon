@@ -2410,6 +2410,17 @@ fn play_press(prepared: bool, owner: Option<bool>, busy: bool) -> PlayPress {
     }
 }
 
+/// What Play's button says for `press`, so its label is what a click does: "Prepare & play"
+/// when it prepares first, "Sign in to play" when no account here owns the game (it does
+/// nothing then), "Play" otherwise (dimmed while the keychain is still being read).
+fn play_label(press: PlayPress, owner: Option<bool>) -> &'static str {
+    match (press, owner) {
+        (PlayPress::PrepareThenPlay, _) => "Prepare & play",
+        (PlayPress::Nothing, Some(false)) => "Sign in to play",
+        _ => "Play",
+    }
+}
+
 /// Whether a shortcut that starts the game at once (a server's Join, a world's Play, a friend's
 /// code, a pack's Play) starts it now: only when Play would play. Never while a preparation runs:
 /// the game would open on half-written files.
@@ -5114,7 +5125,15 @@ impl Render for Launcher {
         let blur = self.look.blur;
         let performance = self.settings.performance();
         // Performance mode's plates are solid: no glass, no blur, nothing sampled from the scene.
-        glass::set_plain(performance);
+        // So are an OLED theme's, over its own black sky.
+        let sunset = self.theme.glass && self.theme.dark && self.theme.scene;
+        glass::set_plain(
+            performance || (self.theme.dark && !self.theme.scene),
+            self.theme.edge,
+        );
+        // Reduced motion (the player's or the system's) holds GPUI's own animations too.
+        sky::set_preference(self.settings.reduce_motion);
+        cx.set_reduce_motion(motion::still());
         self.scene
             .update(cx, |scene, cx| scene.set_performance(performance, cx));
         let blur = if performance { 0. } else { blur };
@@ -5169,7 +5188,7 @@ impl Render for Launcher {
         // the blocky looks keep the baked sky. The sky is tiles that don't depend on the
         // window's size, so a resize costs no rebake.
         glass::begin_build(window);
-        let sky = if t.glass && t.dark {
+        let sky = if sunset {
             self.scene.clone().into_any_element()
         } else {
             let (sky, next) = self.sky.render(
@@ -5777,6 +5796,17 @@ mod tests {
         assert_eq!(play_press(false, None, false), PlayPress::Nothing);
         assert_eq!(play_press(false, Some(true), true), PlayPress::Nothing);
         assert_eq!(play_press(true, Some(true), true), PlayPress::Nothing);
+    }
+
+    /// Home's one button never says Play over a click that prepares, or that cannot play.
+    #[test]
+    fn play_says_what_it_will_do() {
+        use super::{play_label, play_press};
+        let say = |prepared, owner| play_label(play_press(prepared, owner, false), owner);
+        assert_eq!(say(true, Some(true)), "Play");
+        assert_eq!(say(false, Some(true)), "Prepare & play");
+        assert_eq!(say(false, Some(false)), "Sign in to play");
+        assert_eq!(say(false, None), "Play");
     }
 
     /// A server's Join (and every other shortcut) waits like Play: not while the version's

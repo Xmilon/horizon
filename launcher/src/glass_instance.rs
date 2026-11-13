@@ -594,7 +594,7 @@ impl Launcher {
         };
         let sub = match editing {
             Some(_) => tr("Changes apply the next time it starts. Worlds stay where they are."),
-            None => tr("Pick what it plays, then give it a name and an icon."),
+            None => tr("Name it, pick what it plays, then an icon."),
         };
         // The mockup's `clamp(1.6rem, 2.4vw, 2.1rem)`.
         let size = (self.window_width * 0.024).clamp(25.6, 33.6);
@@ -658,18 +658,8 @@ impl Launcher {
         if let Some(i) = editing {
             body = body.children(self.switch_notice(i));
         }
-        if kind == NewKind::Horizon {
-            body = body.child(self.horizon_versions(cx));
-            if editing.is_none() {
-                body = body.child(self.start_from(copy, cx));
-            }
-        } else {
-            self.load_versions(cx);
-            body = body.child(self.minecraft_versions(cx));
-            if kind == NewKind::Modded {
-                body = body.child(self.loader_choice(cx));
-            }
-        }
+        // The name first, where focus starts: the version lists below are bounded, so it and
+        // the foot's Create are on screen at laptop size without scrolling.
         let name = self
             .field(Field::InstanceName, tr("My instance"), 340., cx)
             .flex_1()
@@ -683,6 +673,18 @@ impl Launcher {
             None,
             div().flex().gap(px(10.)).child(name).child(group),
         ));
+        if kind == NewKind::Horizon {
+            body = body.child(self.horizon_versions(cx));
+            if editing.is_none() {
+                body = body.child(self.start_from(copy, cx));
+            }
+        } else {
+            self.load_versions(cx);
+            body = body.child(self.minecraft_versions(cx));
+            if kind == NewKind::Modded {
+                body = body.child(self.loader_choice(cx));
+            }
+        }
         body = body.child(self.icon_choice(editing, kind, cx));
         // The memory it may use, kept with the instance (not in the mockup, kept here).
         if editing.is_some() {
@@ -842,14 +844,14 @@ impl Launcher {
                 Load::Loading => tr("Loading releases…"),
                 _ => tr("No version installed"),
             };
-            list_box("horizon-versions", 248.).child(
+            list_box("horizon-versions", 200.).child(
                 ui::text(14., FontWeight::NORMAL, ink::QUIET)
                     .px(px(16.))
                     .py(px(24.))
                     .child(empty),
             )
         } else {
-            list_box("horizon-versions", 248.).children(rows)
+            list_box("horizon-versions", 200.).children(rows)
         };
         section(tr("Version").into(), None, list)
     }

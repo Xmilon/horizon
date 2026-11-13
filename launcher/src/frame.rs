@@ -521,12 +521,14 @@ impl Launcher {
                     .px(px(12.))
                     .py(px(8.))
                     .rounded(px(radius::ROW))
-                    .bg(ui::color(horizon_theme::glass::DISCORD))
-                    .hover(|s| s.bg(ui::color(horizon_theme::glass::DISCORD_HOVER)))
+                    // A quiet button: the community link stays findable without outshining Play
+                    // and Create, the launcher's own actions.
+                    .bg(ui::white(fill::BUTTON))
+                    .hover(|s| s.bg(ui::white(fill::BUTTON_HOVER)))
                     .cursor_pointer()
-                    .child(ui::icon("discord", 18., gpui::white()))
+                    .child(ui::icon("discord", 18., ui::white(ink::SOFT)))
                     .child(
-                        ui::text(14., FontWeight::SEMIBOLD, ink::FULL)
+                        ui::text(14., FontWeight::MEDIUM, ink::STRONG)
                             .min_w_0()
                             .text_center()
                             .child(tr("Join the Discord")),

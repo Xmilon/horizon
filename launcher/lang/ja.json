@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "テーマ",
+  "Motion": "動き",
+  "Reduced": "減らす",
+  "Full": "すべて",
+  "Aa Text": "Aa テキスト",
+  "Prepare & play": "準備してプレイ",
+  "Name it, pick what it plays, then an icon.": "名前を付け、何を起動するか選び、それからアイコンです。",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "全員に無料。各テーマにはライトとダークの外観があり、その下で選んだアクセントカラーを記憶します。",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "「減らす」は空、フェード、スライドを止めます。ボタンはすぐに反応します。「システム」はコンピューターの設定に従います。",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "ライトまたはダーク、テーマ、アクセントカラー、ガラス、ぼかし、ホームの背景が Horizon の初期状態に戻ります。",
+  "The launcher's look is back to how Horizon ships": "ランチャーの見た目が Horizon の初期状態に戻りました",
+  "The launcher's look is reset for now, but it could not be saved": "ランチャーの見た目は一時的にリセットされましたが、保存できませんでした",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ガラスとぼかしはダークの外観のすりガラス パネルを形づくり、ライトは無地の白いパネルを描きます。",
+  "Performance mode draws solid panels, without glass or blur.": "パフォーマンスモードは、ガラスやぼかしのない無地のパネルを描きます。",
+  "This theme's night draws solid panels, without glass or blur.": "このテーマの夜は、ガラスやぼかしのない無地のパネルを描きます。"
 }

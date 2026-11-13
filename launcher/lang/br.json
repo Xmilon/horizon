@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Tema",
+  "Motion": "Lusk",
+  "Reduced": "Izelaet",
+  "Full": "Leun",
+  "Aa Text": "Aa Testenn",
+  "Prepare & play": "Prientiñ ha c'hoari",
+  "Name it, pick what it plays, then an icon.": "Anvit anezhañ, dibabit petra a c'hoari, hag un arlun.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Digoust evit an holl. Pep tema he deus un neuz sklaer hag un neuz deñval, ha derc'hel a soñj al liv pennañ a zibabit dindani.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Izelaet a zastu an oabl, ar c'houlzadoù hag ar c'hemm dremm; an afeloù a respont kerkent. Reizhiad heuilh arventenn hoc'h urzhiataer.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Sklaer pe deñval, tema, liv pennañ, gwer, damwel ha drekleur Ti a zistro d'an doare ma vez kaset Horizon gantañ.",
+  "The launcher's look is back to how Horizon ships": "Neuz al lañser zo distro d'an doare ma vez kaset Horizon gantañ",
+  "The launcher's look is reset for now, but it could not be saved": "Neuz al lañser zo adderaouekaet evit ar mare, met n'eo ket bet enrollet",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Gwer ha Damwel a stumm paneloù damsklaer an neuz deñval; ar sklaer a dres paneloù gwenn start.",
+  "Performance mode draws solid panels, without glass or blur.": "Mod ar perzhded a dres paneloù start, hep gwer na zamwel.",
+  "This theme's night draws solid panels, without glass or blur.": "Noz an tema-mañ a dres paneloù start, hep gwer na zamwel."
 }

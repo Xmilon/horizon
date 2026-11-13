@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "Motív",
+  "Motion": "Pohyb",
+  "Reduced": "Obmedzený",
+  "Full": "Plný",
+  "Aa Text": "Aa Text",
+  "Prepare & play": "Pripraviť a hrať",
+  "Name it, pick what it plays, then an icon.": "Pomenujte ju, vyberte, čo hrá, a potom ikonu.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "Zadarmo pre všetkých. Každý motív má svetlý a tmavý vzhľad a zapamätá si farbu akcentu, ktorú pod ním zvolíte.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "Obmedzený zastaví oblohu, prechody a posuny; tlačidlá odpovedajú okamžite. Systém sleduje nastavenie vášho počítača.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "Svetlo či tma, motív, farba akcentu, sklo, rozmazanie a pozadie Domova sa vrátia k predvoľbám Horizonu.",
+  "The launcher's look is back to how Horizon ships": "Vzhľad launchera je späť na predvoľbách Horizonu",
+  "The launcher's look is reset for now, but it could not be saved": "Vzhľad launchera je zatiaľ obnovený, ale nepodarilo sa ho uložiť",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "Sklo a Rozmazanie formujú matné panely tmavého vzhľadu; svetlý kreslí plné biele panely.",
+  "Performance mode draws solid panels, without glass or blur.": "Režim výkonu kreslí plné panely, bez skla a rozmazania.",
+  "This theme's night draws solid panels, without glass or blur.": "Noc tohto motívu kreslí plné panely, bez skla a rozmazania."
 }

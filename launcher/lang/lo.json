@@ -1348,5 +1348,20 @@
   "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.": "{mod_id} needs {name} {version}, which isn't in Horizon's Cargo.lock. A native mod's registry dependencies must be versions the game already locks: its crate can use only the crates Horizon itself uses, in the versions its Cargo.lock has.",
   "Horizon locks {name} {versions}.": "Horizon locks {name} {versions}.",
   "Offline developer session: single-player only; no account features.": "Offline developer session: single-player only; no account features.",
-  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods."
+  "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.": "This game cannot enforce offline developer single-player. Rebuild and reinstall the developer game and its native mods.",
+  "Theme": "ຮູບແບບ",
+  "Motion": "ການເຄື່ອນໄຫວ",
+  "Reduced": "ຫຼຸດຜ່ອນ",
+  "Full": "ເຕັມ",
+  "Aa Text": "Aa ຂໍ້ຄວາມ",
+  "Prepare & play": "ກະກຽມ ແລະ ຫຼິ້ນ",
+  "Name it, pick what it plays, then an icon.": "ຕັ້ງຊື່, ເລືອກວ່າມັນຫຼິ້ນຫຍັງ, ແລ້ວເລືອກໄອຄອນ.",
+  "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.": "ຟຣີສຳລັບທຸກຄົນ. ແຕ່ລະຮູບແບບມີທັງແບບແຈ້ງ ແລະ ແບບມືດ ແລະ ຈື່ຈຳສີເນັ້ນທີ່ເຈົ້າເລືອກຢູ່ໃນນັ້ນ.",
+  "Reduced stops the sky, the fades and the slides; buttons still answer at once. System follows your computer's setting.": "ແບບຫຼຸດຜ່ອນຈະຢຸດທ້ອງຟ້າ, ການເຟດ ແລະ ການເລື່ອນ; ປຸ່ມຍັງຕອບສະໜອງທັນທີ. ແບບລະບົບຕາມການຕັ້ງຄ່າຂອງຄອມພິວເຕີເຈົ້າ.",
+  "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.": "ແຈ້ງ ຫຼື ມືດ, ຮູບແບບ, ສີເນັ້ນ, ແກ້ວ, ຄວາມມົວ ແລະ ພື້ນຫຼັງໜ້າບ້ານ ຈະກັບຄືນເປັນຄ່າເລີ່ມຕົ້ນຂອງ Horizon.",
+  "The launcher's look is back to how Horizon ships": "ໜ້າຕາຂອງຕົວເປີດກັບຄືນເປັນຄ່າເລີ່ມຕົ້ນຂອງ Horizon ແລ້ວ",
+  "The launcher's look is reset for now, but it could not be saved": "ໜ້າຕາຂອງຕົວເປີດຖືກຣີເຊັດໄປກ່ອນ, ແຕ່ບໍ່ສາມາດບັນທຶກໄດ້",
+  "Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.": "ແກ້ວ ແລະ ຄວາມມົວ ປັບຮູບແບບແຜງຝ້າມົວຂອງໂໝດມືດ; ໂໝດແຈ້ງວາດແຜງສີຂາວທັນໆ.",
+  "Performance mode draws solid panels, without glass or blur.": "ໂໝດປະສິດທິພາບວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ.",
+  "This theme's night draws solid panels, without glass or blur.": "ກາງຄືນຂອງຮູບແບບນີ້ວາດແຜງທັນໆ, ບໍ່ມີແກ້ວຫຼືຄວາມມົວ."
 }
