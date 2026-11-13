@@ -201,7 +201,7 @@ impl BodyMotion for Played {
 impl Launcher {
     pub(crate) fn shop_page(&mut self, cx: &mut Context<Self>) -> Div {
         let page = div().flex().flex_col().gap(px(28.));
-        let title = ui::page_head(tr("Shop"), "").mb(px(0.));
+        let title = ui::page_head(tr("Shop"), tr("Try cosmetics on here. You pay on playhorizon.dev.")).mb(px(0.));
         if self.wardrobe.is_none() && self.wardrobe_account().is_none() {
             return page.child(title).child(self.wardrobe_sign_in(cx));
         }
@@ -578,7 +578,12 @@ impl Launcher {
                                 .truncate()
                                 .child(name),
                         )
-                        .child(ui::text(14., FontWeight::MEDIUM, ink::BODY).child(price)),
+                        .child(if price == tr("Owned") {
+                            // Owned reads as a chip, a price as text.
+                            super::purchases::chip(true, price).self_start()
+                        } else {
+                            ui::text(14., FontWeight::MEDIUM, ink::BODY).child(price)
+                        }),
                 )
                 .on_hover(cx.listener(move |this, on: &bool, _, cx| {
                     let next = on.then(|| hovered.clone());
@@ -821,7 +826,7 @@ impl Launcher {
         let t = self.theme;
         let lang = game_language();
         let (name, line) = about(id, c, lang);
-        let back = button("shop-back", "←", Kind::Ghost, &t).on_click(cx.listener(
+        let back = button("shop-back", "← Back to the shop", Kind::Ghost, &t).on_click(cx.listener(
             |this, _: &ClickEvent, _, cx| {
                 this.shop.selected = None;
                 this.shop.said = None;

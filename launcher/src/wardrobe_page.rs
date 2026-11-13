@@ -1158,7 +1158,11 @@ impl Launcher {
                         .hover(|s| s.bg(ui::white(0.08)))
                 })
                 .child(ui::text(14., FontWeight::MEDIUM, ink::FULL).child(title))
-                .child(ui::text(12., FontWeight::NORMAL, ink::NOTE).child(under))
+                .child(if on {
+                    purchases::chip(true, under).mt(px(2.)).self_start()
+                } else {
+                    ui::text(12., FontWeight::NORMAL, ink::NOTE).child(under)
+                })
         };
         cards = cards.child(
             card(

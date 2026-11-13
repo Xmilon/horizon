@@ -22,8 +22,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// The Wardrobe's view's size, in points.
-pub(super) const W: f32 = 240.;
-pub(super) const H: f32 = 330.;
+pub(super) const W: f32 = 300.;
+pub(super) const H: f32 = 420.;
 /// Pixels of a trackpad's scroll that make one wheel step.
 const SCROLL_STEP: f32 = 40.;
 
