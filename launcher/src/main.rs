@@ -5443,6 +5443,17 @@ impl Render for Launcher {
             .size_full()
             .bg(t.side)
             .child(sky)
+            // The sunset is Home's scenery; elsewhere it is dimmed behind the work.
+            .when(sunset && self.page != Page::Play, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .bg(gpui::black().opacity(0.38)),
+                )
+            })
             .children(titlebar::render(&t, window))
             .children(self.settings_save_notice(cx))
             .child(root.flex_1().min_h_0())

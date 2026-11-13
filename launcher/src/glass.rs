@@ -191,8 +191,10 @@ pub fn begin_build(window: &mut Window) {
 /// A plate's backdrop with its corners: put it first inside a `relative` element, the content
 /// after it. In performance mode it is a solid colour: no backdrop, no glass.
 pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
-    let plain = PIECES.with_borrow(|p| p.plain.then(|| (solid_fill(p, kind), p.edge, p.light)));
-    if let Some((colour, edge, light)) = plain {
+    // The light look's plates are flat white with no blur: a plain fill draws them exactly (its
+    // image pieces came out missing, the sky showing through the panels).
+    let plain = PIECES.with_borrow(|p| (p.plain || p.light).then(|| solid_fill(p, kind)));
+    if let Some(colour) = plain {
         return div()
             .absolute()
             .top_0()
@@ -200,9 +202,6 @@ pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
             .size_full()
             .rounded(px(radius))
             .bg(colour)
-            .when_some(edge.filter(|_| !light), |d, edge| {
-                d.border_1().border_color(rgb(edge))
-            })
             .into_any_element();
     }
     canvas(
@@ -216,11 +215,22 @@ pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
     .into_any_element()
 }
 
+/// A plate's 1 px edge: a theme's own (Hypr Neon's night), else a faint light line, so a plate
+/// reads as a surface rather than as fog over the scene.
+fn edge() -> gpui::Hsla {
+    PIECES.with_borrow(|p| match p.edge {
+        Some(edge) if p.plain && !p.light => rgb(edge).into(),
+        _ => crate::glass_ui::white(if p.light { 0.10 } else { 0.09 }),
+    })
+}
+
 /// A `relative` div on a glass plate with `radius` corners.
 pub fn plate(radius: f32) -> Div {
     div()
         .relative()
         .rounded(px(radius))
+        .border_1()
+        .border_color(edge())
         .child(backdrop(Kind::Glass, radius))
 }
 
@@ -229,6 +239,8 @@ pub fn float(radius: f32) -> Div {
     div()
         .relative()
         .rounded(px(radius))
+        .border_1()
+        .border_color(edge())
         .child(backdrop(Kind::Float, radius))
 }
 
@@ -238,7 +250,7 @@ fn image_at(bounds: Bounds<Pixels>, kind: Kind, fillet: f32) -> Option<Arc<Rende
     PIECES.with_borrow_mut(|p| {
         let light = p.light;
         // Solid plates have square inner corners: no glass fillet beside them.
-        if p.plain || (!light && p.backdrop.is_none()) {
+        if p.plain || light || p.backdrop.is_none() {
             return None;
         }
         let key = (
@@ -299,7 +311,8 @@ fn build_dark_full_image(
 
 fn paint(bounds: Bounds<Pixels>, kind: Kind, corners: Corners<Pixels>, window: &mut Window) {
     // Solid plates need no backdrop (an OLED theme draws none): a plain quad.
-    let plain = PIECES.with_borrow(|p| p.plain.then(|| (solid_fill(p, kind), p.edge, p.light)));
+    let plain = PIECES
+        .with_borrow(|p| (p.plain || p.light).then(|| (solid_fill(p, kind), p.edge, p.light)));
     if let Some((colour, edge, light)) = plain {
         let mut quad = gpui::fill(bounds, colour).corner_radii(corners);
         if let Some(edge) = edge.filter(|_| !light) {

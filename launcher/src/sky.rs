@@ -378,7 +378,10 @@ impl Sky {
             }
             sky = sky.child(group);
         }
-        for (layer, image) in CLOUDS.iter().zip(&layers.clouds) {
+        // The light look keeps a restrained dawn: its pale clouds read as stray lines across the
+        // white panels' gutters, so only the dark skies draw them.
+        let cloud_layers = if n.dark { &layers.clouds[..] } else { &[] };
+        for (layer, image) in CLOUDS.iter().zip(cloud_layers) {
             let strip = layer.period as f32 * TEXEL;
             let shift = (t * layer.speed).floor() * TEXEL % strip;
             let top = snap(h * layer.top);

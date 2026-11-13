@@ -1011,21 +1011,22 @@ pub fn page_head(title: impl Into<SharedString>, note: impl Into<SharedString>) 
     div()
         .flex()
         .flex_col()
-        .pt(px(40. - crate::glass::CONTENT_INSET))
-        .mb(px(28.))
+        .pt(px(28. - crate::glass::CONTENT_INSET))
+        .mb(px(20.))
         .child(
+            // A compact title: the page's content, not its name, gets the height.
             div()
                 .font_family(horizon_theme::glass::DISPLAY_FONT)
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_size(px(46.))
-                .line_height(px(46.))
+                .text_size(px(32.))
+                .line_height(px(36.))
                 .text_color(white(ink::FULL))
                 .child(title.into()),
         )
         .when(!note.is_empty(), |d| {
             d.child(
-                text(15., FontWeight::NORMAL, ink::BODY)
-                    .mt(px(12.))
+                text(14., FontWeight::NORMAL, ink::BODY)
+                    .mt(px(8.))
                     .max_w(px(615.))
                     .line_height(px(23.25))
                     .child(note),
@@ -1045,4 +1046,29 @@ pub fn card_note(label: impl Into<SharedString>) -> Div {
     text(13., FontWeight::NORMAL, ink::QUIET)
         .line_height(px(19.5))
         .child(label.into())
+}
+
+/// A tooltip's view: one line on a solid float, for controls shown by their icon alone.
+pub struct Tip(SharedString);
+
+impl Render for Tip {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div()
+            .px(px(10.))
+            .py(px(6.))
+            .rounded(px(radius::CONTROL))
+            .bg(rgb(look().base))
+            .border_1()
+            .border_color(white(0.12))
+            .font_family(horizon_theme::glass::FONT)
+            .text_size(px(13.))
+            .text_color(white(ink::FULL))
+            .child(self.0.clone())
+    }
+}
+
+/// `.tooltip(ui::tip(label))`: the label of an icon-only control, on hover.
+pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
+    let label: SharedString = label.into();
+    move |_, cx| cx.new(|_| Tip(label.clone())).into()
 }

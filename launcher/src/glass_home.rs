@@ -231,8 +231,8 @@ impl Launcher {
                     .truncate()
                     .font_family(horizon_theme::glass::DISPLAY_FONT)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(64.))
-                    .line_height(px(64.))
+                    .text_size(px(44.))
+                    .line_height(px(48.))
                     .text_color(white(ink::FULL))
                     .child(instance.name),
             )
@@ -379,7 +379,9 @@ impl Launcher {
             .flex()
             .items_center()
             .flex_none()
-            .w(px(if self.window_width >= WIDE {
+            // At least the mockup's width, wider when the label needs it ("Prepare & play",
+            // "Sign in to play", a long translation).
+            .min_w(px(if self.window_width >= WIDE {
                 200.
             } else {
                 160.
@@ -395,7 +397,9 @@ impl Launcher {
                 .items_center()
                 .justify_center()
                 .gap(px(10.))
-                .pr(px(40.))
+                .pl(px(20.))
+                .pr(px(52.))
+                .whitespace_nowrap()
                 .font_family(horizon_theme::glass::FONT)
                 .text_size(px(18.))
                 .font_weight(FontWeight::SEMIBOLD)

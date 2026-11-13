@@ -96,6 +96,24 @@ fn light_look(look: tokens::glass::Glass) -> tokens::glass::Glass {
     look
 }
 
+/// How much of the accent's dark base a content plate takes over the sunset. The mockup's 22 %
+/// let the bright sun shine through settings, dialogs and lists; at 62 % text sits on a steady
+/// surface and the scene stays decoration around it. Glass (the white tint) still lightens it.
+const STEADY_BASE: f32 = 0.62;
+
+/// The look's plates mixed as `Glass::new` does, at [`STEADY_BASE`] instead of the mockup's.
+fn steady_plates(mut look: tokens::glass::Glass) -> tokens::glass::Glass {
+    let tint = look.tint;
+    let alpha = tint + (1. - tint) * STEADY_BASE;
+    look.plate = [16u32, 8, 0].iter().fold(0, |out, s| {
+        let base = ((look.base >> s) & 255) as f32 / 255.;
+        let premul = tint + (1. - tint) * STEADY_BASE * base;
+        out | (((premul / alpha) * 255.).round().clamp(0., 255.) as u32) << s
+    });
+    look.plate_alpha = alpha;
+    look
+}
+
 /// `c`, darkened in small OKLab steps until it reads at 4.5:1 on white; unchanged if it does.
 fn readable_on_white(mut c: u32) -> u32 {
     for _ in 0..60 {
@@ -178,6 +196,8 @@ impl Theme {
             // No sunset to frost: the plates are the theme's own solid card.
             self.look.plate = self.night.card;
             self.look.plate_alpha = 1.;
+        } else {
+            self.look = steady_plates(self.look);
         }
         self
     }
@@ -341,6 +361,18 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Dark content plates over the sunset are mostly opaque, darker than the text they hold.
+    #[test]
+    fn dark_plates_are_steady() {
+        let theme = from_settings(&Settings::default(), WindowAppearance::Dark);
+        assert!(theme.look.plate_alpha >= 0.6, "{}", theme.look.plate_alpha);
+        // White text over the plate at its alpha over the sun's brightest colour still reads.
+        let over = |top: u32, a: f32, under: u32| tokens::night::over(top, a, under);
+        let worst = over(theme.look.plate, theme.look.plate_alpha, 0xffd98c);
+        let ratio = tokens::contrast(0xffffff, worst);
+        assert!(ratio >= 4.5, "white on a plate over the sun: {ratio:.2}");
     }
 
     /// The light look keeps Horizon's violet as it is and darkens only accents too pale for white.

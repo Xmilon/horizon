@@ -267,9 +267,24 @@ impl Launcher {
                 .children(pictures.next())
         };
         let body = match shots.len() {
-            0 => ui::text(14., FontWeight::NORMAL, ink::NOTE)
-                .mt(px(8.))
-                .child(tr("No screenshots yet. Press F2 in the game."))
+            // An intentional empty state, not a lone line in an empty panel.
+            0 => div()
+                .mt(px(12.))
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(10.))
+                .min_h(px(180.))
+                .rounded(px(radius::ROW))
+                .border_1()
+                .border_color(white(0.08))
+                .bg(white(0.03))
+                .child(ui::icon("image-01", 28., white(ink::DIM)))
+                .child(
+                    ui::text(14., FontWeight::NORMAL, ink::NOTE)
+                        .child(tr("No screenshots yet. Press F2 in the game.")),
+                )
                 .into_any_element(),
             n if n >= 3 => {
                 let first = shot(0).flex_1().h_full().on_click(see_all());

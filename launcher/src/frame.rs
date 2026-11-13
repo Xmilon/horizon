@@ -547,28 +547,23 @@ impl Launcher {
                         .flex()
                         .items_center()
                         .gap(px(10.))
-                        .h(px(36.))
-                        .px(px(8.))
+                        .justify_center()
+                        .size(px(36.))
                         .rounded(px(radius::ROW))
                         .cursor_pointer()
-                        .text_color(white(ink::SOFT))
-                        .hover(|s| s.text_color(white(ink::FULL)))
                         .child(hover_layer(&id, white(fill::HOVER), radius::ROW, 0.))
-                        .child(ui::icon(icon, 17., white(ink::SOFT)).relative())
-                        .child(
-                            div()
-                                .relative()
-                                .font_family(horizon_theme::glass::FONT)
-                                .text_size(px(14.))
-                                .child(label),
-                        )
+                        .child(ui::icon(icon, 18., white(ink::SOFT)).relative())
+                        // Shown by its icon alone: the name on hover.
+                        .tooltip(ui::tip(label))
                         .on_click(move |_, _, cx| cx.open_url(&url)),
                     id,
                 ),
                 &t,
             )
         };
-        let mut links = div().flex().flex_col().mt(px(8.));
+        // One row of icons: the project's links stay a click away without taking the height
+        // the instances need.
+        let mut links = div().flex().items_center().gap(px(2.)).mt(px(8.));
         if !self.links.sponsor.is_empty() {
             links = links.child(link(
                 "sponsor",
@@ -601,12 +596,14 @@ impl Launcher {
                 self.links.website.clone(),
             ));
         }
-        foot = foot.child(links).child(
-            ui::text(12., FontWeight::NORMAL, ink::DIM)
-                .id("launcher-version")
-                .px(px(8.))
-                .pt(px(8.))
-                .child(trf("Launcher {version}", &[("version", backend::VERSION)])),
+        foot = foot.child(
+            links.child(
+                ui::text(12., FontWeight::NORMAL, ink::DIM)
+                    .id("launcher-version")
+                    .ml_auto()
+                    .pr(px(4.))
+                    .child(trf("Launcher {version}", &[("version", backend::VERSION)])),
+            ),
         );
 
         crate::glass::plate(radius::PANEL)
@@ -658,6 +655,9 @@ impl Launcher {
         let (name, how) = self.who_plays();
         let face = self.accounts.selected().map(|a| a.uuid.clone());
         let open = self.account_menu;
+        // Signed out, the chip is only the face: the Sign in with Microsoft button beside it
+        // says it once, and the page tabs keep their room.
+        let signed_in = face.is_some();
         let chip =
             div()
                 .id("account")
@@ -678,7 +678,7 @@ impl Launcher {
                             .draw(face.as_deref(), 26., self.scale, &t),
                     ),
                 )
-                .child(
+                .children(signed_in.then(|| {
                     div()
                         .flex()
                         .flex_col()
@@ -693,8 +693,8 @@ impl Launcher {
                             ui::text(12., FontWeight::NORMAL, ink::QUIET)
                                 .line_height(px(15.))
                                 .child(how)
-                        })),
-                )
+                        }))
+                }))
                 .child(
                     ui::icon("arrow-down-01", 16., white(ink::FAINT))
                         .ml(px(4.))
