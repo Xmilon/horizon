@@ -53,10 +53,15 @@ mod tests {
     use crate::game::native_guest_turn_tests::with_guests;
     use horizon_client::mobs::Mob;
     use horizon_core::geometry::Vec3;
+    use mod_api::EntityRef;
+    use std::sync::Arc;
 
-    /// The eye-to-box rule: a guest's eyes at (3, 65.62, 5) and a pig level with them on +x,
-    /// whose near face is 2.9 blocks away, is close enough at 3; at 3.1 it is not. A player
-    /// in survival may not fly until the `mayfly` ability is set.
+    /// The eye-to-box rule, literally: a guest's eyes at (3, 65.62, 5) and a pig level with
+    /// them on +x, whose near face is 2.9 blocks away, is close enough at 3; at 3.1 it is
+    /// not; at exactly 3.0 the threshold is strict and it is not. With the eyes inside the
+    /// pig's box the fallback is position-to-position. A handle that names nothing, and a
+    /// guest of the hub in another level, answer None. A player in survival may not fly
+    /// until the `mayfly` ability is set.
     #[test]
     #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
     fn reach_runs_from_the_eyes_to_the_box_and_flight_follows_the_ability() {
@@ -68,11 +73,61 @@ mod tests {
             game.mobs
                 .push(Mob::new(900, kind.clone(), feet(3.0 + 2.9 + 0.45), 0.0));
             game.mobs
-                .push(Mob::new(901, kind, feet(3.0 + 3.1 + 0.45), 0.0));
+                .push(Mob::new(901, kind.clone(), feet(3.0 + 3.1 + 0.45), 0.0));
+            // Its near face exactly 3.0 from the eyes.
+            game.mobs
+                .push(Mob::new(902, kind.clone(), feet(3.0 + 3.0 + 0.45), 0.0));
+            // Centred on the player's eyes.
+            game.mobs.push(Mob::new(903, kind, feet(3.0), 0.0));
             let player = game.player(12).unwrap();
             let (near, far) = (game.entity(900).unwrap(), game.entity(901).unwrap());
+            let (at_edge, inside) = (game.entity(902).unwrap(), game.entity(903).unwrap());
             assert_eq!(game.player_is_close_enough(player, near, 3.0), Some(true));
             assert_eq!(game.player_is_close_enough(player, far, 3.0), Some(false));
+            assert_eq!(
+                game.player_is_close_enough(player, at_edge, 3.0),
+                Some(false),
+                "the threshold is strict"
+            );
+            // The eyes sit in the box: the fallback compares the positions,
+            // 1.17 apart, so 1.0 refuses what an eye-distance 0 would allow.
+            assert_eq!(
+                game.player_is_close_enough(player, inside, 1.0),
+                Some(false)
+            );
+            assert_eq!(game.player_is_close_enough(player, inside, 3.0), Some(true));
+            // A handle that names nothing real: None.
+            let stale = EntityRef::new(near.epoch(), 424242);
+            assert_eq!(game.player_is_close_enough(player, stale, 3.0), None);
+
+            // A guest of the hub whose level is the nether: another level, None.
+            use horizon_client::lan::{Joined, PlayerSender, guest::Guest};
+            use horizon_protocol::packets::configuration::ClientInformation;
+            let (tx, _rx) = std::sync::mpsc::channel();
+            use std::sync::atomic::{AtomicI32, AtomicUsize};
+            let mut guest = Guest::new(
+                Joined {
+                    conn: 9,
+                    uuid: 7777,
+                    name: "NetherGuest".to_owned(),
+                    properties: Vec::new(),
+                    info: ClientInformation::new(8),
+                    brand: String::new(),
+                    sender: PlayerSender::new(tx, Arc::new(AtomicUsize::new(0))),
+                    latency: Arc::new(AtomicI32::new(0)),
+                    address: "127.0.0.1:1".parse().unwrap(),
+                    expected: false,
+                },
+                777,
+                [0.0, 64.0, 0.0],
+                10,
+            );
+            guest.placed = true;
+            guest.dimension = "minecraft:the_nether".to_owned();
+            game.lan.as_mut().unwrap().hub.guests.push(guest);
+            game.reset_entity_residency();
+            let nether = game.entity(777).unwrap();
+            assert_eq!(game.player_is_close_enough(player, nether, 3.0), None);
 
             assert_eq!(game.player_may_fly(player), Some(false));
             let mut abilities = game.player_abilities(player).unwrap();
