@@ -25,6 +25,11 @@ impl LookKnob {
             LookKnob::Blur => 48.,
         }
     }
+
+    /// Page Up / Page Down's step: an eighth of the range.
+    fn page(self) -> f32 {
+        self.max() / 8.
+    }
 }
 
 /// Where each slider's track is, and the one being dragged.
@@ -32,10 +37,29 @@ impl LookKnob {
 pub(super) struct LookSliders {
     areas: [std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>; 2],
     dragging: Option<LookKnob>,
+    /// How far from the knob's centre the pointer grabbed it, so the knob does not jump.
+    grab: f32,
 }
 
 /// A slider's track (`w-52`), in points.
 const TRACK: f32 = 208.;
+/// The knob's diameter, in points; its centre runs from `THUMB / 2` to `TRACK - THUMB / 2`.
+const THUMB: f32 = 18.;
+
+/// The value fraction (0 to 1) for a point `across` points into a track `width` wide: the inverse
+/// of [`thumb_centre`], so a press on the knob's drawn centre keeps its value.
+fn fraction_at(across: f32, width: f32) -> f32 {
+    let run = width - THUMB;
+    if run <= 0. {
+        return 0.;
+    }
+    ((across - THUMB / 2.) / run).clamp(0., 1.)
+}
+
+/// Where the knob's centre is drawn for a value fraction, in points from the track's left.
+fn thumb_centre(f: f32, width: f32) -> f32 {
+    THUMB / 2. + f.clamp(0., 1.) * (width - THUMB).max(0.)
+}
 
 /// Each accent's swatch, in points.
 const SWATCH: f32 = 26.;
@@ -238,8 +262,10 @@ impl Launcher {
         }
     }
 
-    /// The Glass or Blur row: the mockup's slider (a 4 px track filled in the soft accent, a
-    /// 16 px white knob) and its value. Dragging changes the look at once and saves on release.
+    /// The Glass or Blur row: the mockup's slider (a 6 px track filled in the soft accent, an
+    /// 18 px white knob, 36 px of height to hit) and its value. Dragging changes the look at once
+    /// and saves on release; Tab focuses it, the arrows step by one, Page Up/Down by an eighth,
+    /// Home/End go to the ends, each key saving at once.
     pub(super) fn look_slider_row(&mut self, knob: LookKnob, cx: &mut Context<Self>) -> Div {
         let (title, about, value, shown) = match knob {
             LookKnob::Glass => {
@@ -263,66 +289,88 @@ impl Launcher {
         };
         let f = (value / knob.max()).clamp(0., 1.);
         let area = self.look_sliders.areas[knob as usize].clone();
-        let track = div()
-            .id(SharedString::from(format!("look-slider-{knob:?}")))
-            .relative()
-            .flex()
-            .flex_none()
-            .items_center()
-            .w(px(TRACK))
-            .h(px(24.))
-            .cursor_pointer()
-            .child(
-                canvas(move |bounds, _, _| area.set(Some(bounds)), |_, _, _, _| {})
-                    .absolute()
-                    .size_full(),
-            )
-            .child(
-                div()
-                    .h(px(4.))
-                    .w_full()
-                    .rounded_full()
-                    .overflow_hidden()
-                    .bg(ui::white(0.12))
-                    .child(
-                        div()
-                            .h_full()
-                            .w(relative(f))
-                            .rounded_full()
-                            .bg(ui::color(ui::look().accent_soft)),
-                    ),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left(px(f * (TRACK - 16.)))
-                    .size(px(16.))
-                    .rounded_full()
-                    .bg(ui::paper()),
-            )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                    this.look_sliders.dragging = Some(knob);
-                    this.pick_look(knob, ev.position, cx);
-                }),
-            )
-            .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
-                if ev.pressed_button == Some(MouseButton::Left)
-                    && this.look_sliders.dragging == Some(knob)
-                {
-                    this.pick_look(knob, ev.position, cx);
-                }
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
-            )
-            // A drag released off the track saves too.
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
-            );
+        let t = self.theme;
+        let track = keyboard(
+            div().id(SharedString::from(format!("look-slider-{knob:?}"))),
+            &t,
+        )
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .w(px(TRACK))
+        .h(px(36.))
+        .rounded(px(8.))
+        .cursor_pointer()
+        .child(
+            canvas(move |bounds, _, _| area.set(Some(bounds)), |_, _, _, _| {})
+                .absolute()
+                .size_full(),
+        )
+        .child(
+            div()
+                .h(px(6.))
+                .w_full()
+                .rounded_full()
+                .overflow_hidden()
+                .bg(ui::white(0.12))
+                .child(
+                    div()
+                        .h_full()
+                        .w(relative(f))
+                        .rounded_full()
+                        .bg(ui::color(ui::look().accent_soft)),
+                ),
+        )
+        .child(
+            div()
+                .absolute()
+                .left(px(thumb_centre(f, TRACK) - THUMB / 2.))
+                .size(px(THUMB))
+                .rounded_full()
+                .bg(ui::paper()),
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
+                this.grab_look(knob, ev.position);
+                this.look_sliders.dragging = Some(knob);
+                this.pick_look(knob, ev.position, cx);
+            }),
+        )
+        .on_key_down(cx.listener(move |this, ev: &KeyDownEvent, _, cx| {
+            let now = this.look_value(knob);
+            let to = match ev.keystroke.key.as_str() {
+                "left" | "down" => now - 1.,
+                "right" | "up" => now + 1.,
+                "pagedown" => now - knob.page(),
+                "pageup" => now + knob.page(),
+                "home" => 0.,
+                "end" => knob.max(),
+                _ => return,
+            };
+            cx.stop_propagation();
+            if this.set_look(knob, to) {
+                this.save_settings();
+                cx.notify();
+            }
+        }))
+        .on_mouse_move(cx.listener(move |this, ev: &MouseMoveEvent, _, cx| {
+            if ev.pressed_button == Some(MouseButton::Left)
+                && this.look_sliders.dragging == Some(knob)
+            {
+                this.pick_look(knob, ev.position, cx);
+            }
+        }))
+        .on_mouse_up(
+            MouseButton::Left,
+            cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
+        )
+        // A drag released off the track saves too.
+        .on_mouse_up_out(
+            MouseButton::Left,
+            cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
+        );
         let control = div().flex().items_center().gap(px(16.)).child(track).child(
             ui::text(13., FontWeight::NORMAL, 0.6)
                 .w(px(48.))
@@ -372,15 +420,47 @@ impl Launcher {
             return;
         }
         let across: f32 = (at.x - area.origin.x).into();
-        let value = Some(((across / width).clamp(0., 1.) * knob.max()).round());
+        let f = fraction_at(across - self.look_sliders.grab, width);
+        if self.set_look(knob, f * knob.max()) {
+            cx.notify();
+        }
+    }
+
+    /// The knob's value as the slider shows it (Glass in percent, Blur in px).
+    fn look_value(&self, knob: LookKnob) -> f32 {
+        match knob {
+            LookKnob::Glass => (self.settings.glass_tint() * 100.).round(),
+            LookKnob::Blur => self.settings.glass_blur().round(),
+        }
+    }
+
+    /// Sets the knob to `value`, clamped to its range in whole steps; true when it changed.
+    fn set_look(&mut self, knob: LookKnob, value: f32) -> bool {
+        let value = Some(value.clamp(0., knob.max()).round());
         let slot = match knob {
             LookKnob::Glass => &mut self.settings.glass,
             LookKnob::Blur => &mut self.settings.blur,
         };
-        if *slot != value {
-            *slot = value;
-            self.restyle = true;
-            cx.notify();
+        if *slot == value {
+            return false;
+        }
+        *slot = value;
+        self.restyle = true;
+        true
+    }
+
+    /// A press on the knob keeps its offset from the centre, so the knob does not jump; a press
+    /// elsewhere on the track puts the knob's centre under the pointer.
+    fn grab_look(&mut self, knob: LookKnob, at: Point<Pixels>) {
+        self.look_sliders.grab = 0.;
+        let Some(area) = self.look_sliders.areas[knob as usize].get() else {
+            return;
+        };
+        let width: f32 = area.size.width.into();
+        let across: f32 = (at.x - area.origin.x).into();
+        let centre = thumb_centre(self.look_value(knob) / knob.max(), width);
+        if (across - centre).abs() <= THUMB / 2. {
+            self.look_sliders.grab = across - centre;
         }
     }
 
@@ -391,9 +471,8 @@ impl Launcher {
         }
     }
 
-    /// Reset to defaults: the card's options go back to how Horizon ships (the mockup's
-    /// accent, glass, blur, language, while playing and opening; here the appearance and Home's
-    /// background too, being in the same card).
+    /// Reset the look: the appearance, theme, accent, glass, blur and Home's background go back
+    /// to how Horizon ships. Language, while playing and the opening are not the look and stay.
     pub(super) fn reset_look_row(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         ui::setting_row(
@@ -401,7 +480,7 @@ impl Launcher {
             Some(
                 div()
                     .child(tr(
-                        "Accent colour, glass, blur, language and the options above go back to how Horizon ships.",
+                        "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.",
                     ))
                     .into_any_element(),
             ),
@@ -414,23 +493,19 @@ impl Launcher {
                     &t,
                 )
                 .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                    let s = &mut this.settings;
-                    s.appearance = Default::default();
-                    s.accent = Accent::VIOLET;
-                    s.theme = None;
-                    s.glass = None;
-                    s.blur = None;
-                    s.background = None;
-                    s.language = None;
-                    s.while_playing = Default::default();
-                    s.skip_opening = false;
-                    this.save_settings();
-                    i18n::set(this.settings.language());
+                    reset_look(&mut this.settings);
+                    let saved = this.save_settings();
                     titlebar::apply_appearance(window, this.settings.appearance);
                     this.accent_strip = false;
                     this.background_error = None;
                     this.theme = this.settings_theme(window);
-                    crate::glass_toast::say(tr("Launcher settings are back to their defaults"));
+                    // A failed write keeps the save notice and its retry; the toast must not
+                    // claim the old look is gone for good.
+                    crate::glass_toast::say(if saved {
+                        tr("The launcher's look is back to how Horizon ships")
+                    } else {
+                        tr("The launcher's look is reset for now, but it could not be saved")
+                    });
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -644,5 +719,63 @@ impl Launcher {
             Some(actions.into_any_element()),
             &t,
         )
+    }
+}
+
+/// The fields Reset the launcher's look puts back: the look only.
+fn reset_look(s: &mut Settings) {
+    s.appearance = Default::default();
+    s.accent = Accent::VIOLET;
+    s.theme = None;
+    s.glass = None;
+    s.blur = None;
+    s.background = None;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The knob's drawn centre and the pointer's value agree end to end (they used to map
+    /// `x / TRACK`, so the minimum knob centre read 2 px of a 48 px blur).
+    #[test]
+    fn slider_pointer_matches_the_knob() {
+        assert_eq!(fraction_at(THUMB / 2., TRACK), 0.);
+        assert_eq!(fraction_at(TRACK - THUMB / 2., TRACK), 1.);
+        assert_eq!(fraction_at(TRACK / 2., TRACK), 0.5);
+        assert_eq!(fraction_at(-50., TRACK), 0.);
+        assert_eq!(fraction_at(TRACK + 50., TRACK), 1.);
+        for i in 0..=48 {
+            let f = i as f32 / 48.;
+            let back = fraction_at(thumb_centre(f, TRACK), TRACK);
+            assert!((back - f).abs() < 1e-5, "{f} -> {back}");
+        }
+        assert_eq!(fraction_at(5., THUMB), 0.);
+    }
+
+    #[test]
+    fn reset_look_keeps_what_is_not_the_look() {
+        let mut s = Settings {
+            accent: Accent::custom(120.),
+            theme: Some("nord".into()),
+            glass: Some(3.),
+            blur: Some(9.),
+            background: Some("mine.png".into()),
+            language: Some(i18n::Language::French),
+            skip_opening: true,
+            game_args: "-Xmx4G".into(),
+            while_playing: backend::WhilePlaying::Hide,
+            ..Default::default()
+        };
+        reset_look(&mut s);
+        assert_eq!(s.accent, Accent::VIOLET);
+        assert_eq!(
+            (s.theme, s.glass, s.blur, s.background),
+            (None, None, None, None)
+        );
+        assert_eq!(s.language, Some(i18n::Language::French));
+        assert!(s.skip_opening);
+        assert_eq!(s.game_args, "-Xmx4G");
+        assert_eq!(s.while_playing, backend::WhilePlaying::Hide);
     }
 }
