@@ -492,7 +492,10 @@ impl Launcher {
                     Some(_) => (tr("Update"), "download-04"),
                     None => (tr(play_label(press, owner)), "play"),
                 };
-                let main = body(label.into(), icon).id("play").cursor_pointer();
+                let main = crate::track_hover(
+                    body(label.into(), icon).id("play").cursor_pointer(),
+                    SharedString::from("play"),
+                );
                 let main = match (&update, press) {
                     (Some(_), _) => main.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.install_update();
@@ -515,10 +518,32 @@ impl Launcher {
                     }
                     (None, PlayPress::Nothing) => main.opacity(0.5).cursor_default(),
                 };
-                base.bg(accent)
-                    .border_color(ui::color(self.look.accent_soft).opacity(0.6))
-                    .text_color(on_accent)
-                    .child(main)
+                base.bg(gpui::linear_gradient(
+                    135.,
+                    gpui::linear_color_stop(accent, 0.),
+                    gpui::linear_color_stop(ui::color(ui::accent2()), 1.),
+                ))
+                .border_color(white(0.16))
+                .shadow(vec![
+                    // The site's primary: a light line along the top edge, a glow under it.
+                    gpui::BoxShadow {
+                        color: white(0.22),
+                        offset: gpui::point(px(0.), px(1.)),
+                        blur_radius: px(0.),
+                        spread_radius: px(0.),
+                        inset: true,
+                    },
+                    gpui::BoxShadow {
+                        color: accent.opacity(0.7),
+                        offset: gpui::point(px(0.), px(6.)),
+                        blur_radius: px(22.),
+                        spread_radius: px(-8.),
+                        inset: false,
+                    },
+                ])
+                .text_color(on_accent)
+                .child(main)
+                .child(ui::sheen(&SharedString::from("play")))
             }
         };
         // Ready to play: the accent's glow comes up under the pointer, a press dims it.
@@ -529,15 +554,32 @@ impl Launcher {
             .group("play-glyph")
             .when(primary, |d| {
                 d.hover(move |s| {
-                    s.border_color(soft).shadow(vec![gpui::BoxShadow {
-                        color: accent.opacity(0.5),
-                        offset: gpui::point(px(0.), px(4.)),
-                        blur_radius: px(22.),
-                        spread_radius: px(0.),
-                        inset: false,
-                    }])
+                    s.border_color(white(0.34))
+                        .shadow(vec![
+                            gpui::BoxShadow {
+                                color: white(0.28),
+                                offset: gpui::point(px(0.), px(1.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(0.),
+                                inset: true,
+                            },
+                            gpui::BoxShadow {
+                                color: accent.opacity(0.95),
+                                offset: gpui::point(px(0.), px(12.)),
+                                blur_radius: px(34.),
+                                spread_radius: px(-8.),
+                                inset: false,
+                            },
+                            gpui::BoxShadow {
+                                color: soft.opacity(0.5),
+                                offset: gpui::point(px(0.), px(0.)),
+                                blur_radius: px(0.),
+                                spread_radius: px(1.),
+                                inset: false,
+                            },
+                        ])
                 })
-                .active(|s| s.opacity(0.85).shadow(Vec::new()))
+                .active(|s| s.opacity(0.92).shadow(Vec::new()))
             });
         let mut wrap = div().relative().child(keyboard(group, &t).child(more));
         if open {

@@ -33,6 +33,18 @@ const SLIDE: tokens::Motion = tokens::Motion {
     curve: tokens::QUICK.curve,
 };
 
+/// The site's card lift: a spring that settles from a little past where it lands
+/// (`cubic-bezier(.22,.9,.3,1.24)`; `bezier` does not clamp y, so the overshoot plays).
+pub const SPRING: tokens::Motion = tokens::Motion {
+    name: "spring",
+    ms: 260,
+    curve: [0.22, 0.9, 0.3, 1.24],
+};
+
+/// How far a lifting card rises, and how far a pressed control sinks, in px.
+pub const LIFT: f32 = 3.;
+pub const PRESS: f32 = 1.;
+
 /// Whether the player's system asks for reduced motion (or `HORIZON_LAUNCHER_MOTION=off`).
 pub fn still() -> bool {
     crate::sky::motion() == crate::sky::Motion::Still

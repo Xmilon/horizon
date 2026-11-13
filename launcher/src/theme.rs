@@ -32,7 +32,6 @@ pub const SIDEBAR: f32 = 248.;
 pub const PAGE_GUTTER: f32 = 32.;
 
 /// Motion: short and eased out, never bouncy.
-pub const QUICK: Duration = tokens::QUICK.duration();
 pub const MOVE: Duration = tokens::MOVE.duration();
 pub const ENTER: Duration = tokens::ENTER.duration();
 pub const STAGGER: Duration = tokens::STAGGER;

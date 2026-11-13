@@ -1973,7 +1973,9 @@ fn note_hover(id: &SharedString, hovered: bool, window: &mut Window) {
     let is_on = state.on.as_ref().is_some_and(|(h, _)| h == id);
     if hovered && !is_on {
         state.off = state.on.take();
-        state.on = Some((id.clone(), Instant::now()));
+        let at = Instant::now();
+        state.on = Some((id.clone(), at));
+        glass_ui::note_hover_since(id, at);
     } else if !hovered && is_on {
         state.off = Some((id.clone(), Instant::now()));
         state.on = None;
@@ -2004,6 +2006,16 @@ fn hover_fade(
     layer: impl FnOnce() -> Div,
     paint: impl Fn(Div, f32) -> Div + 'static,
 ) -> AnyElement {
+    hover_ease(id, layer, paint, horizon_theme::QUICK)
+}
+
+/// [`hover_fade`] on any motion: the spring for the site's moving parts, QUICK for colour.
+fn hover_ease(
+    id: &SharedString,
+    layer: impl FnOnce() -> Div,
+    paint: impl Fn(Div, f32) -> Div + 'static,
+    on: horizon_theme::Motion,
+) -> AnyElement {
     let state = HOVER.lock().unwrap();
     // Each transition gets its own animation id, from when it started, so it plays once.
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
@@ -2011,7 +2023,7 @@ fn hover_fade(
     let key = |dir: &str, at: Instant| {
         ElementId::named_usize(format!("{id}-{dir}"), (at - start).as_micros() as usize)
     };
-    let ease = || motion::eased(horizon_theme::QUICK);
+    let ease = move || motion::eased(on);
     if let Some((_, at)) = state.on.as_ref().filter(|(h, _)| h == id) {
         return layer()
             .with_animation(key("in", *at), ease(), paint)
@@ -2020,7 +2032,7 @@ fn hover_fade(
     if let Some((_, at)) = state
         .off
         .as_ref()
-        .filter(|(h, at)| h == id && at.elapsed() < theme::QUICK)
+        .filter(|(h, at)| h == id && at.elapsed() < on.duration())
     {
         return layer()
             .with_animation(key("out", *at), ease(), move |d, t| paint(d, 1. - t))
@@ -2028,6 +2040,41 @@ fn hover_fade(
     }
     // Not hovered: nothing to draw (out of the flow, so it takes no gap either).
     div().absolute().into_any_element()
+}
+
+/// The element `el` itself — not a layer inside it — eased between its rest and hovered looks on
+/// the spring, as the site's cards lift: `paint` draws it at a strength from 0 (rest) to 1
+/// (hovered), and the change plays out in reverse when the pointer leaves. `el` is made
+/// `relative()`, so a `top` offset moves it without moving its neighbours.
+fn hover_move(
+    id: &SharedString,
+    el: Stateful<Div>,
+    paint: impl Fn(Stateful<Div>, f32) -> Stateful<Div> + 'static,
+) -> AnyElement {
+    let state = HOVER.lock().unwrap();
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let start = *START.get_or_init(Instant::now);
+    let key = |dir: &str, at: Instant| {
+        ElementId::named_usize(format!("{id}-move-{dir}"), (at - start).as_micros() as usize)
+    };
+    let spring = motion::eased(motion::SPRING);
+    if let Some((_, at)) = state.on.as_ref().filter(|(h, _)| h == id) {
+        return el
+            .relative()
+            .with_animation(key("in", *at), spring, paint)
+            .into_any_element();
+    }
+    if let Some((_, at)) = state
+        .off
+        .as_ref()
+        .filter(|(h, at)| h == id && at.elapsed() < motion::SPRING.duration())
+    {
+        return el
+            .relative()
+            .with_animation(key("out", *at), spring, move |d, t| paint(d, 1. - t))
+            .into_any_element();
+    }
+    el.into_any_element()
 }
 
 /// Text set in one step of the type scale: headings (heading, title, display) in the pixel face.

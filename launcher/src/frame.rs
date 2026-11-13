@@ -5,7 +5,7 @@
 use super::*;
 use crate::glass_ui::{self as ui, white, Tone};
 use crate::instances_page::java_line;
-use gpui::{anchored, canvas, deferred, point, AnimationExt};
+use gpui::{anchored, canvas, deferred, point};
 use horizon_launcher::instances::{Icon, Instance, Kind as InstanceKind};
 use horizon_theme::glass::{fill, ink, radius};
 use std::cell::RefCell;
@@ -37,31 +37,6 @@ fn measure(rows: &Rc<RefCell<HashMap<String, Bounds<Pixels>>>>, id: String) -> i
     .top_0()
     .left_0()
     .size_full()
-}
-
-/// The open tab's accent ring: it flares out from the pill and fades when the page changes
-/// (`key` is the page switch count, so it plays once per switch).
-fn pill_ring(key: usize) -> AnyElement {
-    let look = ui::look();
-    div()
-        .absolute()
-        .rounded(px(radius::CONTROL + 4.))
-        .border_1()
-        .border_color(ui::color(look.accent_soft).opacity(0.8))
-        .bg(ui::color(look.accent).opacity(0.25))
-        .with_animation(
-            ElementId::named_usize("nav-pill", key),
-            crate::motion::eased(crate::motion::POP),
-            |d, p| {
-                let out = -1. - 4. * (1. - p);
-                d.top(px(out))
-                    .bottom(px(out))
-                    .left(px(out))
-                    .right(px(out))
-                    .opacity(1. - p)
-            },
-        )
-        .into_any_element()
 }
 
 impl Launcher {
@@ -684,10 +659,7 @@ impl Launcher {
             .gap(px(if compact { 2. } else { 4. }))
             .min_w_0();
         for (page, label, _) in Page::in_top_bar(self.wardrobe_shown()) {
-            let mut item = ui::tab(format!("nav-{label}"), tr(label), self.page == page, &t);
-            if self.page == page {
-                item = item.child(pill_ring(self.switches));
-            }
+            let mut item = ui::nav_tab(format!("nav-{label}"), tr(label), self.page == page, &t);
             if compact {
                 item = item.px(px(8.));
             }
@@ -698,8 +670,9 @@ impl Launcher {
                 })),
             );
         }
-        let strip = crate::glass::plate(radius::LARGE)
-            .p(px(4.))
+        let strip = div()
+            .flex()
+            .items_center()
             .min_w_0()
             .when(wide, |d| d.flex_none())
             .when(!wide, |d| d.flex_shrink(1.).overflow_hidden())
