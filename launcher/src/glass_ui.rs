@@ -373,8 +373,12 @@ pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> St
         d.bg(color(look().accent).opacity(0.16))
             .border_color(color(look().accent_soft).opacity(0.55))
     } else {
-        d.border_color(gpui::transparent_black())
-            .child(hover_edge(&id, radius::ROW, fill::ROW_HOVER, true))
+        d.border_color(gpui::transparent_black()).child(hover_edge(
+            &id,
+            radius::ROW,
+            fill::ROW_HOVER,
+            true,
+        ))
     };
     keyboard(track_hover(d, id), t)
 }
@@ -487,7 +491,9 @@ pub fn tab(
             .child(hover_edge(&id, radius::CONTROL, fill::HOVER, true))
     };
     let label: SharedString = label.into();
-    let d = d.when(!label.is_empty(), |d| d.child(div().relative().child(label)));
+    let d = d.when(!label.is_empty(), |d| {
+        d.child(div().relative().child(label))
+    });
     keyboard(track_hover(d, id), t)
 }
 
@@ -671,7 +677,7 @@ pub fn solid(
                     offset: gpui::point(px(0.), px(4.)),
                     blur_radius: px(14.),
                     spread_radius: px(0.),
-        inset: false,
+                    inset: false,
                 }])
             })
             .active(|s| s.opacity(0.85))

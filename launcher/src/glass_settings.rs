@@ -29,7 +29,13 @@ const SECTIONS: [(&str, &str); 10] = [
 /// What the search finds in each section, in [`SECTIONS`]' order: its rows' names and words a
 /// player may look for them by. English; a query matches them and their translation.
 const INDEX: [&[&str]; 10] = [
-    &["Microsoft account", "Sign in with Microsoft", "Sign out", "Play as", "Skin"],
+    &[
+        "Microsoft account",
+        "Sign in with Microsoft",
+        "Sign out",
+        "Play as",
+        "Skin",
+    ],
     &[
         "Install new versions automatically",
         "Delete old versions automatically",
@@ -50,7 +56,12 @@ const INDEX: [&[&str]; 10] = [
     ],
     &["Language", "While playing", "Show the opening"],
     &["Proxy"],
-    &["Game architecture", "Arguments", "Update mods automatically", "Memory"],
+    &[
+        "Game architecture",
+        "Arguments",
+        "Update mods automatically",
+        "Memory",
+    ],
     &["Storage", "Disk space", "Cache"],
     &["No AI", "Agents", "MCP"],
     &["Data folder", "Logs", "Applications menu", "Crash reports"],
@@ -192,11 +203,21 @@ impl Launcher {
                         Some(row) => (tr(row).to_string(), Some(tr(label).to_string())),
                         None => (tr(label).to_string(), None),
                     };
-                    nav_item(format!("settings-hit-{k}"), icon, title, sub, false, wide, &t)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    nav_item(
+                        format!("settings-hit-{k}"),
+                        icon,
+                        title,
+                        sub,
+                        false,
+                        wide,
+                        &t,
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
                             this.settings_pane.scroll_to_top_of_item(at);
                             cx.notify();
-                        }))
+                        },
+                    ))
                 })
                 .collect()
         } else {
@@ -205,11 +226,21 @@ impl Launcher {
                 .enumerate()
                 .map(|(i, &(label, icon))| {
                     let title = tr(label).to_string();
-                    nav_item(format!("settings-nav-{i}"), icon, title, None, i == active, wide, &t)
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    nav_item(
+                        format!("settings-nav-{i}"),
+                        icon,
+                        title,
+                        None,
+                        i == active,
+                        wide,
+                        &t,
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
                             this.settings_pane.scroll_to_top_of_item(i);
                             cx.notify();
-                        }))
+                        },
+                    ))
                 })
                 .collect()
         };
@@ -687,12 +718,20 @@ impl Launcher {
             )))
             .when(!query.is_empty(), |d| {
                 d.child(
-                    ui::icon_button("settings-search-clear", "cancel-01", 26., 14., 8., false, &t)
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.settings_query.set(String::new());
-                            cx.stop_propagation();
-                            cx.notify();
-                        })),
+                    ui::icon_button(
+                        "settings-search-clear",
+                        "cancel-01",
+                        26.,
+                        14.,
+                        8.,
+                        false,
+                        &t,
+                    )
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.settings_query.set(String::new());
+                        cx.stop_propagation();
+                        cx.notify();
+                    })),
                 )
             })
             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {

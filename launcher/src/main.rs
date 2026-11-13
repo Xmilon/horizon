@@ -2533,12 +2533,12 @@ fn slot_row(
             .py(px(12.))
             .children(slot.map(|s| s.rounded(px(8.)).overflow_hidden()))
             .child(
-                    glass_ui::setting_row(name, detail, right)
-                        .p_0()
-                        .border_0()
-                        .bg(gpui::transparent_black())
-                        .flex_1(),
-                );
+                glass_ui::setting_row(name, detail, right)
+                    .p_0()
+                    .border_0()
+                    .bg(gpui::transparent_black())
+                    .flex_1(),
+            );
     }
     blocks::panel(t)
         .flex()

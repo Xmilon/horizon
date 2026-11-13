@@ -5,7 +5,7 @@
 use super::*;
 use crate::glass_ui::{self as ui, white, Tone};
 use crate::instances_page::java_line;
-use gpui::{anchored, canvas, deferred, point};
+use gpui::{anchored, canvas, deferred, point, AnimationExt};
 use horizon_launcher::instances::{Icon, Instance, Kind as InstanceKind};
 use horizon_theme::glass::{fill, ink, radius};
 use std::cell::RefCell;
@@ -37,6 +37,31 @@ fn measure(rows: &Rc<RefCell<HashMap<String, Bounds<Pixels>>>>, id: String) -> i
     .top_0()
     .left_0()
     .size_full()
+}
+
+/// The open tab's accent ring: it flares out from the pill and fades when the page changes
+/// (`key` is the page switch count, so it plays once per switch).
+fn pill_ring(key: usize) -> AnyElement {
+    let look = ui::look();
+    div()
+        .absolute()
+        .rounded(px(radius::CONTROL + 4.))
+        .border_1()
+        .border_color(ui::color(look.accent_soft).opacity(0.8))
+        .bg(ui::color(look.accent).opacity(0.25))
+        .with_animation(
+            ElementId::named_usize("nav-pill", key),
+            crate::motion::eased(crate::motion::POP),
+            |d, p| {
+                let out = -1. - 4. * (1. - p);
+                d.top(px(out))
+                    .bottom(px(out))
+                    .left(px(out))
+                    .right(px(out))
+                    .opacity(1. - p)
+            },
+        )
+        .into_any_element()
 }
 
 impl Launcher {
@@ -158,6 +183,7 @@ impl Launcher {
         let on_packs = self.page == Page::Mods && self.mods.on_modpacks();
         let mut out = Vec::new();
         let mut group = None;
+        let mut rows_in = 0;
         let mut list = div().flex().flex_col().gap(px(4.));
         let flush = |list: Div, out: &mut Vec<AnyElement>| {
             out.push(list.into_any_element());
@@ -228,7 +254,11 @@ impl Launcher {
                         },
                     )),
                 );
-            list = list.child(
+            let order = rows_in;
+            rows_in += 1;
+            list = list.child(crate::motion::enter(
+                ElementId::named_usize(format!("side-enter-{}", i.id), 0),
+                order,
                 div()
                     .relative()
                     .child(measure(&self.row_menu.rows, i.id.clone()))
@@ -266,7 +296,7 @@ impl Launcher {
                             ),
                     )
                     .child(more),
-            );
+            ));
         }
         out.push(list.into_any_element());
         out
@@ -376,6 +406,8 @@ impl Launcher {
                 .flex_col()
                 .rounded(px(radius::ROW))
                 .bg(white(fill::FIELD))
+                .border_1()
+                .border_color(white(ui::edge::REST))
                 .p(px(14.))
                 .child(
                     div()
@@ -502,38 +534,51 @@ impl Launcher {
                     )),
                 );
             }
-            foot = foot.child(side);
+            foot = foot.child(crate::motion::enter(
+                ElementId::named_usize("side-partner", 0),
+                self.instances.list.len().min(8),
+                side,
+            ));
         }
 
         if !self.links.discord.is_empty() {
             let url = self.links.discord.clone();
+            let did = SharedString::from("discord");
             foot = foot.child(keyboard(
-                div()
-                    .id("discord")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(10.))
-                    .mt(px(12.))
-                    // At least 40 high: a long translation wraps onto a second line, which grows the
-                    // button instead of spilling out of it.
-                    .min_h(px(40.))
-                    .px(px(12.))
-                    .py(px(8.))
-                    .rounded(px(radius::ROW))
-                    // A quiet button: the community link stays findable without outshining Play
-                    // and Create, the launcher's own actions.
-                    .bg(ui::white(fill::BUTTON))
-                    .hover(|s| s.bg(ui::white(fill::BUTTON_HOVER)))
-                    .cursor_pointer()
-                    .child(ui::icon("discord", 18., ui::white(ink::SOFT)))
-                    .child(
-                        ui::text(14., FontWeight::MEDIUM, ink::STRONG)
-                            .min_w_0()
-                            .text_center()
-                            .child(tr("Join the Discord")),
-                    )
-                    .on_click(move |_, _, cx| cx.open_url(&url)),
+                track_hover(
+                    div()
+                        .id(did.clone())
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .gap(px(10.))
+                        .mt(px(12.))
+                        // At least 40 high: a long translation wraps onto a second line, which grows the
+                        // button instead of spilling out of it.
+                        .min_h(px(40.))
+                        .px(px(12.))
+                        .py(px(8.))
+                        .rounded(px(radius::ROW))
+                        // A quiet button: the community link stays findable without outshining Play
+                        // and Create, the launcher's own actions.
+                        .bg(ui::white(fill::BUTTON))
+                        .border_1()
+                        .border_color(white(ui::edge::REST))
+                        .active(|s| s.bg(white(0.16)))
+                        .cursor_pointer()
+                        .child(ui::hover_edge(&did, radius::ROW, 0.06, true))
+                        .child(ui::icon("discord", 18., ui::white(ink::SOFT)).relative())
+                        .child(
+                            ui::text(14., FontWeight::MEDIUM, ink::STRONG)
+                                .relative()
+                                .min_w_0()
+                                .text_center()
+                                .child(tr("Join the Discord")),
+                        )
+                        .on_click(move |_, _, cx| cx.open_url(&url)),
+                    did,
+                ),
                 &t,
             ));
         }
@@ -551,7 +596,8 @@ impl Launcher {
                         .size(px(36.))
                         .rounded(px(radius::ROW))
                         .cursor_pointer()
-                        .child(hover_layer(&id, white(fill::HOVER), radius::ROW, 0.))
+                        .active(|s| s.bg(white(0.12)))
+                        .child(ui::hover_edge(&id, radius::ROW, fill::HOVER, false))
                         .child(ui::icon(icon, 18., white(ink::SOFT)).relative())
                         // Shown by its icon alone: the name on hover.
                         .tooltip(ui::tip(label))
@@ -615,6 +661,13 @@ impl Launcher {
             .ml(px(MARGIN))
             .overflow_hidden()
             .child(header.relative())
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(1.))
+                    .mx(px(16.))
+                    .bg(white(ui::edge::REST)),
+            )
             .child(list.relative())
             .child(foot.relative())
     }
@@ -632,6 +685,9 @@ impl Launcher {
             .min_w_0();
         for (page, label, _) in Page::in_top_bar(self.wardrobe_shown()) {
             let mut item = ui::tab(format!("nav-{label}"), tr(label), self.page == page, &t);
+            if self.page == page {
+                item = item.child(pill_ring(self.switches));
+            }
             if compact {
                 item = item.px(px(8.));
             }

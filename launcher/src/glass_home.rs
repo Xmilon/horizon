@@ -126,10 +126,26 @@ impl Launcher {
             .flex_col()
             .min_w_0()
             .pt(px(64. - crate::glass::CONTENT_INSET))
-            .child(self.edition_tabs(java.is_some(), cx))
-            .child(self.home_title(cx))
-            .child(self.played_text(cx))
-            .child(actions)
+            .child(motion::enter(
+                ElementId::named_usize("home-edition", self.switches),
+                0,
+                self.edition_tabs(java.is_some(), cx),
+            ))
+            .child(motion::enter(
+                ElementId::named_usize("home-title", self.switches),
+                1,
+                self.home_title(cx),
+            ))
+            .child(motion::enter(
+                ElementId::named_usize("home-status", self.switches),
+                2,
+                self.played_text(cx),
+            ))
+            .child(motion::enter(
+                ElementId::named_usize("home-actions", self.switches),
+                3,
+                actions,
+            ))
     }
 
     /// The edition tabs (`Tabs`, size `sm`): the instance's own lit. An instance's edition is
@@ -139,8 +155,11 @@ impl Launcher {
         let grass = self.grass_mark(18.);
         let horizon = self.horizon_mark(18.);
         let tab = |label: &'static str, icon: AnyElement, open: bool| {
+            let id = SharedString::from(format!("edition-{label}"));
             let d = div()
-                .id(SharedString::from(format!("edition-{label}")))
+                .id(id.clone())
+                .relative()
+                .border_1()
                 .flex()
                 .flex_none()
                 .items_center()
@@ -151,20 +170,27 @@ impl Launcher {
                 .font_family(horizon_theme::glass::FONT)
                 .text_size(px(13.))
                 .line_height(px(18.))
-                .child(icon)
-                .child(tr(label));
+                .child(div().relative().child(icon))
+                .child(div().relative().child(tr(label)));
             if open {
-                d.bg(white(fill::ACTIVE))
+                d.bg(ui::color(ui::look().accent).opacity(0.16))
+                    .border_color(ui::color(ui::look().accent_soft).opacity(0.5))
                     .font_weight(FontWeight::MEDIUM)
                     .text_color(white(ink::FULL))
             } else {
-                d.text_color(white(ink::OFF))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(white(fill::ROW_HOVER)).text_color(white(ink::FULL)))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.switch_edition(label == "Java Edition", cx);
-                        cx.notify();
-                    }))
+                track_hover(
+                    d.border_color(white(ui::edge::REST))
+                        .text_color(white(ink::OFF))
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(white(ink::FULL)))
+                        .active(|s| s.bg(white(0.12)))
+                        .child(ui::hover_edge(&id, radius::CONTROL, fill::ROW_HOVER, true)),
+                    id.clone(),
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.switch_edition(label == "Java Edition", cx);
+                    cx.notify();
+                }))
             }
         };
         let java_icon = match grass {
@@ -388,6 +414,7 @@ impl Launcher {
             }))
             .h(px(TALL))
             .overflow_hidden()
+            .border_1()
             .rounded(px(radius::LARGE));
         let body = |label: SharedString, icon: &'static str| {
             div()
@@ -403,12 +430,18 @@ impl Launcher {
                 .font_family(horizon_theme::glass::FONT)
                 .text_size(px(18.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .child(ui::icon(icon, 20., glyph))
+                // The glyph leans into the press while the pointer is on Play.
+                .child(
+                    ui::icon(icon, 20., glyph)
+                        .group_hover("play-glyph", |s| s.ml(px(3.)).mr(px(-3.))),
+                )
                 .child(label)
         };
+        let busy_none = busy.is_none();
         let group = match busy {
             Some((label, progress)) => base
                 .bg(accent.opacity(0.35))
+                .border_color(accent.opacity(0.5))
                 .child(
                     div()
                         .absolute()
@@ -434,17 +467,20 @@ impl Launcher {
                             None => format!("{label}…"),
                         }),
                 ),
-            None if running => base.bg(white(0.14)).child(
-                body(tr("Stop").into(), "stop")
-                    .id("play")
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        if let Some(client) = &this.client {
-                            client.kill();
-                        }
-                        cx.notify();
-                    })),
-            ),
+            None if running => base
+                .bg(white(0.14))
+                .border_color(white(ui::edge::HOVER))
+                .child(
+                    body(tr("Stop").into(), "stop")
+                        .id("play")
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            if let Some(client) = &this.client {
+                                client.kill();
+                            }
+                            cx.notify();
+                        })),
+                ),
             None => {
                 let owner = if horizon_launcher::developer_offline::selected() {
                     Some(true)
@@ -480,14 +516,30 @@ impl Launcher {
                     (None, PlayPress::Nothing) => main.opacity(0.5).cursor_default(),
                 };
                 base.bg(accent)
+                    .border_color(ui::color(self.look.accent_soft).opacity(0.6))
                     .text_color(on_accent)
-                    .hover(|s| s.opacity(0.92))
                     .child(main)
             }
         };
-        let mut wrap = div()
-            .relative()
-            .child(keyboard(group.id("play-group"), &t).child(more));
+        // Ready to play: the accent's glow comes up under the pointer, a press dims it.
+        let primary = !running && busy_none;
+        let soft = ui::color(self.look.accent_soft);
+        let group = group
+            .id("play-group")
+            .group("play-glyph")
+            .when(primary, |d| {
+                d.hover(move |s| {
+                    s.border_color(soft).shadow(vec![gpui::BoxShadow {
+                        color: accent.opacity(0.5),
+                        offset: gpui::point(px(0.), px(4.)),
+                        blur_radius: px(22.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                })
+                .active(|s| s.opacity(0.85).shadow(Vec::new()))
+            });
+        let mut wrap = div().relative().child(keyboard(group, &t).child(more));
         if open {
             let locked = running || busy.is_some();
             let mut items: Vec<(&'static str, SharedString, String, bool, PlayItem)> = Vec::new();
@@ -612,53 +664,66 @@ impl Launcher {
                 std::f32::consts::PI,
             )))
         });
+        let picker_id = SharedString::from("picker");
         let button = keyboard(
-            div()
-                .id("picker")
-                .flex()
-                .items_center()
-                .justify_between()
-                .gap(px(24.))
-                .h(px(TALL))
-                .flex_none()
-                .min_w(px(if self.window_width >= WIDE {
-                    220.
-                } else {
-                    170.
-                }))
-                .px(px(16.))
-                .rounded(px(radius::LARGE))
-                .bg(white(fill::BUTTON))
-                .hover(|s| s.bg(white(fill::ACTIVE)))
-                .cursor_pointer()
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            ui::text(12., FontWeight::NORMAL, ink::QUIET)
-                                .line_height(px(18.))
-                                .child(tr("Version")),
-                        )
-                        .child(
-                            ui::text(15., FontWeight::MEDIUM, ink::FULL)
-                                .line_height(px(22.))
-                                .child(label),
-                        ),
-                )
-                .child(chevron)
-                .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
-                    if !this.closed_by_this_press(event) {
-                        this.picker.open = !this.picker.open;
-                        this.picker.window_height = f32::from(window.viewport_size().height);
-                        // Opens at the top of the list, not where it was left.
-                        this.picker
-                            .scroll
-                            .handle
-                            .set_offset(gpui::point(px(0.), px(0.)));
-                    }
-                    cx.notify();
-                })),
+            track_hover(
+                div()
+                    .id(picker_id.clone())
+                    .relative()
+                    .border_1()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(24.))
+                    .h(px(TALL))
+                    .flex_none()
+                    .min_w(px(if self.window_width >= WIDE {
+                        220.
+                    } else {
+                        170.
+                    }))
+                    .px(px(16.))
+                    .rounded(px(radius::LARGE))
+                    .bg(white(fill::BUTTON))
+                    .border_color(if open {
+                        white(ui::edge::STRONG)
+                    } else {
+                        white(ui::edge::REST)
+                    })
+                    .active(|s| s.bg(white(0.18)))
+                    .cursor_pointer()
+                    .child(ui::hover_edge(&picker_id, radius::LARGE, 0.06, true))
+                    .child(
+                        div()
+                            .relative()
+                            .flex()
+                            .flex_col()
+                            .child(
+                                ui::text(12., FontWeight::NORMAL, ink::QUIET)
+                                    .line_height(px(18.))
+                                    .child(tr("Version")),
+                            )
+                            .child(
+                                ui::text(15., FontWeight::MEDIUM, ink::FULL)
+                                    .line_height(px(22.))
+                                    .child(label),
+                            ),
+                    )
+                    .child(chevron.relative())
+                    .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
+                        if !this.closed_by_this_press(event) {
+                            this.picker.open = !this.picker.open;
+                            this.picker.window_height = f32::from(window.viewport_size().height);
+                            // Opens at the top of the list, not where it was left.
+                            this.picker
+                                .scroll
+                                .handle
+                                .set_offset(gpui::point(px(0.), px(0.)));
+                        }
+                        cx.notify();
+                    })),
+                picker_id,
+            ),
             &t,
         );
         let mut wrap = div().relative().child(button);
@@ -777,15 +842,22 @@ impl Launcher {
             .h(px(TALL))
             .rounded(px(radius::LARGE))
             .bg(white(fill::BUTTON))
-            .hover(|s| s.bg(white(fill::ACTIVE)))
+            .border_1()
+            .border_color(white(if open {
+                ui::edge::STRONG
+            } else {
+                ui::edge::REST
+            }))
+            .hover(|s| s.bg(white(0.13)).border_color(white(ui::edge::HOVER)))
             .child(
                 div()
                     .id("home-folder")
                     .flex()
                     .items_center()
                     .justify_center()
-                    .size(px(TALL))
+                    .size(px(TALL - 2.))
                     .cursor_pointer()
+                    .active(|s| s.bg(white(0.1)))
                     .child(ui::icon("folder-01", 21., white(ink::STRONG)))
                     .on_click(move |_, _, cx| {
                         let _ = std::fs::create_dir_all(&opener);
@@ -893,6 +965,13 @@ impl Launcher {
             .pr(px(pr))
             .rounded(px(radius::LARGE))
             .bg(white(if focused { 0.09 } else { 0.06 }))
+            .border_1()
+            .border_color(if focused {
+                ui::color(ui::look().accent_soft).opacity(0.7)
+            } else {
+                white(ui::edge::REST)
+            })
+            .hover(|s| s.border_color(white(ui::edge::HOVER)))
             .font_family(horizon_theme::glass::FONT)
             .text_size(px(14.))
             .text_color(white(ink::FULL))

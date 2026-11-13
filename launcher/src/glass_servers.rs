@@ -536,17 +536,21 @@ impl Launcher {
         if let Some(p) = self.servers.problem.clone() {
             card = card.child(glass_home_lists::danger_line(p.message).relative());
         }
-        glass::plate(radius::PANEL).flex().flex_col().p(px(16.)).child(
-            card.child(
-                button("server-create-empty", "Create a server", Kind::Primary, &t)
-                    .h(px(44.))
-                    .px(px(24.))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.open_create(cx);
-                        cx.notify();
-                    })),
-            ),
-        )
+        glass::plate(radius::PANEL)
+            .flex()
+            .flex_col()
+            .p(px(16.))
+            .child(
+                card.child(
+                    button("server-create-empty", "Create a server", Kind::Primary, &t)
+                        .h(px(44.))
+                        .px(px(24.))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.open_create(cx);
+                            cx.notify();
+                        })),
+                ),
+            )
     }
 
     /// The servers, the open one lit, then Create a server and (not in the mockup) adding a

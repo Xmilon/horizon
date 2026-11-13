@@ -412,10 +412,13 @@ impl Launcher {
                     .gap(px(6.))
                     .px(px(8.))
                     .child(ui::dot(ui::Tone::Live))
-                    .child(ui::text(13., FontWeight::MEDIUM, ink::FULL).text_color(ui::live()).child(tr("Installed")))
+                    .child(
+                        ui::text(13., FontWeight::MEDIUM, ink::FULL)
+                            .text_color(ui::live())
+                            .child(tr("Installed")),
+                    )
                     .into_any_element()
-            } else if busy || checking || m.support(&p).installable()
-            {
+            } else if busy || checking || m.support(&p).installable() {
                 let label = if installed {
                     tr("Installed")
                 } else if checking {
