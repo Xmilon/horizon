@@ -166,6 +166,8 @@ impl Launcher {
             .flex_col()
             .rounded(px(16.))
             .bg(white(0.045))
+            .border_1()
+            .border_color(white(ui::edge::REST))
             .p(px(24.))
             .when(has_accounts, |d| {
                 d.child(rows.mx(px(-16.)).mt(px(-16.)).mb(px(16.)))

@@ -110,6 +110,10 @@ pub fn setting_row(
         .px(px(16.))
         .py(px(16.))
         .rounded(px(radius::LARGE))
+        .bg(white(0.025))
+        .border_1()
+        .border_color(white(edge::REST))
+        .hover(|s| s.border_color(white(0.18)))
         .child(
             div()
                 .flex()
@@ -146,6 +150,10 @@ pub fn setting_row_stacked(
         .px(px(16.))
         .py(px(16.))
         .rounded(px(radius::LARGE))
+        .bg(white(0.025))
+        .border_1()
+        .border_color(white(edge::REST))
+        .hover(|s| s.border_color(white(0.18)))
         .child(
             div()
                 .flex()
@@ -259,7 +267,49 @@ fn layer(r: f32) -> impl Fn() -> Div {
 /// `id`'s fill eased between `from` (white at that opacity) and `to` while hovered, as the
 /// mockup's `transition-colors` does.
 fn hover_fill(id: &SharedString, r: f32, from: f32, to: f32) -> gpui::AnyElement {
-    hover_fade(id, layer(r), move |d, t| d.bg(white((to - from) * t)))
+    hover_edge(id, r, to - from, false)
+}
+
+/// How opaque white outlines are: every control and inner card at rest, under the pointer, and
+/// open or chosen (redesign pass 2: outlines everywhere, stronger as the pointer comes).
+pub mod edge {
+    pub const REST: f32 = 0.10;
+    pub const HOVER: f32 = 0.24;
+    pub const STRONG: f32 = 0.30;
+}
+
+/// `id`'s hover layer: a white fill at `fill` and an outline at [`edge::HOVER`], both eased in
+/// and out. `bordered`: the element has its own 1 px outline, which the layer's covers.
+pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -> gpui::AnyElement {
+    let inset = if bordered { -1. } else { 0. };
+    hover_fade(
+        id,
+        move || {
+            div()
+                .absolute()
+                .top(px(inset))
+                .left(px(inset))
+                .right(px(inset))
+                .bottom(px(inset))
+                .rounded(px(r))
+        },
+        move |d, t| {
+            d.bg(white(fill * t))
+                .border_1()
+                .border_color(white(edge::HOVER * t))
+        },
+    )
+}
+
+/// The accent's glow under a primary button the pointer is on.
+fn glow() -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: color(look().accent).opacity(0.45),
+        offset: gpui::point(px(0.), px(4.)),
+        blur_radius: px(18.),
+        spread_radius: px(0.),
+        inset: false,
+    }]
 }
 
 /// The state dot before a row's second line (`Dot`): live green, amber for busy (the mockup
@@ -316,11 +366,15 @@ pub fn row(id: impl Into<SharedString>, current: bool, pr: f32, t: &Theme) -> St
         .p(px(8.))
         .pr(px(pr))
         .rounded(px(radius::ROW))
+        .border_1()
         .cursor_pointer();
+    // The one shown: tinted with the accent and outlined in it.
     let d = if current {
-        d.bg(white(fill::SELECTED))
+        d.bg(color(look().accent).opacity(0.16))
+            .border_color(color(look().accent_soft).opacity(0.55))
     } else {
-        d.child(hover_fill(&id, radius::ROW, 0., fill::HOVER))
+        d.border_color(gpui::transparent_black())
+            .child(hover_edge(&id, radius::ROW, fill::ROW_HOVER, true))
     };
     keyboard(track_hover(d, id), t)
 }
@@ -382,6 +436,8 @@ pub fn icon_button(
         .cursor_pointer();
     let d = if active {
         d.bg(white(fill::ACTIVE))
+            .border_1()
+            .border_color(white(edge::STRONG))
     } else {
         d.child(hover_fill(&id, r, 0., fill::BUTTON))
     };
@@ -406,6 +462,7 @@ pub fn tab(
     let id = id.into();
     let d = div()
         .id(id.clone())
+        .relative()
         .flex()
         .flex_none()
         .items_center()
@@ -413,20 +470,24 @@ pub fn tab(
         .h(px(36.))
         .px(px(14.))
         .rounded(px(radius::CONTROL))
+        .border_1()
         .cursor_pointer()
         .font_family(horizon_theme::glass::FONT)
         .text_size(px(15.))
         .line_height(px(20.));
     let d = if open {
         d.bg(white(fill::ACTIVE))
+            .border_color(white(edge::STRONG))
             .font_weight(FontWeight::MEDIUM)
             .text_color(white(ink::FULL))
     } else {
-        d.text_color(white(ink::BODY))
+        d.border_color(gpui::transparent_black())
+            .text_color(white(ink::BODY))
             .hover(|s| s.text_color(white(ink::FULL)))
+            .child(hover_edge(&id, radius::CONTROL, fill::HOVER, true))
     };
     let label: SharedString = label.into();
-    let d = d.when(!label.is_empty(), |d| d.child(label));
+    let d = d.when(!label.is_empty(), |d| d.child(div().relative().child(label)));
     keyboard(track_hover(d, id), t)
 }
 
@@ -442,9 +503,14 @@ pub fn count_tab(
 ) -> Stateful<Div> {
     let colour = white(if open { ink::FULL } else { ink::BODY });
     tab(id, "", open, t)
-        .children(icon_name.map(|n| icon(n, 16., colour)))
-        .child(label.into())
-        .children(count.map(|n| div().text_color(white(ink::DIM)).child(n.to_string())))
+        .children(icon_name.map(|n| icon(n, 16., colour).relative()))
+        .child(div().relative().child(label.into()))
+        .children(count.map(|n| {
+            div()
+                .relative()
+                .text_color(white(ink::DIM))
+                .child(n.to_string())
+        }))
 }
 
 const MENU_FONT_SIZE: f32 = 14.;
@@ -596,8 +662,19 @@ pub fn solid(
             .rounded(px(radius::CONTROL))
             .text_center()
             .bg(paper())
+            .border_1()
+            .border_color(white(edge::REST))
             .cursor_pointer()
-            .hover(|s| s.opacity(0.9))
+            .hover(|s| {
+                s.opacity(0.94).shadow(vec![gpui::BoxShadow {
+                    color: gpui::black().opacity(0.25),
+                    offset: gpui::point(px(0.), px(4.)),
+                    blur_radius: px(14.),
+                    spread_radius: px(0.),
+        inset: false,
+                }])
+            })
+            .active(|s| s.opacity(0.85))
             .font_family(horizon_theme::glass::FONT)
             .text_size(px(size))
             .font_weight(FontWeight::MEDIUM)
@@ -625,7 +702,10 @@ pub fn big_icon(id: impl Into<SharedString>, name: &'static str, t: &Theme) -> S
             .size(px(56.))
             .rounded(px(radius::LARGE))
             .bg(white(fill::BUTTON))
-            .hover(|s| s.bg(white(0.13)))
+            .border_1()
+            .border_color(white(edge::REST))
+            .hover(|s| s.bg(white(0.13)).border_color(white(edge::HOVER)))
+            .active(|s| s.bg(white(0.18)))
             .cursor_pointer()
             .child(glyph),
         t,
@@ -735,28 +815,31 @@ pub fn quiet_icon(
     h: f32,
     t: &Theme,
 ) -> Stateful<Div> {
-    keyboard(
-        div()
-            .id(id.into())
-            .flex()
-            .flex_none()
-            .items_center()
-            .justify_center()
-            .gap(px(8.))
-            .h(px(h))
-            .px(px(14.))
-            .rounded(px(radius::CONTROL))
-            .bg(white(fill::BUTTON))
-            .hover(|s| s.bg(white(0.14)))
-            .cursor_pointer()
-            .font_family(horizon_theme::glass::FONT)
-            .text_size(px(14.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(white(ink::FULL))
-            .children(name.map(|n| icon(n, 16., white(ink::FULL))))
-            .child(label.into()),
-        t,
-    )
+    let id = id.into();
+    let d = div()
+        .id(id.clone())
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_center()
+        .gap(px(8.))
+        .h(px(h))
+        .px(px(14.))
+        .rounded(px(radius::CONTROL))
+        .bg(white(fill::BUTTON))
+        .border_1()
+        .border_color(white(edge::REST))
+        .active(|s| s.bg(white(0.18)))
+        .cursor_pointer()
+        .font_family(horizon_theme::glass::FONT)
+        .text_size(px(14.))
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(white(ink::FULL))
+        .child(hover_edge(&id, radius::CONTROL, 0.06, true))
+        .children(name.map(|n| icon(n, 16., white(ink::FULL)).relative()))
+        .child(div().relative().child(label.into()));
+    keyboard(track_hover(d, id), t)
 }
 
 /// A list row (`ROW`): `rounded-[12px] px-3 py-2.5`, white at 6 % under the pointer. `on_hover`
@@ -774,6 +857,8 @@ pub fn list_row(
     let fill = if held && !hover_is(&id) {
         layer(radius::ROW)()
             .bg(white(fill::ROW_HOVER))
+            .border_1()
+            .border_color(white(edge::HOVER))
             .into_any_element()
     } else {
         hover_fill(&id, radius::ROW, 0., fill::ROW_HOVER)
@@ -876,6 +961,15 @@ pub fn field(focused: bool, invalid: bool) -> Div {
         .overflow_hidden()
         .rounded(px(radius::ROW))
         .bg(bg)
+        .border_1()
+        .border_color(if invalid {
+            color(horizon_theme::glass::DANGER_HOVER).opacity(0.6)
+        } else if focused {
+            color(look().accent_soft).opacity(0.7)
+        } else {
+            white(edge::REST)
+        })
+        .hover(|s| s.border_color(white(edge::HOVER)))
         .font_family(horizon_theme::glass::FONT)
         .text_size(px(14.))
 }
@@ -940,18 +1034,26 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
     let d = match kind {
         Kind::Primary => d
             .bg(color(look.accent))
+            .border_1()
+            .border_color(color(look.accent_soft).opacity(0.6))
             .text_color(color(look.on_accent))
             .font_weight(FontWeight::SEMIBOLD)
-            .hover(|s| s.opacity(0.92)),
+            .hover(move |s| s.shadow(glow()).border_color(color(look.accent_soft)))
+            .active(|s| s.opacity(0.85).shadow(Vec::new())),
         Kind::Secondary => d
             .bg(white(fill::BUTTON))
+            .border_1()
+            .border_color(white(edge::REST))
             .text_color(white(ink::FULL))
-            .hover(|s| s.bg(white(fill::BUTTON_HOVER))),
+            .active(|s| s.bg(white(0.18)))
+            .child(hover_edge(&id, radius::CONTROL, 0.06, true)),
         Kind::Ghost => d
             .text_color(white(ink::BODY))
-            .hover(|s| s.bg(white(0.06)).text_color(white(ink::FULL))),
+            .hover(|s| s.text_color(white(ink::FULL)))
+            .active(|s| s.bg(white(0.1)))
+            .child(hover_edge(&id, radius::CONTROL, 0.06, false)),
     };
-    keyboard(track_hover(d.child(label), id), t)
+    keyboard(track_hover(d.child(div().relative().child(label)), id), t)
 }
 
 /// A segmented control in the glass look (the server dialog's difficulty): white at 4 % round
@@ -972,6 +1074,8 @@ pub fn segments<T: Copy + PartialEq + 'static>(
         .p(px(4.))
         .rounded(px(radius::LARGE))
         .bg(white(0.04))
+        .border_1()
+        .border_color(white(edge::REST))
         .children(options.iter().map(|&(value, label)| {
             let active = current == value;
             let pick = on_pick.clone();
@@ -984,18 +1088,25 @@ pub fn segments<T: Copy + PartialEq + 'static>(
                 .h(px(32.))
                 .px(px(12.))
                 .rounded(px(radius::CONTROL))
+                .border_1()
                 .cursor_pointer()
                 .font_family(horizon_theme::glass::FONT)
                 .text_size(px(14.))
                 .line_height(px(20.))
                 .when(active, |d| {
                     d.bg(white(fill::BUTTON_HOVER))
+                        .border_color(white(edge::STRONG))
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(white(ink::FULL))
                 })
                 .when(!active, |d| {
-                    d.text_color(white(ink::MUTED))
-                        .hover(|s| s.text_color(white(ink::FULL)))
+                    d.border_color(gpui::transparent_black())
+                        .text_color(white(ink::MUTED))
+                        .hover(|s| {
+                            s.bg(white(0.06))
+                                .border_color(white(edge::REST))
+                                .text_color(white(ink::FULL))
+                        })
                 })
                 .child(crate::tr(label))
                 .on_click(move |_: &ClickEvent, window, cx| pick(value, window, cx));

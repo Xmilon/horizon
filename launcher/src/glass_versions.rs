@@ -267,7 +267,7 @@ impl Launcher {
                         .gap(px(10.))
                         .child(
                             ui::text(13., FontWeight::NORMAL, ink::QUIET)
-                                .child(tr("Older versions kept")),
+                                .child(tr("Older versions")),
                         )
                         .child(card)
                 } else {
@@ -351,7 +351,10 @@ impl Launcher {
                                     .when(latest, |d| {
                                         d.child(badge(Tone::Accent(look.accent_soft), "Latest"))
                                     })
-                                    .when(in_use, |d| d.child(badge(Tone::Live, "In use"))),
+                                    .when(in_use, |d| d.child(badge(Tone::Live, "In use")))
+                                    .when(installed && !in_use, |d| {
+                                        d.child(badge(Tone::Off, "Installed"))
+                                    }),
                             )
                             .child(
                                 ui::text(13., FontWeight::NORMAL, 0.6)

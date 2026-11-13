@@ -18,6 +18,14 @@ pub const POP: tokens::Motion = tokens::Motion {
 };
 pub const POP_RISE: f32 = 6.;
 
+/// A new page: as [`POP`], a little longer and from further down, so the switch reads.
+pub const PAGE: tokens::Motion = tokens::Motion {
+    name: "page",
+    ms: 260,
+    curve: [0.2, 0.7, 0.2, 1.],
+};
+pub const PAGE_RISE: f32 = 12.;
+
 /// A switch's knob (`transition-[translate] duration-200`, Tailwind's default curve).
 const SLIDE: tokens::Motion = tokens::Motion {
     name: "slide",
@@ -77,6 +85,37 @@ pub fn knob(id: &str, on: bool, knob: Div, left: f32, travel: f32) -> AnyElement
         }
         None => knob.left(px(at(1.))).into_any_element(),
     }
+}
+
+/// How long each later item of a list waits before it comes in ([`enter`]), and the most it waits.
+const STAGGER_MS: u64 = 40;
+const STAGGER_MAX: usize = 8;
+
+/// `el` coming in as a new page does (a fade and a rise, [`PAGE`]), `order` items after the first
+/// of its list, so a list or a column of cards cascades in. `key` names this entrance: it plays
+/// once per key, so put what should replay it (the page switch count, the tab) in the key. Under
+/// reduced motion it is simply there.
+pub fn enter(key: impl Into<ElementId>, order: usize, el: Div) -> AnyElement {
+    let delay = STAGGER_MS * order.min(STAGGER_MAX) as u64;
+    let total = PAGE.ms + delay;
+    let start = delay as f32 / total as f32;
+    let animation = Animation::new(std::time::Duration::from_millis(total));
+    let animation = if still() {
+        animation.with_easing(|_| 1.)
+    } else {
+        animation.with_easing(move |t| {
+            if t <= start {
+                0.
+            } else {
+                PAGE.ease((t - start) / (1. - start))
+            }
+        })
+    };
+    el.relative()
+        .with_animation(key, animation, |d, p| {
+            d.opacity(p).top(px(PAGE_RISE * (1. - p)))
+        })
+        .into_any_element()
 }
 
 #[cfg(test)]

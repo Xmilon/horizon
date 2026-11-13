@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::glass_ui::{self as ui, white};
-use horizon_theme::glass::{fill, ink, radius};
+use horizon_theme::glass::{ink, radius};
 
 /// The list's entries: name and icon. The settings sections.
 const SECTIONS: [(&str, &str); 10] = [
@@ -25,6 +25,58 @@ const SECTIONS: [(&str, &str); 10] = [
     ("About", "information-circle"),
     ("Data collection", "view"),
 ];
+
+/// What the search finds in each section, in [`SECTIONS`]' order: its rows' names and words a
+/// player may look for them by. English; a query matches them and their translation.
+const INDEX: [&[&str]; 10] = [
+    &["Microsoft account", "Sign in with Microsoft", "Sign out", "Play as", "Skin"],
+    &[
+        "Install new versions automatically",
+        "Delete old versions automatically",
+        "Check now",
+        "Nightly",
+    ],
+    &[
+        "Theme",
+        "Accent",
+        "Glass",
+        "Blur",
+        "Performance mode",
+        "Motion",
+        "Home background",
+        "Reset the launcher's look",
+        "Dark",
+        "Light",
+    ],
+    &["Language", "While playing", "Show the opening"],
+    &["Proxy"],
+    &["Game architecture", "Arguments", "Update mods automatically", "Memory"],
+    &["Storage", "Disk space", "Cache"],
+    &["No AI", "Agents", "MCP"],
+    &["Data folder", "Logs", "Applications menu", "Crash reports"],
+    &["Data collection", "Telemetry"],
+];
+
+/// The settings `query` finds: (section, the row's name, or `None` when the section's own name
+/// matched). Every word of the query must be in the name, in English or translated.
+fn search(query: &str) -> Vec<(usize, Option<&'static str>)> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let finds = |en: &str| {
+        let hay = format!("{en} {}", tr(en)).to_lowercase();
+        words.iter().all(|w| hay.contains(w.as_str()))
+    };
+    let mut hits = Vec::new();
+    for (i, &(label, _)) in SECTIONS.iter().enumerate() {
+        if finds(label) {
+            hits.push((i, None));
+        }
+        hits.extend(INDEX[i].iter().filter(|e| finds(e)).map(|&e| (i, Some(e))));
+    }
+    hits
+}
 
 /// What `settings_page` builds before it knows which look draws it.
 pub(super) struct Built {
@@ -44,6 +96,7 @@ fn card() -> Div {
     crate::glass::plate(radius::PANEL)
         .flex()
         .flex_col()
+        .gap(px(6.))
         .p(px(8.))
 }
 
@@ -57,6 +110,8 @@ fn tile(lead: AnyElement, title: String, note: String, action: AnyElement) -> Di
         .min_w(px(140.))
         .rounded(px(radius::LARGE))
         .bg(white(0.045))
+        .border_1()
+        .border_color(white(ui::edge::REST))
         .p(px(20.))
         .child(div().child(lead))
         .child(
@@ -102,73 +157,117 @@ impl Launcher {
         }
         let t = self.theme;
         let sections = ui::flat_rows(|| self.glass_settings_sections(b, cx));
-        let active = self.settings_section(sections.len());
-        self.settings_marked = active;
+        let query = self.settings_query.text().trim().to_string();
+        let searching = !query.is_empty();
+        let hits = search(&query);
+        // While searching, the list shows what was found and the pane only the cards it is in.
+        let mut shown: Vec<usize> = hits.iter().map(|h| h.0).collect();
+        shown.dedup();
+        let active = if searching {
+            usize::MAX
+        } else {
+            let active = self.settings_section(sections.len());
+            self.settings_marked = active;
+            active
+        };
+        let found = !searching || !shown.is_empty();
+        let sections: Vec<Div> = if searching {
+            sections
+                .into_iter()
+                .enumerate()
+                .filter(|(i, _)| shown.contains(i))
+                .map(|(_, d)| d)
+                .collect()
+        } else {
+            sections
+        };
         let wide = self.window_width >= crate::glass_home::COMPACT;
-        let items: Vec<_> = SECTIONS
-            .iter()
-            .enumerate()
-            .map(|(i, &(label, icon))| {
-                let on = i == active;
-                keyboard(
-                    div()
-                        .id(SharedString::from(format!("settings-nav-{i}")))
-                        .flex()
-                        .flex_none()
-                        .items_center()
-                        .gap(px(if wide { 12. } else { 8. }))
-                        .h(px(if wide { 40. } else { 34. }))
-                        .px(px(if wide { 12. } else { 10. }))
-                        .rounded(px(radius::ROW))
-                        .cursor_pointer()
-                        .font_family(horizon_theme::glass::FONT)
-                        .text_size(px(14.))
-                        .when(on, |d| {
-                            d.bg(white(fill::ACTIVE))
-                                .font_weight(FontWeight::MEDIUM)
-                                .text_color(white(ink::FULL))
-                        })
-                        .when(!on, |d| {
-                            d.text_color(white(0.65))
-                                .hover(|s| s.bg(white(0.05)).text_color(white(ink::FULL)))
-                        })
-                        .child(ui::icon(
-                            icon,
-                            17.,
-                            if on {
-                                ui::color(ui::look().accent_soft)
-                            } else {
-                                white(0.65)
-                            },
-                        ))
-                        .child(tr(label).to_string()),
-                    &t,
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.settings_pane.scroll_to_top_of_item(i);
-                    cx.notify();
-                }))
-            })
-            .collect();
+        let items: Vec<Stateful<Div>> = if searching {
+            hits.iter()
+                .enumerate()
+                .map(|(k, &(i, row))| {
+                    let (label, icon) = SECTIONS[i];
+                    let at = shown.iter().position(|&s| s == i).unwrap_or(0);
+                    let (title, sub) = match row {
+                        Some(row) => (tr(row).to_string(), Some(tr(label).to_string())),
+                        None => (tr(label).to_string(), None),
+                    };
+                    nav_item(format!("settings-hit-{k}"), icon, title, sub, false, wide, &t)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.settings_pane.scroll_to_top_of_item(at);
+                            cx.notify();
+                        }))
+                })
+                .collect()
+        } else {
+            SECTIONS
+                .iter()
+                .enumerate()
+                .map(|(i, &(label, icon))| {
+                    let title = tr(label).to_string();
+                    nav_item(format!("settings-nav-{i}"), icon, title, None, i == active, wide, &t)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.settings_pane.scroll_to_top_of_item(i);
+                            cx.notify();
+                        }))
+                })
+                .collect()
+        };
+        let field = self.settings_search_field(&query, cx);
         let nav = if wide {
             card()
                 .flex_none()
-                .w(px(210.))
+                .w(px(230.))
                 .gap(px(4.))
+                .child(field.mb(px(6.)))
+                .when(!found, |d| {
+                    d.child(
+                        ui::text(13., FontWeight::NORMAL, ink::QUIET)
+                            .px(px(12.))
+                            .py(px(8.))
+                            .child(tr("No setting has that name.")),
+                    )
+                })
                 .children(items)
                 .into_any_element()
         } else {
-            crate::glass::plate(radius::PANEL)
-                .id("settings-nav-strip")
+            div()
+                .flex()
+                .flex_col()
                 .flex_none()
                 .w_full()
-                .flex_row()
-                .overflow_x_scroll()
-                .on_scroll(|_, _, cx| cx.stop_propagation())
-                .gap(px(4.))
-                .p(px(6.))
-                .children(items)
+                .gap(px(8.))
+                .child(field)
+                .child(
+                    crate::glass::plate(radius::PANEL)
+                        .id("settings-nav-strip")
+                        .flex_none()
+                        .w_full()
+                        .flex_row()
+                        .overflow_x_scroll()
+                        .on_scroll(|_, _, cx| cx.stop_propagation())
+                        .gap(px(4.))
+                        .p(px(6.))
+                        .children(items),
+                )
                 .into_any_element()
+        };
+        let sections = if found {
+            sections
+        } else {
+            vec![card()
+                .items_center()
+                .gap(px(10.))
+                .py(px(48.))
+                .child(ui::icon("search-01", 28., white(ink::DIM)))
+                .child(ui::text(15., FontWeight::MEDIUM, ink::FULL).child(trf(
+                    "Nothing in Settings matches “{query}”",
+                    &[("query", &query)],
+                )))
+                .child(
+                    ui::text(13., FontWeight::NORMAL, ink::QUIET)
+                        .child(tr("Try another word, or clear the search.")),
+                )]
         };
         let pane = div()
             .id("settings-pane")
@@ -462,6 +561,178 @@ impl Launcher {
             about,
             card().child(self.collection_section(cx)),
         ]
+    }
+}
+
+/// An entry of the settings list: a section, or while searching a setting found (its section
+/// under it). The one being read is tinted with the accent, outlined in it and marked by a bar.
+fn nav_item(
+    id: String,
+    icon: &'static str,
+    title: String,
+    sub: Option<String>,
+    on: bool,
+    wide: bool,
+    t: &Theme,
+) -> Stateful<Div> {
+    let id = SharedString::from(id);
+    let accent = ui::look().accent;
+    let soft = ui::look().accent_soft;
+    let d = div()
+        .id(id.clone())
+        .relative()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap(px(if wide { 12. } else { 8. }))
+        .min_h(px(if wide { 40. } else { 34. }))
+        .py(px(if sub.is_some() { 6. } else { 0. }))
+        .px(px(if wide { 12. } else { 10. }))
+        .rounded(px(radius::ROW))
+        .border_1()
+        .cursor_pointer()
+        .font_family(horizon_theme::glass::FONT)
+        .text_size(px(14.))
+        .active(|s| s.bg(white(0.1)));
+    let d = if on {
+        d.bg(ui::color(accent).opacity(0.16))
+            .border_color(ui::color(soft).opacity(0.5))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(white(ink::FULL))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(-1.))
+                    .top(px(10.))
+                    .bottom(px(10.))
+                    .w(px(3.))
+                    .rounded_full()
+                    .bg(ui::color(soft)),
+            )
+    } else {
+        d.border_color(gpui::transparent_black())
+            .text_color(white(0.7))
+            .hover(|s| s.text_color(white(ink::FULL)))
+            .child(ui::hover_edge(&id, radius::ROW, 0.06, true))
+    };
+    let d = d
+        .child(
+            ui::icon(icon, 17., if on { ui::color(soft) } else { white(0.65) })
+                .relative()
+                .flex_none(),
+        )
+        .child(
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .min_w_0()
+                .child(div().truncate().child(title))
+                .children(sub.map(|s| {
+                    ui::text(12., FontWeight::NORMAL, ink::QUIET)
+                        .truncate()
+                        .child(s)
+                })),
+        );
+    keyboard(track_hover(d, id), t)
+}
+
+impl Launcher {
+    /// The search over the settings list: what it holds filters the list and the pane. Escape
+    /// clears it, then leaves it.
+    fn settings_search_field(&mut self, query: &str, cx: &mut Context<Self>) -> Stateful<Div> {
+        let t = self.theme;
+        let focused = self.settings_query_focused;
+        let soft = ui::look().accent_soft;
+        let field = div()
+            .id("settings-search")
+            .track_focus(&self.settings_query_focus)
+            .relative()
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .w_full()
+            .h(px(40.))
+            .pl(px(12.))
+            .pr(px(6.))
+            .overflow_hidden()
+            .rounded(px(radius::ROW))
+            .bg(white(if focused { 0.11 } else { 0.06 }))
+            .border_1()
+            .border_color(if focused {
+                ui::color(soft).opacity(0.7)
+            } else {
+                white(ui::edge::REST)
+            })
+            .hover(|s| s.border_color(white(ui::edge::HOVER)))
+            .cursor_text()
+            .font_family(horizon_theme::glass::FONT)
+            .text_size(px(14.))
+            .child(ui::icon(
+                "search-01",
+                16.,
+                if focused {
+                    ui::color(soft)
+                } else {
+                    white(ink::QUIET)
+                },
+            ))
+            .child(div().flex_1().min_w_0().child(line_edit::content_with(
+                &self.settings_query,
+                &t,
+                focused,
+                false,
+                false,
+                tr("Search settings").into(),
+            )))
+            .when(!query.is_empty(), |d| {
+                d.child(
+                    ui::icon_button("settings-search-clear", "cancel-01", 26., 14., 8., false, &t)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.settings_query.set(String::new());
+                            cx.stop_propagation();
+                            cx.notify();
+                        })),
+                )
+            })
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                window.focus(&this.settings_query_focus, cx);
+                cx.notify();
+            }))
+            .on_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
+                match line_edit::handle(&mut this.settings_query, ev, cx) {
+                    line_edit::Key::Pass => return,
+                    line_edit::Key::Escape => {
+                        if this.settings_query.text().is_empty() {
+                            window.blur(cx);
+                        } else {
+                            this.settings_query.set(String::new());
+                        }
+                    }
+                    line_edit::Key::Edited => this.settings_pane.scroll_to_item(0),
+                    _ => {}
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }));
+        line_edit::mouse(field, cx, |this| &mut this.settings_query)
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::{search, SECTIONS};
+
+    #[test]
+    fn search_finds_rows_and_sections_by_every_word() {
+        let look = SECTIONS.iter().position(|s| s.0 == "Appearance").unwrap();
+        assert!(search("blur").contains(&(look, Some("Blur"))));
+        assert!(search("APPEAR").contains(&(look, None)));
+        assert!(search("old delete")
+            .iter()
+            .any(|h| h.1 == Some("Delete old versions automatically")));
+        assert!(search("zzzz nothing").is_empty());
+        assert!(search("   ").is_empty());
     }
 }
 

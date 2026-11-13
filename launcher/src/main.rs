@@ -232,6 +232,10 @@ struct Launcher {
     content_scroll: Scrollbar,
     /// The glass Settings page's own scroll: its sections beside their list.
     settings_pane: gpui::ScrollHandle,
+    /// The glass Settings page's search, its focus and whether it has it.
+    settings_query: line_edit::LineEdit,
+    settings_query_focus: FocusHandle,
+    settings_query_focused: bool,
     /// The glass Home's patch log scroll, for its wheel to chain to the page.
     patch_scroll: Scrollbar,
     /// The section the glass Settings list marked when last drawn (`glass_settings`).
@@ -591,6 +595,9 @@ impl Launcher {
             switches: 0,
             content_scroll: Scrollbar::default(),
             settings_pane: gpui::ScrollHandle::new(),
+            settings_query: line_edit::LineEdit::new(String::new(), 80, 40),
+            settings_query_focus: cx.focus_handle(),
+            settings_query_focused: false,
             patch_scroll: Scrollbar::default(),
             settings_marked: 0,
             mods_sticky: sticky::Sticky::default(),
@@ -2525,7 +2532,13 @@ fn slot_row(
             .px(px(16.))
             .py(px(12.))
             .children(slot.map(|s| s.rounded(px(8.)).overflow_hidden()))
-            .child(glass_ui::setting_row(name, detail, right).p_0().flex_1());
+            .child(
+                    glass_ui::setting_row(name, detail, right)
+                        .p_0()
+                        .border_0()
+                        .bg(gpui::transparent_black())
+                        .flex_1(),
+                );
     }
     blocks::panel(t)
         .flex()
@@ -5150,6 +5163,7 @@ impl Render for Launcher {
         self.github.note_focus(window);
         self.args_focused = self.args_focus.is_focused(window);
         self.proxy_focused = self.proxy_focus.is_focused(window);
+        self.settings_query_focused = self.settings_query_focus.is_focused(window);
         let size = window.viewport_size();
         self.window_width = f32::from(size.width);
         self.window_long_side = f32::from(size.width).max(f32::from(size.height));
@@ -5176,8 +5190,8 @@ impl Render for Launcher {
             .child(content)
             .with_animation(
                 ElementId::named_usize("page", self.switches),
-                motion::eased(motion::POP),
-                |d, p| d.opacity(p).top(px(motion::POP_RISE * (1. - p))),
+                motion::eased(motion::PAGE),
+                |d, p| d.opacity(p).top(px(motion::PAGE_RISE * (1. - p))),
             );
         let (reveal, held) = self.opening_phase(window);
         let ui = ease_out_cubic((reveal - 0.3) / 0.7);

@@ -343,10 +343,24 @@ impl Launcher {
         let t = self.theme;
         let m = &self.mods;
         if let Some(e) = &m.error {
-            return ui::text(14., FontWeight::NORMAL, 0.6)
-                .px(px(16.))
-                .py(px(24.))
-                .child(e.clone());
+            // A failed search stays visible as an amber banner with a way to try again.
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(10.))
+                .m(px(8.))
+                .px(px(14.))
+                .py(px(12.))
+                .rounded(px(radius::ROW))
+                .border_1()
+                .border_color(ui::warn())
+                .child(ui::dot(ui::Tone::Warn))
+                .child(
+                    ui::text(14., FontWeight::NORMAL, ink::FULL)
+                        .flex_1()
+                        .min_w_0()
+                        .child(e.clone()),
+                );
         }
         if m.results.is_empty() {
             let line = if m.searching || !m.searched {
@@ -390,7 +404,17 @@ impl Launcher {
             let checking = m.checking(&p);
             let can_install =
                 !installed && !checking && m.busy.is_none() && m.support(&p).installable();
-            let action: AnyElement = if installed || busy || checking || m.support(&p).installable()
+            let action: AnyElement = if installed {
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(6.))
+                    .px(px(8.))
+                    .child(ui::dot(ui::Tone::Live))
+                    .child(ui::text(13., FontWeight::MEDIUM, ink::FULL).text_color(ui::live()).child(tr("Installed")))
+                    .into_any_element()
+            } else if busy || checking || m.support(&p).installable()
             {
                 let label = if installed {
                     tr("Installed")
