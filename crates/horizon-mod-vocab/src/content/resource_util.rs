@@ -1,7 +1,7 @@
 //! NeoForge 26.3's stock resource handlers and `ResourceHandlerUtil`: wrappers a mod composes its
 //! own [`ResourceHandler`]s with, and the queries and moves every transfer mod writes. Each write
 //! runs in the caller's transaction `tx`; to simulate one, abort it.
-use crate::content::resource::{Ends, move_once};
+use crate::content::resource::{Ends, in_turn, move_once};
 use crate::{
     Capability, ComponentId, FluidKey, FluidResource, HostTransaction, ItemKey, ItemResource,
     Overanswered, ResourceHandler, ServerHost, Tag, Transaction,
@@ -41,8 +41,11 @@ impl<R> CombinedResourceHandler<R> {
 }
 
 impl<R> ResourceHandler<R> for CombinedResourceHandler<R> {
+    /// The handlers' sizes added up; `usize::MAX` at most, past which no index is numbered.
     fn size(&self, host: &mut dyn ServerHost) -> usize {
-        self.handlers.iter().map(|handler| handler.size(host)).sum()
+        self.handlers.iter().fold(0usize, |size, handler| {
+            size.saturating_add(handler.size(host))
+        })
     }
     fn resource(&self, host: &mut dyn ServerHost, index: usize) -> Option<R> {
         let (handler, at) = self.locate(host, index)?;
@@ -102,14 +105,9 @@ impl<R> ResourceHandler<R> for CombinedResourceHandler<R> {
         resource: &R,
         amount: u32,
     ) -> u32 {
-        let mut went = 0u32;
-        for handler in &self.handlers {
-            if went >= amount {
-                break;
-            }
-            went = went.saturating_add(handler.insert_any(host, tx, resource, amount - went));
-        }
-        went
+        in_turn(amount, &self.handlers, |handler, left| {
+            handler.insert_any(host, tx, resource, left)
+        })
     }
     fn extract_any(
         &self,
@@ -118,21 +116,55 @@ impl<R> ResourceHandler<R> for CombinedResourceHandler<R> {
         resource: &R,
         amount: u32,
     ) -> u32 {
-        let mut came = 0u32;
-        for handler in &self.handlers {
-            if came >= amount {
-                break;
-            }
-            came = came.saturating_add(handler.extract_any(host, tx, resource, amount - came));
-        }
-        came
+        in_turn(amount, &self.handlers, |handler, left| {
+            handler.extract_any(host, tx, resource, left)
+        })
     }
 }
 
 /// Indices `start..end` of another handler, numbered from 0 (`RangedResourceHandler`): a
 /// machine's input slots as one side reaches them. Indices past the handler's size are left
 /// out. To pass another call through unchanged (`DelegatingResourceHandler`), implement
-/// [`ResourceHandler`] on a struct holding the handler and forward to it.
+/// [`ResourceHandler`] on a struct holding the handler and forward to it, as this output side
+/// that only drains:
+///
+/// ```
+/// use mod_api::{ResourceHandler, ServerHost, Transaction};
+///
+/// struct OutputOnly<R>(Box<dyn ResourceHandler<R>>);
+///
+/// impl<R> ResourceHandler<R> for OutputOnly<R> {
+///     fn size(&self, host: &mut dyn ServerHost) -> usize {
+///         self.0.size(host)
+///     }
+///     fn resource(&self, host: &mut dyn ServerHost, index: usize) -> Option<R> {
+///         self.0.resource(host, index)
+///     }
+///     fn amount(&self, host: &mut dyn ServerHost, index: usize) -> u32 {
+///         self.0.amount(host, index)
+///     }
+///     fn capacity(&self, host: &mut dyn ServerHost, index: usize, resource: &R) -> u32 {
+///         self.0.capacity(host, index, resource)
+///     }
+///     // Nothing goes in through this side.
+///     fn is_valid(&self, _: &mut dyn ServerHost, _: usize, _: &R) -> bool {
+///         false
+///     }
+///     fn insert(&self, _: &mut dyn ServerHost, _: &Transaction, _: usize, _: &R, _: u32) -> u32 {
+///         0
+///     }
+///     fn extract(
+///         &self,
+///         host: &mut dyn ServerHost,
+///         tx: &Transaction,
+///         index: usize,
+///         resource: &R,
+///         amount: u32,
+///     ) -> u32 {
+///         self.0.extract(host, tx, index, resource, amount)
+///     }
+/// }
+/// ```
 // no wire: a mod-side handler, invoked where it was built; never crosses the boundary.
 // exhaustive: its fields are private, so mods cannot build or destructure it
 pub struct RangedResourceHandler<R> {
@@ -431,10 +463,11 @@ impl<R> dyn ResourceHandler<R> {
                 fill += amount as f32 / capacity as f32;
             }
         }
-        let fill = fill / size as f32;
-        // `Mth.lerpDiscrete(fill, 0, 15)`; an oversized stack can push it past 15.
-        let signal = (fill * 14.0).floor() as i32 + i32::from(fill > 0.0);
-        signal.clamp(0, 15) as u8
+        // Capped at full before scaling: an oversized amount (a mod's, up to `u32::MAX` over a
+        // capacity of 1) would otherwise overflow it.
+        let fill = (fill / size as f32).min(1.0);
+        // `Mth.lerpDiscrete(fill, 0, 15)`.
+        (fill * 14.0).floor() as u8 + u8::from(fill > 0.0)
     }
 
     /// Puts up to `amount` of `resource` in, topping up indices that hold it before empty ones
@@ -450,21 +483,18 @@ impl<R> dyn ResourceHandler<R> {
         R: PartialEq,
     {
         let size = self.size(host);
-        let mut went = 0u32;
-        for holding in [true, false] {
-            for index in 0..size {
-                if went >= amount {
-                    return went;
-                }
-                let held = self.amount(host, index) > 0
-                    && self.resource(host, index).as_ref() == Some(resource);
-                if held == holding {
-                    went =
-                        went.saturating_add(self.insert(host, tx, index, resource, amount - went));
-                }
+        let indices = [true, false]
+            .into_iter()
+            .flat_map(|holding| (0..size).map(move |index| (holding, index)));
+        in_turn(amount, indices, |(holding, index), left| {
+            let held = self.amount(host, index) > 0
+                && self.resource(host, index).as_ref() == Some(resource);
+            if held == holding {
+                self.insert(host, tx, index, resource, left)
+            } else {
+                0
             }
-        }
-        went
+        })
     }
 
     /// Takes up to `amount` of the first resource `filter` accepts out, from wherever this
