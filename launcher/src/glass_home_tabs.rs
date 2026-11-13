@@ -102,15 +102,7 @@ impl Launcher {
                     .map(IntoElement::into_any_element)
                     .unwrap_or_else(|| empty_tab(tr("No screenshots yet. Press F2 in the game."))),
             ),
-            HomeTab::Console => Some(
-                self.glass_console(cx)
-                    .map(IntoElement::into_any_element)
-                    .unwrap_or_else(|| {
-                        empty_tab(tr(
-                            "Nothing here yet. The game's log shows here once it starts.",
-                        ))
-                    }),
-            ),
+            HomeTab::Console => self.glass_console(cx).map(IntoElement::into_any_element),
         };
         div()
             .relative()

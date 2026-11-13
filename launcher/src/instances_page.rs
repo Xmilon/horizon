@@ -293,6 +293,14 @@ impl Launcher {
             .unwrap_or_default();
         self.servers.text(Field::InstanceName).set(name);
         self.servers.text(Field::InstanceGroup).set(group);
+        let game = editing.as_ref().and_then(|i| i.java.clone()).unwrap_or_default();
+        let (width, height) = game
+            .window
+            .map(|(w, h)| (w.to_string(), h.to_string()))
+            .unwrap_or_default();
+        self.servers.text(Field::JavaArgs).set(game.jvm_args);
+        self.servers.text(Field::WindowWidth).set(width);
+        self.servers.text(Field::WindowHeight).set(height);
         self.servers.focus_soon = Some(Field::InstanceName);
         // What it plays now: Edit can switch it (`instances::switch`).
         let java = match editing.as_ref().and_then(|i| i.java.as_ref()) {
@@ -357,6 +365,10 @@ impl Launcher {
         let selected = self.selected_instance().map(|i| i.id.clone());
         let name = self.servers.value(Field::InstanceName).trim().to_string();
         let group = Some(self.servers.value(Field::InstanceGroup).to_string());
+        // A Java instance's arguments and window (the sheet's Launch): both sizes or neither.
+        let jvm_args = self.servers.value(Field::JavaArgs).trim().to_string();
+        let size = |f: Field| self.servers.value(f).trim().parse::<u32>().ok().filter(|n| *n > 0);
+        let window = size(Field::WindowWidth).zip(size(Field::WindowHeight));
         // A Horizon version picked but not installed downloads once the instance is saved.
         let download = self
             .draft_horizon()
@@ -432,6 +444,10 @@ impl Launcher {
                 m.name = Some(name);
                 m.group = group;
                 m.icon = icon;
+                if let Some(game) = m.java.as_mut().filter(|_| edited) {
+                    game.jvm_args = jvm_args;
+                    game.window = window;
+                }
                 if plays_horizon {
                     m.version = pin;
                 }
@@ -878,7 +894,7 @@ impl Launcher {
 
 impl Launcher {
     /// Delete…, for every instance but Horizon's own (the game's home); not while a game runs.
-    fn delete_button(&self, instance: &Instance, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn delete_button(&self, instance: &Instance, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         if instance.kind == InstanceKind::Default {
             return None;
         }
@@ -898,7 +914,7 @@ impl Launcher {
     }
 
     /// "Move it to the Trash?" under the actions, once Delete… is pressed.
-    fn delete_confirmation(&self, instance: &Instance, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn delete_confirmation(&self, instance: &Instance, cx: &mut Context<Self>) -> Option<Div> {
         if self.instances.confirm_delete.as_ref() != Some(&instance.id) {
             return None;
         }

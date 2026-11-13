@@ -12,23 +12,40 @@ use super::*;
 use crate::glass_ui::{self as ui, white};
 use horizon_theme::glass::{ink, radius};
 
-/// The list's entries: name and icon. The settings sections.
+/// The list's entries: name and icon. The settings sections, in the mockup's order.
 const SECTIONS: [(&str, &str); 10] = [
-    ("Account", "user"),
-    ("Updates", "refresh"),
+    ("General", "sliders-horizontal"),
     ("Appearance", "color-picker"),
-    ("Launcher", "computer"),
-    ("Network", "globe-02"),
+    ("Accounts", "user"),
+    ("Updates", "refresh"),
     ("Game", "game-controller-01"),
-    ("Storage", "computer"),
+    ("Network", "globe-02"),
+    ("Storage", "package-01"),
+    ("Data & privacy", "view"),
     ("AI", "ai-chat-02"),
     ("About", "information-circle"),
-    ("Data collection", "view"),
 ];
+
+/// Who made the launcher's look, credited in About.
+const CREDIT: &str = "Xmilon";
+const CREDIT_URL: &str = "https://github.com/Xmilon";
 
 /// What the search finds in each section, in [`SECTIONS`]' order: its rows' names and words a
 /// player may look for them by. English; a query matches them and their translation.
 const INDEX: [&[&str]; 10] = [
+    &["Language", "While playing", "Show the opening"],
+    &[
+        "Theme",
+        "Accent",
+        "Glass",
+        "Blur",
+        "Performance mode",
+        "Motion",
+        "Home background",
+        "Reset the launcher's look",
+        "Dark",
+        "Light",
+    ],
     &[
         "Microsoft account",
         "Sign in with Microsoft",
@@ -43,29 +60,24 @@ const INDEX: [&[&str]; 10] = [
         "Nightly",
     ],
     &[
-        "Theme",
-        "Accent",
-        "Glass",
-        "Blur",
-        "Performance mode",
-        "Motion",
-        "Home background",
-        "Reset the launcher's look",
-        "Dark",
-        "Light",
-    ],
-    &["Language", "While playing", "Show the opening"],
-    &["Proxy"],
-    &[
         "Game architecture",
         "Arguments",
         "Update mods automatically",
         "Memory",
     ],
+    &["Proxy"],
     &["Storage", "Disk space", "Cache"],
+    &["Data collection", "Telemetry", "Crash reports"],
     &["No AI", "Agents", "MCP"],
-    &["Data folder", "Logs", "Applications menu", "Crash reports"],
-    &["Data collection", "Telemetry"],
+    &[
+        "UI made by Xmilon",
+        "Credits",
+        "GitHub",
+        "Version",
+        "Data folder",
+        "Logs",
+        "Applications menu",
+    ],
 ];
 
 /// The settings `query` finds: (section, the row's name, or `None` when the section's own name
@@ -107,8 +119,28 @@ fn card() -> Div {
     crate::glass::plate(radius::PANEL)
         .flex()
         .flex_col()
-        .gap(px(6.))
-        .p(px(8.))
+        .gap(px(2.))
+        .p(px(6.))
+}
+
+/// Section `i`'s card, under its heading: the section's icon in the accent and its name.
+fn section(i: usize) -> Div {
+    let (label, icon) = SECTIONS[i];
+    card().child(
+        div()
+            .flex()
+            .items_center()
+            .gap(px(10.))
+            .px(px(14.))
+            .pt(px(12.))
+            .pb(px(4.))
+            .child(ui::icon(icon, 18., ui::color(ui::look().accent)))
+            .child(
+                ui::text(17., FontWeight::SEMIBOLD, ink::FULL)
+                    .font_family(horizon_theme::glass::DISPLAY_FONT)
+                    .child(tr(label).to_string()),
+            ),
+    )
 }
 
 /// A tile (the mockup's `AboutTile`, `rounded-[14px] bg-white/[0.045] p-5`): its lead, name, a
@@ -248,7 +280,7 @@ impl Launcher {
         let nav = if wide {
             card()
                 .flex_none()
-                .w(px(230.))
+                .w(px(220.))
                 .gap(px(4.))
                 .child(field.mb(px(6.)))
                 .when(!found, |d| {
@@ -348,10 +380,20 @@ impl Launcher {
             .flex_col()
             .w_full()
             .h_full()
-            .child(ui::page_head(
-                tr("Settings"),
-                tr("Accounts, updates, and the launcher itself."),
-            ))
+            .child(
+                // The dialog's head: its name, with room on the right for its close button.
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .h(px(64.))
+                    .pr(px(48.))
+                    .child(
+                        ui::text(22., FontWeight::SEMIBOLD, ink::FULL)
+                            .font_family(horizon_theme::glass::DISPLAY_FONT)
+                            .child(tr("Settings").to_string()),
+                    ),
+            )
             .child(content)
     }
 
@@ -390,10 +432,10 @@ impl Launcher {
             .flex()
             .flex_col()
             .w_full()
-            .max_w(px(1040.))
+            .max_w(px(960.))
             .h_full()
-            .max_h(px(720.))
-            .px(px(20.))
+            .max_h(px(660.))
+            .px(px(18.))
             .pb(px(16.))
             .child(
                 div()
@@ -404,7 +446,7 @@ impl Launcher {
                     .min_h_0()
                     .child(body),
             )
-            .child(div().absolute().top(px(16.)).right(px(16.)).child(close));
+            .child(div().absolute().top(px(14.)).right(px(14.)).child(close));
         div()
             .id("settings-dialog")
             .absolute()
@@ -417,14 +459,27 @@ impl Launcher {
             .p(px(24.))
             .occlude()
             .on_scroll(|_, _, cx| cx.stop_propagation())
-            .child(ui::scrim_backdrop())
+            // Frosted glass over the page the player was on: the blurred sky laid partly over it,
+            // so the page shows through softened, then the dimming. Performance mode keeps only
+            // the dimming, as the mockup does.
+            .when(!self.settings.performance(), |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .opacity(0.62)
+                        .child(ui::scrim_backdrop()),
+                )
+            })
             .child(
                 div()
                     .absolute()
                     .top_0()
                     .left_0()
                     .size_full()
-                    .bg(ui::scrim())
+                    .bg(ui::scrim().opacity(if ui::light() { 0.2 } else { 0.4 }))
                     .on_mouse_down(
                         gpui::MouseButton::Left,
                         cx.listener(|this, _: &MouseDownEvent, _, cx| {
@@ -562,8 +617,8 @@ impl Launcher {
     fn glass_settings_sections(&mut self, b: Built, cx: &mut Context<Self>) -> Vec<Div> {
         let t = self.theme;
         let n = 0;
-        let account = card().child(self.glass_account(cx));
-        let updates = card()
+        let account = section(2).child(self.glass_account(cx));
+        let updates = section(3)
             .child(self.update_tiles(b.horizon, b.horizon_action, b.launcher, b.launcher_action))
             .child(index_row(
                 0,
@@ -586,7 +641,7 @@ impl Launcher {
                 Some(b.prune.into_any_element()),
                 &t,
             ));
-        let appearance = card()
+        let appearance = section(1)
             .child(index_row(
                 0,
                 tr("Appearance"),
@@ -602,7 +657,7 @@ impl Launcher {
             .child(self.motion_row(cx))
             .child(self.home_background_row(cx))
             .child(self.reset_look_row(cx));
-        let launcher = card()
+        let launcher = section(0)
             .child(self.language_row(cx))
             .child(self.while_playing_row(n, cx))
             .child(index_row(
@@ -612,12 +667,12 @@ impl Launcher {
                 Some(b.opening.into_any_element()),
                 &t,
             ));
-        let network = card().child(self.proxy_row(n, cx));
-        let game = card()
+        let network = section(5).child(self.proxy_row(n, cx));
+        let game = section(4)
             .child(self.game_architecture_row(n, cx))
             .child(self.game_args_row(n + 1, cx))
             .child(self.mods_auto_update_row(cx));
-        let ai = card()
+        let ai = section(8)
             .child(self.no_ai_row(n, cx))
             .children(self.agents_section(cx));
         let mono = |s: String| {
@@ -627,7 +682,9 @@ impl Launcher {
                 .child(s)
                 .into_any_element()
         };
-        let about = card()
+        let about = section(9)
+            .child(self.credit_row(cx))
+            .child(self.version_row(&t))
             .child(self.location_row(0, cx).mb(px(0.)))
             .child(index_row(
                 0,
@@ -662,17 +719,108 @@ impl Launcher {
                 ))
             });
         vec![
+            launcher,
+            appearance,
             account,
             updates,
-            appearance,
-            launcher,
-            network,
             game,
-            self.glass_storage(cx),
+            network,
+            section(6).child(self.glass_storage(cx)),
+            section(7).child(self.collection_section(cx)),
             ai,
             about,
-            card().child(self.collection_section(cx)),
         ]
+    }
+
+    /// About's credit: who made the launcher's look, their GitHub picture and profile.
+    fn credit_row(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        if !self.credit_asked {
+            self.credit_asked = true;
+            let picture = cx.background_spawn(async {
+                backend::get_bytes(&format!("{CREDIT_URL}.png?size=96"))
+            });
+            cx.spawn(async move |this, cx| {
+                if let Ok(bytes) = picture.await {
+                    let _ = this.update(cx, |this, cx| {
+                        this.credit_picture = Some(std::sync::Arc::new(gpui::Image::from_bytes(
+                            gpui::ImageFormat::Png,
+                            bytes,
+                        )));
+                        cx.notify();
+                    });
+                }
+            })
+            .detach();
+        }
+        let picture = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .size(px(44.))
+            .rounded(px(11.))
+            .overflow_hidden()
+            .border_1()
+            .border_color(white(ui::edge::REST))
+            .bg(white(0.06))
+            .child(match self.credit_picture.clone() {
+                Some(image) => gpui::img(image).size_full().into_any_element(),
+                None => ui::icon("github", 22., white(ink::BODY)).into_any_element(),
+            });
+        let open = button("credit-github", "Open GitHub profile", Kind::Secondary, &t)
+            .on_click(|_, _, cx| cx.open_url(CREDIT_URL));
+        div()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            .px(px(14.))
+            .py(px(12.))
+            .child(picture)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        ui::text(14., FontWeight::MEDIUM, ink::FULL)
+                            .child(trf("UI made by {name}", &[("name", CREDIT)])),
+                    )
+                    .child(
+                        ui::text(13., FontWeight::NORMAL, ink::QUIET)
+                            .mt(px(2.))
+                            .child(CREDIT_URL.trim_start_matches("https://")),
+                    ),
+            )
+            .child(open)
+    }
+
+    /// About's version line, with a button that copies it (for a bug report).
+    fn version_row(&self, t: &Theme) -> Div {
+        let nightly = tr("Nightly").to_string();
+        let line = trf(
+            "Launcher {launcher}, game {game}",
+            &[
+                ("launcher", env!("CARGO_PKG_VERSION")),
+                ("game", self.settings.selected.as_deref().unwrap_or(&nightly)),
+            ],
+        )
+        .to_string();
+        let copied = line.clone();
+        index_row(
+            0,
+            tr("Version"),
+            Some(div().child(line).into_any_element()),
+            Some(
+                button("copy-version", "Copy", Kind::Secondary, t)
+                    .on_click(move |_, _, cx| {
+                        copy_to_clipboard(cx, gpui::ClipboardItem::new_string(copied.clone()))
+                    })
+                    .into_any_element(),
+            ),
+            t,
+        )
     }
 }
 

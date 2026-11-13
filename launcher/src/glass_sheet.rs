@@ -1,8 +1,8 @@
-//! Instance settings as a sheet down the window's right side (the glass look): its icon, name and
-//! what it plays at the top, then one section at a time, General, Installation, Launch and
-//! Storage, picked on a segmented row. Home stays in view to its left, under the scrim. The
-//! sections are the instance dialog's own parts (name, group, icon, versions, loader), the
-//! memory row, the commands around the game and the export, gathered in one place.
+//! Instance settings as a sheet down the window's right side (the glass look), as the mockup
+//! draws it: its icon, "Instance settings", the instance's name and version at the top; a list of
+//! sections on the left (General, Installation, Launch, Hooks, Storage) and the open one on the
+//! right, under its name and what it is for, its rows in groups; the instance's folder, size and
+//! play time along the foot. Home stays in view to its left, under a light scrim.
 use super::*;
 use crate::glass_instance::section;
 use crate::glass_ui::{self as ui, white};
@@ -18,15 +18,113 @@ pub(super) enum SheetTab {
     General,
     Installation,
     Launch,
+    Hooks,
     Storage,
+}
+
+impl SheetTab {
+    const ALL: [SheetTab; 5] = [
+        SheetTab::General,
+        SheetTab::Installation,
+        SheetTab::Launch,
+        SheetTab::Hooks,
+        SheetTab::Storage,
+    ];
+
+    /// Its name, icon and the line under its name.
+    fn about(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            SheetTab::General => (
+                "General",
+                "pencil-edit-02",
+                "Name, icon and where it sits on the rail.",
+            ),
+            SheetTab::Installation => (
+                "Installation",
+                "download-04",
+                "The game version this instance runs.",
+            ),
+            SheetTab::Launch => (
+                "Launch",
+                "play",
+                "How the game starts and how much it may use.",
+            ),
+            SheetTab::Hooks => (
+                "Hooks",
+                "computer-terminal-01",
+                "Commands that run around the game. Most people never need these.",
+            ),
+            SheetTab::Storage => (
+                "Storage",
+                "package-01",
+                "Space this instance takes, and ways to take it elsewhere.",
+            ),
+        }
+    }
+
+    /// `HORIZON_LAUNCHER_SHEET` (screenshots): the section the sheet opens on.
+    pub(super) fn from_env() -> Option<SheetTab> {
+        let name = std::env::var("HORIZON_LAUNCHER_SHEET").ok()?;
+        SheetTab::ALL
+            .into_iter()
+            .find(|t| t.about().0.eq_ignore_ascii_case(&name))
+    }
 }
 
 /// How wide the sheet is, and its distance from the window's top (under the top bar) and edges.
 const WIDTH: f32 = 660.;
 const TOP: f32 = 88.;
 const EDGE: f32 = 16.;
+/// The section list's width.
+const CATS: f32 = 158.;
+
+/// A group of rows (the mockup's `grp`): its name over a faint rounded box.
+fn group(title: Option<SharedString>, rows: Div) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .children(title.map(|title| {
+            ui::text(12.5, FontWeight::SEMIBOLD, ink::QUIET)
+                .px(px(4.))
+                .pb(px(7.))
+                .child(title)
+        }))
+        .child(
+            rows.flex()
+                .flex_col()
+                .p(px(2.))
+                .rounded(px(14.))
+                .bg(white(0.03))
+                .border_1()
+                .border_color(white(0.1)),
+        )
+}
 
 impl Launcher {
+    /// What `instance` plays, as its rows and the sheet's head name it: "Nightly · 514ecf9", or
+    /// "26.3 · Fabric" for a Java one.
+    fn sheet_version(&self, instance: &Instance) -> String {
+        match &instance.java {
+            Some(java) => match &java.loader {
+                Some(loader) => format!(
+                    "{} · {} {}",
+                    java.minecraft,
+                    loader.kind.name(),
+                    loader.version
+                ),
+                None => java.minecraft.clone(),
+            },
+            None => self.version_of(instance).map_or_else(
+                || tr("No version installed").to_string(),
+                |tag| {
+                    horizon_launcher::nightly::label(tag)
+                        .or_else(|| build_import::label(tag))
+                        .unwrap_or_else(|| tag.clone())
+                },
+            ),
+        }
+    }
+
     /// The sheet, while the instance dialog edits an instance.
     pub(super) fn instance_sheet(&mut self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let t = self.theme;
@@ -34,9 +132,10 @@ impl Launcher {
         let (busy, copy, error, kind) = (d.busy, d.copy, d.error.clone(), d.java.kind);
         let id = d.editing.clone()?;
         let editing = self.instances.list.iter().find(|i| i.id == id).cloned()?;
-        // Launch and Storage act on the selected instance (`launch_page`, `export_page`).
+        // Launch, Hooks and Storage act on the selected instance (`launch_page`, `export_page`).
         let selected = self.selected_instance().is_some_and(|s| s.id == editing.id);
         let tab = self.sheet_tab;
+        let version = self.sheet_version(&editing);
 
         let close = cx.listener(move |this, _: &MouseDownEvent, _, cx| {
             if !busy {
@@ -49,16 +148,18 @@ impl Launcher {
             NewKind::Vanilla => tr("Vanilla"),
             NewKind::Modded => tr("Modded"),
         };
-        let icon = self.glass_instance_icon(&editing, 44.);
         let head = div()
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(14.))
-            .px(px(24.))
-            .pt(px(22.))
-            .pb(px(16.))
-            .child(icon)
+            .gap(px(12.))
+            .pl(px(20.))
+            .pr(px(14.))
+            .pt(px(14.))
+            .pb(px(12.))
+            .border_b_1()
+            .border_color(white(0.1))
+            .child(self.glass_instance_icon(&editing, 36.))
             .child(
                 div()
                     .flex()
@@ -67,17 +168,35 @@ impl Launcher {
                     .min_w_0()
                     .child(
                         div()
-                            .truncate()
                             .font_family(horizon_theme::glass::DISPLAY_FONT)
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_size(px(24.))
-                            .line_height(px(30.))
+                            .text_size(px(20.))
+                            .line_height(px(26.))
                             .text_color(white(ink::FULL))
-                            .child(editing.name.clone()),
+                            .child(tr("Instance settings")),
                     )
                     .child(
-                        ui::text(13., FontWeight::NORMAL, ink::NOTE)
-                            .child(trf("Instance settings · {what}", &[("what", what)])),
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .min_w_0()
+                            .child(
+                                ui::text(13., FontWeight::MEDIUM, ink::BODY)
+                                    .truncate()
+                                    .child(editing.name.clone()),
+                            )
+                            .child(
+                                ui::text(12., FontWeight::MEDIUM, ink::BODY)
+                                    .flex_none()
+                                    .px(px(8.))
+                                    .py(px(1.))
+                                    .rounded_full()
+                                    .bg(white(0.07))
+                                    .border_1()
+                                    .border_color(white(0.12))
+                                    .child(format!("{what} · {version}")),
+                            ),
                     ),
             )
             .child(
@@ -99,91 +218,212 @@ impl Launcher {
                 }),
             );
 
-        let this = cx.entity().downgrade();
-        let tabs = div()
+        let accent = ui::look().accent;
+        let cats = div()
+            .flex()
+            .flex_col()
             .flex_none()
-            .px(px(24.))
-            .pb(px(14.))
-            .child(ui::segments(
-                "sheet-tabs",
-                &[
-                    (SheetTab::General, "General"),
-                    (SheetTab::Installation, "Installation"),
-                    (SheetTab::Launch, "Launch"),
-                    (SheetTab::Storage, "Storage"),
-                ],
-                tab,
-                &t,
-                move |pick, _, cx| {
-                    let _ = this.update(cx, |this, cx| {
-                        this.sheet_tab = pick;
-                        cx.notify();
-                    });
-                },
-            ));
+            .w(px(CATS))
+            .gap(px(2.))
+            .pt(px(10.))
+            .pb(px(10.))
+            .pl(px(10.))
+            .pr(px(6.))
+            .border_r_1()
+            .border_color(white(0.1))
+            .children(SheetTab::ALL.into_iter().map(|each| {
+                let (label, icon, _) = each.about();
+                let on = each == tab;
+                let id = SharedString::from(format!("sheet-cat-{label}"));
+                keyboard(
+                    track_hover(
+                        div()
+                            .id(id.clone())
+                            .relative()
+                            .flex()
+                            .items_center()
+                            .gap(px(9.))
+                            .px(px(9.))
+                            .py(px(7.))
+                            .rounded(px(10.))
+                            .cursor_pointer()
+                            .font_family(horizon_theme::glass::FONT)
+                            .text_size(px(13.5))
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(white(if on { ink::FULL } else { ink::QUIET }))
+                            .when(on, |d| d.bg(ui::color(accent).opacity(0.13)))
+                            .when(!on, |d| {
+                                d.hover(|s| s.bg(white(0.04)).text_color(white(ink::FULL)))
+                            })
+                            .child(ui::icon(
+                                icon,
+                                16.,
+                                if on {
+                                    ui::color(accent)
+                                } else {
+                                    white(ink::QUIET)
+                                },
+                            ))
+                            .child(tr(label).to_string()),
+                        id,
+                    ),
+                    &t,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.sheet_tab = each;
+                    cx.notify();
+                }))
+            }));
 
-        let mut body = div()
+        let (label, _, about) = tab.about();
+        let mut pane = div()
             .id("sheet-body")
             .flex()
             .flex_col()
             .flex_1()
-            .min_h_0()
-            .gap(px(28.))
-            .px(px(24.))
-            .pb(px(24.))
-            .overflow_y_scroll();
+            .min_w_0()
+            .gap(px(16.))
+            .pt(px(18.))
+            .px(px(20.))
+            .pb(px(20.))
+            .overflow_y_scroll()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(3.))
+                    .child(
+                        div()
+                            .font_family(horizon_theme::glass::DISPLAY_FONT)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(19.))
+                            .line_height(px(23.))
+                            .text_color(white(ink::FULL))
+                            .child(tr(label).to_string()),
+                    )
+                    .child(ui::text(13., FontWeight::NORMAL, ink::NOTE).child(tr(about))),
+            );
         // The dialog's Save keeps name, group, icon and version: those two sections end with it.
-        let mut foot = None;
+        let mut save = false;
+        let not_selected = || {
+            ui::empty().child(tr(
+                "Pick this instance on Home to change how it launches and to export it.",
+            ))
+        };
         match tab {
             SheetTab::General => {
                 let name = self
                     .field(Field::InstanceName, tr("My instance"), 300., cx)
-                    .flex_1()
-                    .min_w_0();
-                let group = self
+                    .w_full();
+                let group_field = self
                     .field(Field::InstanceGroup, tr("No group"), 300., cx)
-                    .flex_1()
-                    .min_w_0();
-                body = body
-                    .child(section(
-                        tr("Name and group").into(),
-                        None,
-                        div().flex().gap(px(10.)).child(name).child(group),
-                    ))
+                    .w(px(170.));
+                pane = pane
+                    .child(
+                        div()
+                            .flex()
+                            .items_end()
+                            .gap(px(14.))
+                            .child(self.glass_instance_icon(&editing, 56.))
+                            .child(section(tr("Name").into(), None, name).flex_1().min_w_0())
+                            .child(section(tr("Group").into(), None, group_field)),
+                    )
                     .child(self.icon_choice(Some(&editing), kind, cx))
-                    .child(self.sheet_actions(&editing, cx));
-                foot = Some(self.instance_foot(Some(&editing), copy, busy, error, cx));
+                    .child(self.sheet_actions(&editing, &version, cx))
+                    .children(self.sheet_danger(&editing, cx));
+                save = true;
             }
             SheetTab::Installation => {
-                body = body.children(self.switch_notice(&editing));
+                pane = pane.children(self.switch_notice(&editing));
                 if kind == NewKind::Horizon {
-                    body = body.child(self.horizon_versions(cx));
+                    pane = pane.child(self.horizon_versions(cx));
                 } else {
                     self.load_versions(cx);
-                    body = body.child(self.minecraft_versions(cx));
+                    pane = pane.child(self.minecraft_versions(cx));
                     if kind == NewKind::Modded {
-                        body = body.child(self.loader_choice(cx));
+                        pane = pane.child(self.loader_choice(cx));
                     }
                 }
-                foot = Some(self.instance_foot(Some(&editing), copy, busy, error, cx));
+                save = true;
             }
             SheetTab::Launch if selected => {
-                body = body
-                    .children(self.glass_memory_row(cx))
-                    .children(self.glass_hooks(cx));
+                pane = pane.children(
+                    self.glass_memory_row(cx)
+                        .map(|row| group(Some(tr("Memory").into()), div().child(row))),
+                );
+                if editing.java.is_some() {
+                    pane = pane.child(self.sheet_java(cx));
+                    save = true;
+                }
+            }
+            SheetTab::Hooks if selected => {
+                pane = pane.children(self.glass_hooks(cx));
             }
             SheetTab::Storage if selected => {
                 if self.export.is_none() {
                     self.toggle_export();
                 }
-                body = body.children(self.export_panel(cx));
+                pane = pane.children(
+                    self.export_panel(cx)
+                        .map(|panel| group(Some(tr("Export").into()), panel.p(px(12.)))),
+                );
             }
-            SheetTab::Launch | SheetTab::Storage => {
-                body = body.child(ui::empty().child(tr(
-                    "Pick this instance on Home to change how it launches and to export it.",
-                )));
+            SheetTab::Launch | SheetTab::Hooks | SheetTab::Storage => {
+                pane = pane.child(not_selected());
             }
         }
+
+        // The foot: Save and Cancel for what the dialog keeps, else the folder and the facts.
+        let foot = if save {
+            self.instance_foot(Some(&editing), copy, busy, error, cx)
+                .px(px(20.))
+                .py(px(14.))
+        } else {
+            let home = editing.home.clone();
+            let played = if editing.played.is_zero() {
+                tr("Not played yet").to_string()
+            } else {
+                trf(
+                    "{time} played",
+                    &[("time", &instances::play_time(editing.played))],
+                )
+                .to_string()
+            };
+            div()
+                .flex()
+                .items_center()
+                .gap(px(12.))
+                .px(px(20.))
+                .py(px(12.))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .font_family(theme::MONO)
+                        .text_size(px(12.))
+                        .text_color(white(ink::QUIET))
+                        .child(short(&editing.home)),
+                )
+                .child(
+                    ui::text(12.5, FontWeight::NORMAL, ink::QUIET)
+                        .flex_none()
+                        .child(played),
+                )
+                .child(
+                    ui::quiet_icon(
+                        "sheet-foot-folder",
+                        Some("folder-01"),
+                        tr("Open folder"),
+                        32.,
+                        &t,
+                    )
+                    .on_click(move |_, _, cx| {
+                        let _ = std::fs::create_dir_all(&home);
+                        crate::glass_toast::open(cx, &home);
+                    }),
+                )
+        };
 
         let sheet = ui::dialog_plate(radius::MODAL)
             .id("instance-sheet")
@@ -198,9 +438,15 @@ impl Launcher {
             .flex()
             .flex_col()
             .child(head)
-            .child(tabs)
-            .child(body)
-            .children(foot.map(|f| f.px(px(24.)).py(px(16.))))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .child(cats)
+                    .child(pane),
+            )
+            .child(foot.border_t_1().border_color(white(0.1)))
             .with_animation(
                 ElementId::named_usize("sheet-in", 0),
                 motion::eased(motion::POP),
@@ -229,46 +475,197 @@ impl Launcher {
         )
     }
 
-    /// General's quick actions: the folder, a desktop shortcut.
-    fn sheet_actions(&mut self, editing: &Instance, cx: &mut Context<Self>) -> Div {
+    /// General's rows: the version it plays (Installation changes it), a copy, a desktop shortcut
+    /// and the folder.
+    fn sheet_actions(&mut self, editing: &Instance, version: &str, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let home = editing.home.clone();
         let (id, name) = (editing.id.clone(), editing.name.clone());
-        let shortcut = match self.has_shortcut(&id) {
-            true => tr("Remove the desktop shortcut"),
-            false => tr("Make a desktop shortcut"),
-        };
-        let mut row = div().flex().flex_wrap().gap(px(8.)).child(
-            ui::quiet_icon(
-                "sheet-folder",
-                Some("folder-01"),
-                tr("Open folder"),
-                36.,
-                &t,
-            )
-            .on_click(move |_, _, cx| {
-                let _ = std::fs::create_dir_all(&home);
-                crate::glass_toast::open(cx, &home);
-            }),
-        );
-        if matches!(editing.kind, InstanceKind::Default | InstanceKind::Own) {
-            row = row.child(
-                ui::quiet_icon("sheet-shortcut", Some("link-01"), shortcut, 36., &t).on_click(
-                    cx.listener(move |this, _: &ClickEvent, _, cx| {
+        let own = matches!(editing.kind, InstanceKind::Default | InstanceKind::Own);
+        let mut rows = div().child(ui::setting_row(
+            tr("Version"),
+            Some(div().child(version.to_string()).into_any_element()),
+            Some(
+                button("sheet-version", "Change", Kind::Secondary, &t)
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.sheet_tab = SheetTab::Installation;
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            ),
+        ));
+        if own && editing.java.is_none() {
+            let (from, copy_name) = (id.clone(), trf("{name} copy", &[("name", &name)]));
+            rows = rows.child(ui::setting_row(
+                tr("Duplicate"),
+                Some(
+                    div()
+                        .child(tr("A copy with the same worlds, options and packs."))
+                        .into_any_element(),
+                ),
+                Some(
+                    button("sheet-duplicate", "Duplicate", Kind::Secondary, &t)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.duplicate_instance(from.clone(), copy_name.to_string(), cx);
+                        }))
+                        .into_any_element(),
+                ),
+            ));
+        }
+        if own {
+            let has = self.has_shortcut(&id);
+            rows = rows.child(ui::setting_row(
+                tr("Desktop shortcut"),
+                Some(
+                    div()
+                        .child(tr("Starts this instance without opening the launcher."))
+                        .into_any_element(),
+                ),
+                Some(
+                    button(
+                        "sheet-shortcut",
+                        if has {
+                            "Remove shortcut"
+                        } else {
+                            "Create shortcut"
+                        },
+                        Kind::Secondary,
+                        &t,
+                    )
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.toggle_shortcut(id.clone(), name.clone());
                         cx.notify();
-                    }),
+                    }))
+                    .into_any_element(),
                 ),
-            );
+            ));
         }
-        section(
-            tr("Quick actions").into(),
-            None,
-            div().flex().flex_col().gap(px(10.)).child(row).child(
-                ui::text(12.5, FontWeight::NORMAL, ink::FAINT)
-                    .truncate()
-                    .child(short(&editing.home)),
+        rows = rows.child(ui::setting_row(
+            tr("Folder"),
+            Some(
+                div()
+                    .font_family(theme::MONO)
+                    .text_size(px(12.))
+                    .child(short(&editing.home))
+                    .into_any_element(),
             ),
+            Some(
+                button("sheet-folder", "Open folder", Kind::Secondary, &t)
+                    .on_click(move |_, _, cx| {
+                        let _ = std::fs::create_dir_all(&home);
+                        crate::glass_toast::open(cx, &home);
+                    })
+                    .into_any_element(),
+            ),
+        ));
+        group(None, rows)
+    }
+
+    /// Launch's rows for a Java instance: its own JVM arguments and the game window's size, kept
+    /// by the sheet's Save.
+    fn sheet_java(&mut self, cx: &mut Context<Self>) -> Div {
+        let args = self.field(Field::JavaArgs, tr("For example -XX:+UseZGC"), 560., cx);
+        let width = self.field(Field::WindowWidth, "854", 84., cx).w(px(84.));
+        let height = self.field(Field::WindowHeight, "480", 84., cx).w(px(84.));
+        group(
+            Some(tr("Java and the window").into()),
+            div()
+                .child(ui::setting_row_stacked(
+                    tr("Java arguments"),
+                    Some(
+                        div()
+                            .child(tr("Added to this instance only, split on spaces."))
+                            .into_any_element(),
+                    ),
+                    args.into_any_element(),
+                ))
+                .child(ui::setting_row(
+                    tr("Window size"),
+                    Some(
+                        div()
+                            .child(tr("Width and height the game opens at. Empty: 854 by 480."))
+                            .into_any_element(),
+                    ),
+                    Some(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(6.))
+                            .child(width)
+                            .child(ui::text(13., FontWeight::NORMAL, ink::DIM).child("×"))
+                            .child(height)
+                            .into_any_element(),
+                    ),
+                )),
         )
+    }
+
+    /// General's danger zone: delete the instance (to the Trash), asked once more. Horizon's own
+    /// instance, the game's home, has none.
+    fn sheet_danger(&mut self, editing: &Instance, cx: &mut Context<Self>) -> Option<Div> {
+        let delete = self.delete_button(editing, cx)?;
+        let danger = ui::color(horizon_theme::glass::DANGER_HOVER);
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .mt(px(4.))
+                .p(px(14.))
+                .rounded(px(12.))
+                .border_1()
+                .border_color(danger.opacity(0.3))
+                .bg(danger.opacity(0.05))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(14.))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w_0()
+                                .child(
+                                    ui::text(14.5, FontWeight::SEMIBOLD, ink::FULL)
+                                        .child(tr("Delete this instance")),
+                                )
+                                .child(
+                                    ui::text(13., FontWeight::NORMAL, ink::NOTE).mt(px(2.)).child(
+                                        tr("Its mods, settings and worlds go to the Trash. Back up worlds you want to keep first."),
+                                    ),
+                                ),
+                        )
+                        .child(delete),
+                )
+                .children(self.delete_confirmation(editing, cx)),
+        )
+    }
+
+    /// Copies `from` into a new instance named `name` on a thread, then selects it.
+    fn duplicate_instance(&mut self, from: String, name: String, cx: &mut Context<Self>) {
+        let task = cx.background_spawn(async move {
+            let made = instances::create(&name, Some(&from))?;
+            instances::edit(&made.id, |m| m.name = Some(name))
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(instance) => {
+                        crate::glass_toast::say(trf(
+                            "Created {name}",
+                            &[("name", instance.name.as_str())],
+                        ));
+                        this.instances.dialog = None;
+                        this.reload_instances();
+                        this.select_instance(&instance);
+                    }
+                    Err(e) => crate::glass_toast::say(e),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 }

@@ -110,13 +110,12 @@ pub fn setting_row(
         .items_center()
         .gap_x(px(40.))
         .gap_y(px(12.))
-        .px(px(16.))
-        .py(px(16.))
-        .rounded(px(radius::LARGE))
-        .bg(white(0.025))
+        .px(px(14.))
+        .py(px(13.))
+        .rounded(px(12.))
         .border_1()
-        .border_color(white(edge::REST))
-        .hover(|s| s.border_color(white(0.18)))
+        .border_color(gpui::transparent_black())
+        .hover(|s| s.bg(white(0.03)).border_color(white(0.18)))
         .child(
             div()
                 .flex()
@@ -125,8 +124,8 @@ pub fn setting_row(
                 .min_w(px(240.))
                 .gap(px(4.))
                 .child(
-                    text(15., FontWeight::SEMIBOLD, ink::FULL)
-                        .line_height(px(21.))
+                    text(14.5, FontWeight::SEMIBOLD, ink::FULL)
+                        .line_height(px(20.))
                         .child(title),
                 )
                 .children(note.map(|n| {
@@ -150,21 +149,20 @@ pub fn setting_row_stacked(
         .flex()
         .flex_col()
         .gap(px(16.))
-        .px(px(16.))
-        .py(px(16.))
-        .rounded(px(radius::LARGE))
-        .bg(white(0.025))
+        .px(px(14.))
+        .py(px(13.))
+        .rounded(px(12.))
         .border_1()
-        .border_color(white(edge::REST))
-        .hover(|s| s.border_color(white(0.18)))
+        .border_color(gpui::transparent_black())
+        .hover(|s| s.bg(white(0.03)).border_color(white(0.18)))
         .child(
             div()
                 .flex()
                 .flex_col()
                 .gap(px(4.))
                 .child(
-                    text(15., FontWeight::SEMIBOLD, ink::FULL)
-                        .line_height(px(21.))
+                    text(14.5, FontWeight::SEMIBOLD, ink::FULL)
+                        .line_height(px(20.))
                         .child(title),
                 )
                 .children(note.map(|n| {

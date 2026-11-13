@@ -244,6 +244,9 @@ struct Launcher {
     patch_scroll: Scrollbar,
     /// The section the glass Settings list marked when last drawn (`glass_settings`).
     settings_marked: usize,
+    /// About's credit picture was asked for, and what came back.
+    credit_asked: bool,
+    credit_picture: Option<std::sync::Arc<gpui::Image>>,
     /// The Mods page's project card, kept in view beside its list.
     mods_sticky: sticky::Sticky,
     /// The rows of the page's long list (Versions) last drawn.
@@ -611,6 +614,8 @@ impl Launcher {
             settings_query_focused: false,
             patch_scroll: Scrollbar::default(),
             settings_marked: 0,
+            credit_asked: false,
+            credit_picture: None,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
             opening: (!settings.skip_opening).then(|| {
@@ -835,6 +840,7 @@ impl Launcher {
             this.pick_kind(kind, cx);
         }
         if std::env::var("HORIZON_LAUNCHER_PAGE").as_deref() == Ok("edit-instance") {
+            this.sheet_tab = glass_sheet::SheetTab::from_env().unwrap_or_default();
             this.open_instance_dialog(this.selected_instance().cloned());
         }
         if cfg!(debug_assertions)
@@ -5982,11 +5988,7 @@ mod tests {
         let menus = super::menus();
         assert_eq!(
             menus[0].name,
-            if cfg!(horizon_fork_launcher) {
-                "Horizon Fork Launcher (arismoko)"
-            } else {
-                "Horizon Launcher"
-            }
+            "Horizon Launcher"
         );
         assert!(matches!(
             &menus[0].items[0],

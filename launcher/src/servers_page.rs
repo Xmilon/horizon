@@ -78,10 +78,14 @@ pub(super) enum Field {
     ShopGift,
     /// The Wardrobe's search through what the player owns (`wardrobe_page.rs`).
     WardrobeSearch,
+    /// A Java instance's own JVM arguments and window size (the instance sheet's Launch).
+    JavaArgs,
+    WindowWidth,
+    WindowHeight,
 }
 
 impl Field {
-    const ALL: [Field; 25] = [
+    const ALL: [Field; 28] = [
         Field::Name,
         Field::Seed,
         Field::Players,
@@ -107,6 +111,9 @@ impl Field {
         Field::AccentHex,
         Field::ShopGift,
         Field::WardrobeSearch,
+        Field::JavaArgs,
+        Field::WindowWidth,
+        Field::WindowHeight,
     ];
 }
 
@@ -1308,6 +1315,9 @@ impl Launcher {
             | Field::InstanceModsFilter
             | Field::ConsoleSearch
             | Field::WardrobeSearch
+            | Field::JavaArgs
+            | Field::WindowWidth
+            | Field::WindowHeight
             | Field::DeleteServer
             | Field::AccentHex => {}
             Field::PreLaunch | Field::Wrapper | Field::LaunchEnv | Field::PostExit => {
