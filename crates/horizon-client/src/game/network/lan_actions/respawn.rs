@@ -190,19 +190,15 @@ impl Game<'_> {
                     crate::game::game_mode::mode_from_id(g.game_mode),
                 )
             };
-            let mut cancel = false;
+            let (mut cancel, mut to) = (false, GameMode::Spectator);
             if from != GameMode::Spectator {
-                self.native_player_game_mode_changed(
-                    uuid,
-                    &name,
-                    from,
-                    GameMode::Spectator,
-                    &mut cancel,
-                );
+                self.native_player_game_mode_changed(uuid, &name, from, &mut to, &mut cancel);
+                // A redirect to the mode the player has is no change: nothing is sent.
+                cancel |= to == from;
             }
             if !cancel && let Some(host) = self.lan.as_mut() {
                 host.hub
-                    .set_game_mode(conn, SPECTATOR, &self.world, Some(self.collision));
+                    .set_game_mode(conn, to.id(), &self.world, Some(self.collision));
             }
         }
         // PlayerList.respawn: `copyRespawnPosition` hands the new player the
@@ -315,26 +311,8 @@ impl Game<'_> {
         // The killing blow, for the death hooks.
         let blow = (dying && !mod_api::__private::mods().is_empty())
             .then(|| self.guest_damage_source(conn));
-        if let Some((damage_type, attacker)) = &blow {
-            // LivingDeathEvent: a canceled death keeps the player at 1 health.
-            let entity = host.hub.guests[gi].entity_id;
-            let mut cancel = false;
-            self.native_living_death(
-                entity as u32,
-                "minecraft:player",
-                damage_type,
-                *attacker,
-                &mut cancel,
-            );
-            if cancel {
-                if let Some(host) = self.lan.as_mut() {
-                    {
-                        let value = 1.0;
-                        host.hub.guests.update(gi, |guest| guest.health = value);
-                    }
-                }
-                return;
-            }
+        if dying && self.guest_death_canceled(gi, conn) {
+            return;
         }
         let Some(host) = self.lan.as_ref() else {
             return;
@@ -774,8 +752,8 @@ impl Game<'_> {
             })
     }
 
-    /// The killing blow of a guest as `LivingDeathEvent` names it: the
-    /// damage type and the causing entity's id (0 for none).
+    /// The scalar death-tail/death-message source. `living_death` uses the
+    /// full accepted hit retained on the body instead.
     pub(super) fn guest_damage_source(&self, conn: u32) -> (String, u32) {
         let (damage_type, attacker) = match self
             .lan

@@ -14,8 +14,10 @@ use horizon_world::native_load_context::{LoopContext, LoopSide};
 use horizon_world::{
     block_landing::LandingEntityKind,
     entity_fluid::{CurrentAccumulator, CurrentTarget},
+    entity_move::MoverType,
     fluid::{FluidKind, FluidState},
     fluid_flow::FluidFlowWorld,
+    move_gate::MoveGate,
     movement_restitution::{RestitutionInput, RestitutionWorld, restitute_movement},
     registry::BlockStateId,
 };
@@ -812,8 +814,20 @@ impl Mob {
         w: &MobWorld,
         level: &mut DamageLevel<'_>,
         events: &mut Vec<MobEvent>,
+        gate: &mut MoveGate,
     ) {
-        let mut wanted = self.velocity;
+        crate::move_gate::arm(
+            gate,
+            w.loop_context,
+            self.id,
+            &self.kind.id,
+            MoverType::SelfMovement,
+            self.velocity,
+        );
+        if gate.skipped() {
+            return;
+        }
+        let mut wanted = gate.delta();
         // Entity.move: a block the mob is stuck in (sweet berry bush) scales
         // this move once and stops it.
         if self.stuck_multiplier.length_squared() > 1.0e-7 {
@@ -831,16 +845,17 @@ impl Mob {
         // do the entities it may not pass through.
         let border = w.border.map(|b| (b, [self.position.x, self.position.z]));
         let entities = self.entity_collisions(w, wanted);
-        let moved = scene
-            .resolve_in_border_with(
-                self.bounds(),
-                wanted,
-                step,
-                self.on_ground,
-                border,
-                &entities,
-            )
-            .unwrap_or(Vec3::ZERO);
+        let moved = crate::move_gate::scene_resolve_in_border_with(
+            gate,
+            scene,
+            self.bounds(),
+            wanted,
+            step,
+            self.on_ground,
+            border,
+            &entities,
+        )
+        .unwrap_or(Vec3::ZERO);
         let length = moved.x * moved.x + moved.y * moved.y + moved.z * moved.z;
         let wanted_length = wanted.x * wanted.x + wanted.y * wanted.y + wanted.z * wanted.z;
         if length > 1.0e-7 || wanted_length - length < 1.0e-7 {
@@ -1622,7 +1637,7 @@ impl Mob {
             self.yaw,
             self.effective_gravity(),
         );
-        self.do_move(w, level, events);
+        self.do_move(w, level, events, &mut MoveGate::new());
         if self.horizontal_collision {
             let damage = ((before
                 - (self.velocity.x * self.velocity.x + self.velocity.z * self.velocity.z).sqrt())
@@ -1698,7 +1713,7 @@ impl Mob {
             (air_speed, f64::from(0.91_f32))
         };
         self.move_relative(speed, input);
-        self.do_move(w, level, events);
+        self.do_move(w, level, events, &mut MoveGate::new());
         self.velocity = Vec3::new(
             self.velocity.x * drag,
             self.velocity.y * drag,
@@ -1777,7 +1792,7 @@ impl Mob {
             self.fall_distance = 0.0;
             self.velocity = Self::climbable_velocity(self.velocity);
         }
-        self.do_move(w, level, events);
+        self.do_move(w, level, events, &mut MoveGate::new());
         let mut movement = self.velocity;
         if (self.horizontal_collision || self.ai.jumping) && self.on_climbable(w) {
             movement.y = 0.2;
@@ -1843,7 +1858,7 @@ impl Mob {
                 speed += (self.speed(w) - speed) * efficiency;
             }
             self.move_relative(speed, input);
-            self.do_move(w, level, events);
+            self.do_move(w, level, events, &mut MoveGate::new());
             let mut m = self.velocity;
             // LivingEntity.travelInWater: `horizontalCollision && onClimbable()`,
             // a ladder or scaffolding under water as well as a climbing spider.
@@ -1858,7 +1873,7 @@ impl Mob {
             self.velocity = fluid_falling(gravity, falling, self.extra.sprinting, m);
         } else {
             self.move_relative(0.02, input);
-            self.do_move(w, level, events);
+            self.do_move(w, level, events, &mut MoveGate::new());
             if self.fluids.lava <= self.fluid_jump_threshold() {
                 self.velocity = Vec3::new(
                     self.velocity.x * 0.5,
@@ -2707,7 +2722,7 @@ mod tests {
             // Falling faster than gravity, so the landing is hard enough.
             m.velocity = Vec3::new(0.0, -1.0, 0.0);
             m.fall_distance = 8.0;
-            m.do_move(&w, level, &mut Vec::new());
+            m.do_move(&w, level, &mut Vec::new(), &mut MoveGate::new());
             assert_eq!(m.health, health, "{ground}: health after an 8 block fall");
             assert!(
                 m.vertical_collision_below,
@@ -3041,7 +3056,7 @@ mod tests {
         // Where a zombie starting 3 blocks above `below`'s top ends after 20
         // falling moves, with `below` in the mobs it sees.
         let mut landing = |below: &Mob| -> f64 {
-            let others = [below.seen(None)];
+            let others = [below.seen(None, &crate::items::Items::empty())];
             let w = MobWorld {
                 professions: crate::mobs::villager::profession_table(),
                 loop_context: crate::test_resources::server_loop_context(),
@@ -3114,6 +3129,7 @@ mod tests {
                         &crate::health::DamageHooks::NONE,
                     ),
                     &mut Vec::new(),
+                    &mut MoveGate::new(),
                 );
             }
             zombie.position.y - top
@@ -3237,7 +3253,7 @@ mod tests {
                 let mut m = Mob::new(1, kind, Vec3::new(0.5, 1.0, 1.5), 0.0);
                 m.on_ground = true;
                 m.velocity = Vec3::new(0.2, 0.0, 0.0);
-                m.do_move(w, level, &mut Vec::new());
+                m.do_move(w, level, &mut Vec::new(), &mut MoveGate::new());
                 let expected = f64::from(factor as f32) * 0.2;
                 assert!(
                     (m.velocity.x - expected).abs() < 1.0e-9,
@@ -3278,7 +3294,7 @@ mod tests {
                 // 1.5 blocks east from x = 11.5: past the wall at 13 if nothing stops it.
                 let mut m = Mob::new(1, kind.clone(), Vec3::new(11.5, 64.0, 8.5), 0.0);
                 m.velocity = Vec3::new(1.5, 0.0, 0.0);
-                m.do_move(&w, level, &mut Vec::new());
+                m.do_move(&w, level, &mut Vec::new(), &mut MoveGate::new());
                 east_edge[i] = m.bounds().max_position().x;
                 assert_eq!(m.horizontal_collision, bordered);
             }

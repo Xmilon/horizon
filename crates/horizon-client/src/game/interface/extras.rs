@@ -2,8 +2,12 @@
 //! (`native_minimap`: its tiles, image and HUD) and zoom (`native_zoom`) on the camera; clicks
 //! and frame times for mods (`native_clicks`, `native_frame_rate`).
 //! Each hook does nothing while its extra is off and no mod uses it.
+#[path = "extras/mouse_tweaks.rs"]
+pub(in crate::game) mod mouse_tweaks;
 #[path = "extras/reconnect.rs"]
 mod reconnect;
+#[path = "extras/sorting.rs"]
+mod sorting;
 
 use super::{Dim, Game, Screen};
 use horizon_client::{
@@ -27,6 +31,8 @@ pub(super) struct ExtrasState {
     minimap_dim: Option<Dim>,
     /// Auto-reconnect's attempts at the current server.
     reconnect: Tracker,
+    /// Captured before pre listeners; shared by the draw and post listeners.
+    pub(super) frame_partial_ticks: Option<(f32, f32)>,
 }
 /// CPU time the minimap's tiles may take per frame.
 const MINIMAP_BUDGET: Duration = Duration::from_micros(300);
@@ -61,7 +67,9 @@ impl Game<'_> {
         // For mods (`render.frame-stats`, `native_frame_rate`).
         let now = self.extras_now();
         self.extras.fps.record(now, elapsed.as_secs_f32() * 1000.0);
-        self.native_render_frame_pre(elapsed);
+        let (world_partial_tick, partial_tick) = self.frame_partial_ticks();
+        self.extras.frame_partial_ticks = Some((world_partial_tick, partial_tick));
+        self.native_render_frame_pre(elapsed, world_partial_tick, partial_tick);
         // A clear a mod asked for (in this frame's `RenderFrameEvent.Pre`, or after the last
         // frame was drawn) lands before this frame's particles are drawn, paused or not.
         self.apply_mod_particle_clear();

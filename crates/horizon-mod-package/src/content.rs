@@ -695,6 +695,11 @@ pub struct MobEffect {
     pub category: EffectCategory,
     /// RGB, `0x000000` to `0xFFFFFF`.
     pub color: u32,
+    /// Where the effect sits in the HUD icons and the inventory's effect list
+    /// (NeoForge's `IMobEffectExtension.getSortOrder`): compared where vanilla
+    /// compares the colour, which it is when absent.
+    #[serde(default)]
+    pub sort_order: Option<i32>,
 }
 
 /// Vanilla's `DyeColor` names, by id.
@@ -2285,11 +2290,11 @@ capabilities = ["registries"]
     }
 
     #[test]
-    fn mob_effects_take_a_category_and_a_colour() {
+    fn mob_effects_take_a_category_a_colour_and_a_sort_order() {
         let files: &[(&str, &[u8])] = &[
             (
                 "data/ruby/horizon/mob_effect/glow.json",
-                br#"{"category": "beneficial", "color": 16711680}"#,
+                br#"{"category": "beneficial", "color": 16711680, "sort_order": -3}"#,
             ),
             (
                 "data/ruby/horizon/mob_effect/curse/dark.json",
@@ -2300,13 +2305,13 @@ capabilities = ["registries"]
         let effects: Vec<_> = content
             .effects
             .iter()
-            .map(|e| (e.id.as_str(), e.category, e.color))
+            .map(|e| (e.id.as_str(), e.category, e.color, e.sort_order))
             .collect();
         assert_eq!(
             effects,
             [
-                ("ruby:curse/dark", EffectCategory::Harmful, 0),
-                ("ruby:glow", EffectCategory::Beneficial, 0xFF0000),
+                ("ruby:curse/dark", EffectCategory::Harmful, 0, None),
+                ("ruby:glow", EffectCategory::Beneficial, 0xFF0000, Some(-3)),
             ]
         );
         for (case, file, why) in [

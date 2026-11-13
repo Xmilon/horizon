@@ -113,6 +113,15 @@ pub(crate) fn listened(hook: generated::HookId) -> bool {
     installed().is_some_and(|installed| installed.subscribers.contains_any(hook as usize))
 }
 
+pub(crate) fn enabled_listened(hook: generated::HookId) -> bool {
+    installed().is_some_and(|installed| {
+        installed
+            .subscribers
+            .indices(hook as usize)
+            .any(|index| !installed.disabled[index].load(std::sync::atomic::Ordering::Relaxed))
+    })
+}
+
 /// Switch an installed trait mod's subsequent dispatches on or off.
 pub(crate) fn set_mod_enabled(id: &str, on: bool) -> bool {
     let Some(installed) = installed() else {
@@ -123,6 +132,9 @@ pub(crate) fn set_mod_enabled(id: &str, on: bool) -> bool {
         if entry.id == id {
             if disabled.swap(!on, std::sync::atomic::Ordering::Relaxed) == on {
                 MODS_SWITCHED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                if !on {
+                    horizon_mod_runtime::water_tickets::remove_owner(id);
+                }
             }
             found = true;
         }

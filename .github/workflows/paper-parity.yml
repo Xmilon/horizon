@@ -11,6 +11,9 @@ concurrency:
   cancel-in-progress: false
 jobs:
   paper-parity:
+    # Upstream's Mac runner holds the Paper server and Mojang files it compares with; this fork has no
+    # runner with that label, so its scheduled run only sat queued until GitHub cancelled it.
+    if: github.repository == 'horizon-rust/horizon'
     runs-on: [self-hosted, horizon-game, macOS]
     timeout-minutes: 240
     defaults:
@@ -25,7 +28,13 @@ jobs:
           persist-credentials: false
           # Same persistent build/import/preparation caches as the parity workflows.
           clean: false
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        shell: bash
+        run: echo "version=$(cat "$GITHUB_WORKSPACE/tools/ci/rust-version")" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
       - name: Tools from the runner (Python and the pinned JDK)
         run: bash tools/ci/runner-env.sh
       - name: Vanilla data, and resources prepared by this preparer

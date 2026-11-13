@@ -12,8 +12,12 @@ permissions:
 # with a manual dispatch on a suspect commit (through a branch pointing at it) when needed. Dispatches
 # queue in their own group per ref and never displace main's runs.
 concurrency:
-  group: wasm-mods-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: false
+  # Main pushes share one group: a running check finishes and only the newest push waits, so a burst
+  # of merges checks the latest head once (owner's rule, 2026-11-13). A dispatch on main gets a group
+  # of its own and is never folded into main's. Elsewhere a newer dispatch on the same branch
+  # replaces the one before, which checked a superseded head.
+  group: wasm-mods-${{ github.event_name == 'push' && 'main-push' || github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 jobs:
   fixture:
     runs-on: dyna-large
@@ -40,7 +44,7 @@ jobs:
           # through a target symlink. Each member still has its own workspace and
           # link invocation. Dispatches on other branches reuse dependency artifacts; main also exercises
           # independent dependency compilation in the original per-member targets.
-          for member in fixture library-fixture/{library,observer,dependent} groups/{counter_lib,alpha,beta,gamma,hog}; do
+          for member in fixture mixed-output-fixture library-fixture/{library,observer,dependent} groups/{counter_lib,alpha,beta,gamma,hog}; do
             root="$GITHUB_WORKSPACE/crates/horizon-mod-wasm/tests/$member/target/horizon-mod"
             mkdir -p "$root"
             artifacts="$cache/shared"
@@ -52,11 +56,23 @@ jobs:
               ln -s "$artifacts/$artifact" "$root/$artifact"
             done
           done
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        shell: bash
+        run: echo "version=$(cat "$GITHUB_WORKSPACE/tools/ci/rust-version")" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.99.1
+          toolchain: ${{ steps.rust.outputs.version }}
           components: rust-src, rustfmt
           targets: wasm32-unknown-unknown
+      # Every job that builds in this runner's persistent target keeps its source snapshot true: a
+      # build of another tree without it left artifacts that a later job judged fresh (stale generated
+      # sources, 2026-11-13). Only byte-identical Git objects regain their previous timestamps.
+      - name: Restore unchanged source timestamps
+        run: python3 tools/ci/source_mtimes.py "${CARGO_TARGET_DIR:-target}/ci-source-mtimes-v2.json"
+      # Every build and test in this job runs at the runner's size, not the host's (tools/ci/cargo_jobs.py).
+      - name: Cap build parallelism to the runner
+        run: python3 tools/ci/cargo_jobs.py --job-mib 3072 --cap
       - name: Check fieldless Wire layout coverage and hashes
         shell: bash
         run: |
@@ -67,6 +83,7 @@ jobs:
           python3 tools/generate_wire_enum_goldens.py \
             --expanded "$CARGO_TARGET_DIR/wire-goldens/expanded.rs" --check
           cargo test --locked -p horizon-mod-vocab --lib existing_fieldless_enum_layouts_match_baseline
+          cargo test --locked -p horizon-mod-api --test wire_math_profile
       - name: Compile and test emitted point records
         run: |
           manifest=crates/horizon-mod-point-shape/tests/record-wire/Cargo.toml
@@ -85,11 +102,21 @@ jobs:
         run: |
           cargo test -p horizon-mod-api --features wasm-guest --lib guest_pool_
           cargo test -p horizon-mod-api --features wasm-guest --lib phase_tests
+          cargo test -p horizon-mod-vocab --lib strict_math_seeded_reference_vectors_match_exact_bits
+          cargo test -p horizon-mod-wasm --features listener-fixture --test strict_math -- --ignored --nocapture
           cargo test -p horizon-mod-points --features listener-fixture --test registry --test replace --test order
-          cargo test -p horizon-mod-wasm --features listener-fixture --test real_member --test unstaged --test self_refusal --test native_listener --test no_wire_registration -- --include-ignored --nocapture
+          cargo test -p horizon-mod-wasm --features listener-fixture --test real_member --test unstaged --test self_refusal --test native_listener --test no_wire_registration --test capability_registration -- --include-ignored --nocapture
           cargo test -p horizon-mod-wasm --features listener-fixture --lib guest_input_pool_stays_flat_for_100k_no_import_calls -- --ignored --nocapture
+      - name: Build and test the isolated mixed-output boundary
+        env:
+          HORIZON_WASM_MIXED_OUTPUT_FIXTURE: ${{ github.workspace }}/crates/horizon-mod-wasm/tests/mixed-output-fixture/target/horizon-mod/mixed_output_fixture.hmod
+          HORIZON_WASM_STD: ${{ github.workspace }}/target/horizon-wasm-std.wasm
+        run: |
+          (cd crates/horizon-mod-wasm/tests/mixed-output-fixture && \
+            "$GITHUB_WORKSPACE/target/debug/cargo-horizon-mod" horizon-mod build --wasm --catalog ../library-fixture/points.json)
+          cargo test -p horizon-mod-wasm --features mixed-output-fixture --test listener_outputs -- --ignored --exact generated_mixed_outputs_cross_real_guest_boundary --nocapture
       # The client tests that load this run's compiled fixture into a real game. The slow shards refuse them by
-      # name (`needs` rows in tools/ci/ignored-tests-known-failures.txt): only this job has the artifacts.
+      # name (`needs` rows in tools/ci/ignored-tests/wasm-fixture.txt): only this job has the artifacts.
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -114,29 +141,17 @@ jobs:
           set -euo pipefail
           export HORIZON_TEST_RESOURCES="$PWD/.local/horizon-client/26.3"
           # The runner's CPU quota within its memory (as verify): horizon-client rustc processes take ~2.6 GB each.
-          jobs="-j$(python3 tools/ci/cargo_jobs.py --job-mib 3072)"
+          jobs="$(python3 tools/ci/cargo_jobs.py --job-mib 3072)"
           # Fresh homes: the game tests write logs and saves there, never into the runner's own folders.
           for key in HORIZON_HOME HORIZON_LAUNCHER_HOME XDG_DATA_HOME XDG_CONFIG_HOME; do
             export "$key=$(mktemp -d "$RUNNER_TEMP/${key,,}.XXXXXX")"
           done
-          # Each run must report every named test passed: a renamed test would otherwise match nothing and pass.
-          run_exact() {
-            local count=$1; shift
-            cargo test "$jobs" "$@" 2>&1 | tee "$RUNNER_TEMP/client-wasm.log"
-            grep -q "^test result: ok. $count passed" "$RUNNER_TEMP/client-wasm.log" || {
-              echo "::error::expected $count passing tests from: cargo test $*"; exit 1; }
-          }
           # Each alone in its process: each initializes the fixture mod, and the points table is sealed once per
           # process, so a second initialization there refuses the fixture's replace listener as already owned.
-          run_exact 1 -p horizon-client-lib --lib -- --ignored --exact \
-            raw_payloads::wasm_tests::compiled_guest_observes_physical_provider_pressure
-          for test in \
-            game::native_server::wasm_selector_tests::wasm_selectors_resolve_in_game_and_refuse_before_guest_dispatch \
-            game::native_server::wasm_selector_tests::wasm_server_tick_messages_reach_dedicated_game \
-            game::payload_transport::wasm_tests::compiled_guest_runs_in_actual_game_roots \
-            game::remote::interaction_event_tests::interaction_event_wasm_tests::wasm_interaction_shared_matrix; do
-            run_exact 1 -p horizon-client --lib -- --ignored --exact "$test"
-          done
+          # The tests are the `needs HORIZON_WASM_FIXTURE` rows; each run must report exactly one test passed.
+          python3 tools/ci/ignored_tests.py --needs HORIZON_WASM_FIXTURE --one-process-each --jobs "$jobs"
+          run_exact 1 -p horizon-client --lib -- --exact \
+            game::native_hooks::math::tests::math_profile_selection_matches_platform_and_is_stable
       - name: Build independent library members
         run: |
           tool="$GITHUB_WORKSPACE/target/debug/cargo-horizon-mod"
@@ -179,7 +194,13 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        shell: bash
+        run: echo "version=$(cat "$GITHUB_WORKSPACE/tools/ci/rust-version")" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
       - run: cargo test --locked -p horizon-guest-stack --lib
       - run: cargo test --locked -p horizon-mod-wasm --lib deep_guest_stack_and_overflow_attribution
       - run: cargo test --locked -p horizon-mod-wasm --lib sixty_thousand_frames_exceed_wasmtime_default

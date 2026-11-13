@@ -385,6 +385,10 @@ pub(super) fn start_game<'a>(
         game.run_component_harness(integrated::ComponentHarness::Sculk(spec))?;
         return Ok(None);
     }
+    if let Ok(output) = std::env::var("HORIZON_HOT_PATHS") {
+        game.run_component_harness(integrated::ComponentHarness::HotPaths(output))?;
+        return Ok(None);
+    }
     if game.options.execution_role == execution_role::ExecutionRole::DedicatedServer {
         let result = game.run_dedicated();
         game.native_game_shutting_down();

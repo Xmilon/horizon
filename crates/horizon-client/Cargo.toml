@@ -41,6 +41,8 @@ horizon-world = { path = "../horizon-world" }
 horizon-protocol = { path = "../horizon-protocol" }
 # server.properties, eula.txt and the user lists, shared with horizon-server.
 horizon-server-files = { path = "../horizon-server-files" }
+# The JDK's clock, for the LAN host's random seed and the probes.
+horizon-java-properties = { path = "../horizon-java-properties" }
 # The dedicated server's anticheat, off unless server.toml's [anticheat] turns it on (docs/anticheat.md).
 horizon-anticheat = { path = "../horizon-anticheat" }
 # The dedicated server's chat filter: [chat_filter], the slur list, mutes (docs/chat-filter.md);
@@ -102,10 +104,6 @@ fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
 rustix = { version = "1", default-features = false, features = ["std", "time", "process", "fs"] }
 
 [target.'cfg(windows)'.dependencies]
-# Resolve virtualized folders to shell-compatible physical paths.
-dunce = "1.0.5"
-# Use the registered URI handler without routing links through Explorer/cmd.
-open = { version = "5.4.5", features = ["shellexecute-on-windows"] }
 # DirectX 12, where Vulkan has no adapter or device, or by choice (`graphicsApi`, graphics.rs).
 # Shaders compile with FXC (d3dcompiler_47.dll, part of Windows), or on integrated GPUs with DXC
 # (dxcompiler.dll beside the game, gfx/dx12_compiler.rs).
@@ -173,11 +171,16 @@ path = "tests/mod_biome_sync.rs"
 name = "mod_api_hooks"
 path = "tests/mod_api_hooks.rs"
 
+[[test]]
+name = "skull_models"
+path = "tests/skull_models.rs"
+
 [lints]
 workspace = true
 
 [dev-dependencies]
-horizon-client-lib = { path = "../horizon-client-lib", default-features = false, features = ["test-payload-probe"] }
+horizon-client-core = { path = "../horizon-client-core", features = ["test-language-publication"] }
+horizon-client-lib = { path = "../horizon-client-lib", default-features = false, features = ["test-payload-probe", "test-publication-scope", "test-residency-observer"] }
 horizon-mod-wasm = { path = "../horizon-mod-wasm", features = ["runtime-fixture", "listener-fixture", "test-copy-probe"] }
 wat = "1.261"
 tempfile = "3"

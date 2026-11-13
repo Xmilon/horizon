@@ -102,13 +102,21 @@ fn proof() {
     let mut host = Host;
     let mut reply = Writer::default();
     reply.put(&Duration::from_secs(60000));
+    reply.put(&0.25f32);
+    reply.put(&0.5f32);
     let client = module(&reply, 60000);
     memory("one module loaded");
     let mut render = mod_api::RenderFramePreEvent {
         elapsed: Duration::from_secs(1),
+        world_partial_tick: 0.25,
+        partial_tick: 0.5,
     };
     client.render_frame_pre(&mut host, &mut render);
     assert_eq!(render.elapsed, Duration::from_secs(60000));
+    assert_eq!(
+        (render.world_partial_tick, render.partial_tick),
+        (0.25, 0.5)
+    );
     let mut reply = Writer::default();
     reply.put(&mod_api::ServerTickPhase::ServerTickEnd {
         world_running: true,

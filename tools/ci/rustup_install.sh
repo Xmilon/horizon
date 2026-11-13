@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# rustup toolchain install with a bounded retry: a reset connection to static.rust-lang.org is transient and hits
-# boat and GitHub's runners alike. Four attempts, 10, 20 and 40 s apart; the last failure fails the step.
+# Installs the pinned Rust (tools/ci/rust-version) with the given `rustup toolchain install` options and makes it
+# this job's toolchain: the rustup default, and RUSTUP_TOOLCHAIN for the job's later steps (a step's own env
+# would override it, so workflows never set it). CI, the launcher's native-mod toolchain and cargo-horizon-mod's
+# wasm toolchain all read that one file. Bumping it: docs/ci-runners.md, "Rust version".
+# rustup gets a bounded retry: a reset connection to static.rust-lang.org is transient and hits boat and GitHub's
+# runners alike. Four attempts, 10, 20 and 40 s apart; the last failure fails the step.
 set -u
+pin=$(tr -d '[:space:]' < "$(dirname "$0")/rust-version")
 install() {
   for delay in 10 20 40 0; do
     rustup "$@" && return 0
@@ -11,18 +16,13 @@ install() {
     sleep "$delay"
   done
 }
-install toolchain install "$@" || exit
-# The toolchain wasm mods build with (cargo-horizon-mod's pin), which runs the mod API generator, and with it
-# rustfmt, inside the workspace's tests. cargo-horizon-mod installs it with the minimal profile when it is missing,
-# and a Dyna slot keeps it for later jobs: give it rustfmt and clippy here, a no-op without network when present.
-pin=$(sed -n 's/^pub const TOOLCHAIN: &str = "\(.*\)";/\1/p' crates/cargo-horizon-mod/src/wasm.rs 2>/dev/null)
-[ -n "$pin" ] || exit 0
-if rustup toolchain list | grep -q "^$pin-"; then
-  installed=$(rustup component list --installed --toolchain "$pin" 2>/dev/null)
-  missing=$(for c in rustfmt clippy; do echo "$installed" | grep -q "^$c-" || echo "$c"; done)
-  # shellcheck disable=SC2086 # one word per missing component
-  [ -z "$missing" ] || install component add --toolchain "$pin" $missing || exit
-elif [ -n "${DYNA_CI_BUILD:-}" ]; then
-  # A kept slot: install it once with them, before a test installs it without.
-  install toolchain install "$pin" --profile minimal --component rustfmt --component clippy || exit
-fi
+install toolchain install "$pin" "$@" || exit
+rustup default "$pin" || exit
+[ -z "${GITHUB_ENV:-}" ] || echo "RUSTUP_TOOLCHAIN=$pin" >> "$GITHUB_ENV"
+# Wasm mods build with this toolchain too (cargo-horizon-mod reads the same pin), and run the mod API generator
+# and with it rustfmt inside the workspace's tests. A job that installed the minimal profile gets rustfmt and
+# clippy here; a no-op without network when they are present.
+installed=$(rustup component list --installed --toolchain "$pin" 2>/dev/null)
+missing=$(for c in rustfmt clippy; do echo "$installed" | grep -q "^$c-" || echo "$c"; done)
+# shellcheck disable=SC2086 # one word per missing component
+[ -z "$missing" ] || install component add --toolchain "$pin" $missing || exit

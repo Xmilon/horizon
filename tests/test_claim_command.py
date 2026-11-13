@@ -86,8 +86,17 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(cc.parse("🤖 Agent: /claim"), cc.Command("claim"))
         self.assertEqual(cc.parse("🤖 Agent: /unclaim @Some-One"), cc.Command("unclaim", "Some-One"))
 
+    def test_a_command_on_any_line(self):
+        self.assertEqual(cc.parse("🤖 Agent:\n/claim"), cc.Command("claim"))
+        self.assertEqual(cc.parse("🤖 Agent: picking this up.\n\n/claim\nPlan: …"), cc.Command("claim"))
+        self.assertEqual(cc.parse("thanks\n  /unclaim @Some-One"), cc.Command("unclaim", "Some-One"))
+
+    def test_a_command_on_a_later_line_is_still_refused_at_the_limit(self):
+        with self.assertRaisesRegex(cc.Refused, "hold 5 claimed"):
+            do("🤖 Agent:\n/claim", Fake(held=[held(n) for n in range(1, 6)]))
+
     def test_not_commands(self):
-        for text in ("", "claim", "/claimed", "/claims", "/claimed,", "/claims:", "🤖 Agent: /claimed", "thanks\n/claim", "/close", "/unclaimed"):
+        for text in ("", "claim", "/claimed", "/claims", "/claimed,", "/claims:", "🤖 Agent: /claimed", "thanks\nmaybe /claim later", "> /claim", "/close", "/unclaimed"):
             self.assertIsNone(cc.parse(text), text)
 
     def test_claim_ignores_text_after_the_first_word(self):
@@ -147,6 +156,18 @@ class ClaimTests(unittest.TestCase):
     def test_already_yours(self):
         with self.assertRaisesRegex(cc.Refused, "already hold"):
             do("/claim", Fake({5: thread(holders=("NewComer",))}))
+
+    def test_already_yours_gets_the_claimed_label_it_lacks(self):
+        api = Fake({5: thread(holders=("NewComer",))})
+        with self.assertRaisesRegex(cc.Refused, "already hold"):
+            do("/claim", api)
+        self.assertIn(("label", 5, "claimed", "help wanted"), api.calls)
+        labelled = thread(holders=("NewComer",))
+        labelled["labels"] = [{"name": "claimed"}]
+        api = Fake({5: labelled})
+        with self.assertRaisesRegex(cc.Refused, "already hold"):
+            do("/claim", api)
+        self.assertEqual(api.calls, [])
 
     def test_not_claimable(self):
         for t in (thread(pr=True), thread(state="closed"), thread(locked=True)):

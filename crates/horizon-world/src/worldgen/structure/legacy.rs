@@ -358,6 +358,10 @@ pub fn write_block(
 /// A placed structure piece.
 pub trait LegacyPiece: std::fmt::Debug + Send + Sync {
     fn bounding_box(&self) -> BoundingBox;
+    /// Cached terrain override for a mod piece; vanilla pieces use their structure's rule.
+    fn beardifier(&self) -> Option<horizon_core::density::RigidPiece> {
+        None
+    }
     /// The vanilla StructurePieceType id, for diagnostics and comparisons.
     fn type_name(&self) -> &'static str;
     /// `StructurePiece.createTag`; None while Horizon cannot save this type,

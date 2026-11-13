@@ -89,8 +89,18 @@ impl Game<'_> {
         self.dropped.retain(|d| keep(d.id));
         self.falling.retain(|f| keep(f.id));
         self.tnts.retain(|t| keep(t.id));
+        let mut camera_removed = false;
         if let Some(r) = self.remote.as_mut() {
             r.passenger_vehicles.retain(|_, v| keep(*v));
+            if r.camera.is_some_and(|id| removed.contains(&(id as u32))) {
+                r.camera = None;
+                camera_removed = true;
+            }
+        }
+        if camera_removed {
+            // Minecraft.setCameraEntity returns to the local player when the
+            // spectated entity leaves, including clearing its post chain.
+            self.check_entity_post_effect(true);
         }
     }
 }
@@ -184,6 +194,96 @@ mod tests {
         assert_eq!(r.passenger_vehicles.get(&42), None);
         assert_eq!(r.passenger_vehicles.get(&43), Some(&41));
         assert_eq!(game.falling.iter().map(|e| e.id).collect::<Vec<_>>(), [45]);
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES and scratch homes/cwd"]
+    fn add_entity_replaces_falling_block_without_removing_other_ids() {
+        use crate::game::{
+            Audio, Game, Options, Progress, Settings, execution_role::ExecutionRole, load_resources,
+        };
+        use horizon_protocol::packets::play::{self, Clientbound as C};
+
+        let root = std::path::PathBuf::from(std::env::var_os("HORIZON_TEST_RESOURCES").unwrap());
+        let settings = Settings::default();
+        let loaded = load_resources(
+            horizon_assets::resource_source::ResourceRoot::directory(root.clone()),
+            Vec::new(),
+            None,
+            &root,
+            &settings,
+            std::time::Instant::now(),
+            false,
+            ExecutionRole::Client,
+            &Progress::new(),
+            &mut |_, _| unreachable!(),
+        )
+        .unwrap();
+        let mut options = Options::parse(std::iter::empty()).unwrap().unwrap();
+        options.resources = root.clone();
+        options.execution_role = ExecutionRole::Client;
+        let mut game = Game::new(
+            &loaded.resources,
+            loaded.pack,
+            loaded.gui.unwrap(),
+            options,
+            settings,
+            Audio::silent(&horizon_assets::resource_source::ResourceSource::directory(
+                root.clone(),
+            )),
+            None,
+        )
+        .unwrap();
+        let (client, _server) = horizon_protocol::connection::Pipe::pair();
+        game.connect_local(client, "SpawnTest").unwrap();
+        let kind = game
+            .remote
+            .as_ref()
+            .unwrap()
+            .builtin
+            .get("minecraft:entity_type")
+            .unwrap()
+            .id("minecraft:falling_block")
+            .unwrap();
+        for (id, position) in [
+            (40, [1.0, 64.0, 2.0]),
+            (41, [3.0, 65.0, 4.0]),
+            (40, [5.0, 66.0, 6.0]),
+            (42, [7.0, 67.0, 8.0]),
+        ] {
+            game.handle_packet(C::AddEntity(play::AddEntity {
+                id,
+                uuid: id as u128,
+                kind,
+                position,
+                velocity: [0.0, -0.1, 0.0],
+                pitch: 0,
+                yaw: 0,
+                head_yaw: 0,
+                data: 0,
+            }))
+            .unwrap();
+            assert_eq!(game.falling.iter().filter(|f| f.id == id as u32).count(), 1);
+            let block = game.falling.iter().find(|f| f.id == id as u32).unwrap();
+            assert_eq!(
+                [block.position.x, block.position.y, block.position.z],
+                position
+            );
+            assert_eq!(block.velocity.y, -0.1);
+        }
+        let blocks: Vec<_> = game
+            .falling
+            .iter()
+            .map(|f| (f.id, [f.position.x, f.position.y, f.position.z]))
+            .collect();
+        assert_eq!(
+            blocks,
+            [
+                (41, [3.0, 65.0, 4.0]),
+                (40, [5.0, 66.0, 6.0]),
+                (42, [7.0, 67.0, 8.0]),
+            ]
+        );
     }
 
     #[test]

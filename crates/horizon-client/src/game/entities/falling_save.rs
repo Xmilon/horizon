@@ -24,7 +24,9 @@ impl Game<'_> {
         }
         match step {
             Ok(FallStep::Falling) => {
+                let state = f.state;
                 self.falling.put_back(i.min(self.falling.len()), f);
+                self.note_falling_tick(id, join, state);
                 return Ok(());
             }
             Ok(FallStep::Gone) => {}

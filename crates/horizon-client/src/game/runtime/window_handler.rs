@@ -1451,6 +1451,7 @@ impl Game<'_> {
                     let elapsed = now.duration_since(self.previous);
                     self.frame_ticks = elapsed.as_secs_f32() * 20.0;
                     self.previous = now;
+                    self.upload_pace.frame(elapsed);
                     self.studio_fly(elapsed);
                     // Arrow-key camera controls belong to gameplay; chat and
                     // other screens use the same keys for their own navigation.
@@ -1483,42 +1484,7 @@ impl Game<'_> {
                     self.report_activity();
                     let target = self.tick_target_millis();
                     let steps = self.clock.advance(elapsed, target);
-                    for _ in 0..steps {
-                        let started = Instant::now();
-                        horizon_client::social::set_presence_status(self.presence_status());
-                        horizon_client::social::tick();
-                        // Minecraft.tick: every client tick, paused or not, in menus too.
-                        self.native_client_tick_pre();
-                        if self.title.is_none() && !self.pause {
-                            if self.tick_script.armed() {
-                                self.tick_script_step(event_loop);
-                            }
-                            horizon_client::spans::time("tick", || self.tick())?;
-                            // Cave mood (a shader pack's playerMood) samples on a random
-                            // seeded from the clock: under `HORIZON_STILL` it waits for the
-                            // world and draws from its tick.
-                            if !self.clock.still() {
-                                self.tick_ambience();
-                            } else if self.clock.runs_normally() {
-                                self.ambience.reseed(self.visual_ticks() as i64);
-                                self.tick_ambience();
-                            }
-                            self.tick_fov();
-                        }
-                        self.tick_win_screen()?;
-                        self.native_configs_tick_client();
-                        // Gui.tick runs ChatListener.tick paused or not.
-                        self.tick_chat_queue();
-                        self.tick_music();
-                        self.tick_sound_engine();
-                        // ClientTickEvent.Post, the tick's work done.
-                        self.native_client_tick_post();
-                        self.clock.record(started.elapsed());
-                        if let Some(report) = self.clock.take_sprint_report() {
-                            self.sprint_report(&report);
-                            self.on_tick_rate_changed();
-                        }
-                    }
+                    self.client_tick_steps(steps, Some(event_loop))?;
                     self.extras_frame(elapsed);
                     self.extras_retry()?;
                     self.apply_mouse_look();
@@ -1926,10 +1892,16 @@ impl ApplicationHandler for Game<'_> {
         };
         self.handle_window_event(event_loop, id, event, input_trace::InputOrigin::User);
         if let Some((event, modifiers)) = key {
+            use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
             let name = match event.physical_key {
                 PhysicalKey::Code(code) => horizon_client::keybinds::key_name(code),
                 PhysicalKey::Unidentified(_) => None,
             };
+            let layout_key = horizon_client::keybinds::layout_key_name(
+                event.physical_key,
+                &event.key_without_modifiers(),
+            );
+            let raw_code = horizon_client::keybinds::raw_key_code(event.physical_key);
             let action = match (event.state, event.repeat) {
                 (winit::event::ElementState::Released, _) => mod_api::KeyAction::Release,
                 (_, false) => mod_api::KeyAction::Press,
@@ -1937,7 +1909,13 @@ impl ApplicationHandler for Game<'_> {
             };
             // Still the key's handling: a mod's key hook may reach the clipboard.
             self.with_user_input(true, |game| {
-                game.native_input_key(name.unwrap_or("key.keyboard.unknown"), action, modifiers);
+                game.native_input_key(
+                    name.unwrap_or("key.keyboard.unknown"),
+                    layout_key,
+                    raw_code,
+                    action,
+                    modifiers,
+                );
             });
         }
     }

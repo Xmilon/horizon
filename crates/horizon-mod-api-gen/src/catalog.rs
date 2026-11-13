@@ -66,6 +66,7 @@ pub enum PartKind {
     Item,
     Menu,
     Fluid,
+    Entity,
 }
 
 /// A scoped hook: a Part method, called on the Parts attached to what `key` names.
@@ -119,6 +120,8 @@ pub struct Hook {
     /// The parameters of a hook whose game target takes them as one generated `<Name>Call`
     /// (name and type, in order, without a `Ticks` parameter); empty for a flat target.
     pub call: Vec<(String, String)>,
+    /// Parameter retained in a decision-scoped guest slot instead of copied per ask.
+    pub prepared: Option<String>,
 }
 
 /// A drawing surface of the game's that drawing hooks get as a trait object (the catalog's
@@ -241,6 +244,8 @@ struct HookEntry {
     context: Option<PhaseContext>,
     #[serde(default)]
     call: Vec<(String, String)>,
+    /// Only `prepared = "stack"` on `can_equip` is supported; reject at parse time.
+    prepared: Option<String>,
     neoforge: Option<serde_json::Value>,
     fabric: Option<serde_json::Value>,
     paper: Option<serde_json::Value>,
@@ -276,6 +281,16 @@ impl Hook {
                 hook: name.clone(),
                 error: error.to_string(),
             })?;
+        // This transport is implemented only for can_equip's stack. Validate here,
+        // before either host or guest generation can accept a different hook.
+        if let Some(parameter) = &entry.prepared
+            && (name != "can_equip" || parameter != "stack")
+        {
+            return Err(CatalogError::InvalidHook {
+                hook: name,
+                error: "prepared is supported only as prepared = \"stack\" on can_equip".into(),
+            });
+        }
         let doc = entry
             .doc
             .filter(|doc| !doc.trim().is_empty())
@@ -338,6 +353,7 @@ impl Hook {
             version: entry.version.unwrap_or(1),
             cancellable: entry.cancellable,
             call: entry.call,
+            prepared: entry.prepared,
         })
     }
 }
@@ -734,6 +750,7 @@ impl Hook {
             version: 1,
             cancellable: None,
             call: Vec::new(),
+            prepared: None,
         }
     }
 }
@@ -785,6 +802,31 @@ mod tests {
                 .any(|h| h.contract == Contract::Replace)
         );
         assert!(!catalog.draw_contexts.is_empty());
+    }
+
+    #[test]
+    fn prepared_is_rejected_on_other_hooks_at_catalog_boundary() {
+        let mut declaration = serde_json::json!({"name":"other_hook","doc":"Doc.","side":"server","target":"unused", "prepared":"stack", "mod_api":{"contract":"listen"}});
+        let error = Hook::parse(declaration.clone()).unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "hook other_hook: prepared is supported only as prepared = \"stack\" on can_equip"
+        );
+        declaration["name"] = "can_equip".into();
+        assert_eq!(
+            Hook::parse(declaration.clone())
+                .unwrap()
+                .prepared
+                .as_deref(),
+            Some("stack")
+        );
+        declaration["prepared"] = "other".into();
+        assert!(
+            Hook::parse(declaration)
+                .unwrap_err()
+                .to_string()
+                .contains("only as prepared")
+        );
     }
 
     fn checkout(files: &[(&str, &str)]) -> std::path::PathBuf {

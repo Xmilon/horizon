@@ -37,6 +37,7 @@ fn power(game: &crate::game::Game<'_>) -> DatapackValue {
 #[test]
 #[ignore = "needs prepared resources and isolated homes"]
 fn datapack_game_open_reload_and_exhaustion_are_atomic() {
+    let _publication = horizon_client::datapack_net::isolate_server_publication();
     let scratch = tempfile::tempdir().unwrap();
     let root = scratch.path();
     for (name, value) in [("base", 3), ("override", 7)] {

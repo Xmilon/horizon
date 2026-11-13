@@ -1,6 +1,6 @@
 """Run a workspace's built test binaries several at a time instead of one by one.
 
-    python3 tools/ci/run_test_binaries.py --jobs 3 -- cargo +stable test $JOBS --profile test --workspace --lib --bins --tests
+    python3 tools/ci/run_test_binaries.py --jobs 3 -- cargo test $JOBS --profile test --workspace --lib --bins --tests
 
 The cargo command (without anything after its own `--`) is run once more with `--no-run
 --message-format=json-render-diagnostics` to list the test executables, already built, so nothing compiles. Each

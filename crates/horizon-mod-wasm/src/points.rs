@@ -224,7 +224,7 @@ mod tests {
             .unwrap();
             let mut modules = WasmMod::instantiate(
                 &crate::runtime::engine().unwrap(),
-                &[("libsite.so", &manifest)],
+                crate::runtime::DEFAULT_GROUP_MEMORY_MIB,
                 &[crate::link::Member {
                     name: "libsite.so",
                     module: &bytes,
@@ -273,7 +273,7 @@ with='no_wire'
             .unwrap();
             let mut modules = WasmMod::instantiate(
                 &crate::runtime::engine().unwrap(),
-                &[("refused.so", &manifest)],
+                crate::runtime::DEFAULT_GROUP_MEMORY_MIB,
                 &[crate::link::Member {
                     name: "refused.so",
                     module: &bytes,

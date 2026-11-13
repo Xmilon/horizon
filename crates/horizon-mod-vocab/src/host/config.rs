@@ -5,6 +5,15 @@ use std::path::PathBuf;
 /// The host's methods both sides share of the `config` area, implemented by the game and reached through [`Host`].
 #[horizon_mod_api_macros::host_area]
 pub trait ConfigHost {
+    /// Physical process, not the logical side of this hook.
+    #[access(Metadata)]
+    fn dist(&self) -> Dist;
+    /// Exact Minecraft version supported by this process.
+    #[access(Metadata)]
+    fn game_version(&self) -> &'static str;
+    /// Horizon version printed in crash reports.
+    #[access(Metadata)]
+    fn horizon_version(&self) -> &'static str;
     /// Side: both.
     /// Whether the player left mod `mod_id` on in Options > Mods. A mod
     /// turned off does nothing (check this first in each hook) until the
@@ -40,6 +49,14 @@ pub trait ConfigHost {
     #[access(WorldOnly)]
     fn dimension(&self) -> &'static str;
     /// Side: both.
+    /// Whether the server's current tick still has time before the next one is
+    /// due (`MinecraftServer.haveTime`, NeoForge's `ServerTickEvent.hasTime` and
+    /// `LevelTickEvent.hasTime`): a mod doing optional work in `server_tick` or
+    /// `level_tick_pre`/`level_tick_post` skips it when this is false. Always
+    /// true on a client, and outside a scheduled tick.
+    #[access(WorldOnly)]
+    fn server_has_time(&self) -> bool;
+    /// Side: both.
     /// The instance (game) folder, which its players share: `saves/`,
     /// `resourcepacks/`, `shaderpacks/` and `horizon-mods/` are in it, and the
     /// title's screens create worlds and read packs there. A world's own
@@ -55,6 +72,9 @@ pub trait ConfigHost {
 /// The server host's methods of the `config` area, implemented by the game and reached through [`ServerHost`].
 #[horizon_mod_api_macros::host_area]
 pub trait ConfigServerHost {
+    /// Startup opt-in for test-only content. Test registration runs regardless.
+    #[access(Metadata)]
+    fn game_tests_enabled(&self) -> bool;
     /// Side: server.
     /// The server's tick rate (20 unless `/tick rate` changed it) and the
     /// milliseconds its ticks took on average lately, as `/tick query`
@@ -81,6 +101,17 @@ pub trait ConfigServerHost {
     /// keeps world data in level attachments.
     #[access(WorldOnly)]
     fn world_dir(&self) -> Option<PathBuf>;
+    /// Side: server.
+    /// Every current rule in the one server-wide store, by namespaced id.
+    /// Readable from `server_about_to_start`, before any level exists.
+    /// Level game-rule reads use this same store once their level exists.
+    #[access(WorldOnly)]
+    fn game_rules(&self) -> Vec<(String, GameRuleValue)>;
+    /// Side: server.
+    /// Read the server-wide rule from the first server hook onward.
+    /// Returns `UnknownRule` for an unknown id; level reads use the same store.
+    #[access(WorldOnly)]
+    fn game_rule(&self, id: &str) -> Result<GameRuleValue, GameRuleReadError>;
     /// Side: server.
     /// The retained server reload listeners of the last successful reload.
     #[access(WorldOnly)]

@@ -75,7 +75,9 @@ impl Game<'_> {
             let Some(host) = self.lan.as_mut() else {
                 return;
             };
-            if host.hub.guests[gi].dead {
+            if host.hub.guests[gi].dead
+                || (host.hub.guests[gi].health <= 0.0 && host.hub.guests[gi].death_canceled)
+            {
                 self.guest_tick_death(gi);
                 if let Some(host) = self.lan.as_ref() {
                     refresh_building_player(host, conn);
@@ -435,7 +437,7 @@ impl Game<'_> {
         {
             self.as_guest(conn, |game| game.server_spin_attack());
         }
-        let in_wall = !sleeping && self.in_wall(at, dimensions);
+        let in_wall = !sleeping && self.in_wall(conn, at, dimensions);
         let mut soul = None;
         let events = self.as_guest(conn, |game| {
             let (rules, motion) = (game.world.health_rules, game.motion);
@@ -724,6 +726,34 @@ impl Game<'_> {
                         host.hub.entity_event(id, event as i8);
                     }
                 }
+                MotionEvent::Fall(horizon_client::landing::FallEvent::BlockFallSound {
+                    position,
+                    state,
+                }) => {
+                    let entity = self
+                        .lan
+                        .as_ref()
+                        .and_then(|host| host.hub.guest(conn))
+                        .map(|g| (g.entity_id as u32, "minecraft:player"));
+                    let sound = self.block_sound_type(
+                        [position.x, position.y, position.z],
+                        state,
+                        entity,
+                        mod_api::BlockSoundCause::Fall,
+                    );
+                    self.audio.play_unshared(
+                        &sound.fall,
+                        Some(at),
+                        sound.volume * 0.5,
+                        sound.pitch * 0.75,
+                    );
+                    self.send_level_sound(
+                        // `Player.playSound` plays in the players' source.
+                        LevelSound::new(&sound.fall, at, sound.volume * 0.5, sound.pitch * 0.75)
+                            .in_source(mod_api::SoundSource::Players),
+                        Some(conn),
+                    );
+                }
                 MotionEvent::Fall(event) => {
                     let player = self
                         .lan
@@ -822,3 +852,7 @@ impl Game<'_> {
 #[cfg(test)]
 #[path = "tests/building_cache.rs"]
 mod building_cache_tests;
+
+#[cfg(test)]
+#[path = "tests/fall_sound_tests.rs"]
+mod fall_sound_tests;

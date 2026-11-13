@@ -8,6 +8,7 @@ on:
     paths:
       - 'launcher/**'
       - 'crates/horizon-server-files/**'
+      - 'crates/horizon-java-properties/**'
       - 'crates/horizon-client/src/carrier_store.rs'
       - 'crates/horizon-client/src/carrier_store_tests.rs'
       - '.github/workflows/launcher-windows-check.yml'
@@ -16,6 +17,7 @@ on:
       - 'launcher/**'
       - 'crates/horizon-mod-package/**'
       - 'crates/horizon-server-files/**'
+      - 'crates/horizon-java-properties/**'
       - 'crates/horizon-client/src/carrier_store.rs'
       - 'crates/horizon-client/src/carrier_store_tests.rs'
       - 'Cargo.toml'
@@ -28,11 +30,32 @@ permissions:
 
 # Finish running main checks; keep only the newest pending push. Obsolete PR runs still cancel.
 concurrency:
-  group: launcher-windows-check-${{ github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main') || github.sha }}
+  # Each main push runs at once, beside any other (it publishes nothing that needs an order).
+  group: launcher-windows-check-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      heavy: ${{ steps.gate.outputs.heavy }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Heavy checks for this event
+        id: gate
+        env:
+          EVENT: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: python3 tools/ci/pr_gate.py >> "$GITHUB_OUTPUT"
+
   test:
+    # Only same-repository rollups and syncs compile on PR events; main and dispatch stay unchanged.
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     runs-on: windows-latest
     timeout-minutes: 40
     defaults:
@@ -43,7 +66,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        shell: bash
+        run: echo "version=$(cat "$GITHUB_WORKSPACE/tools/ci/rust-version")" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
+          # The launcher builds native mods for windows-gnu (rust_toolchain::WINDOWS_X64_TARGET), and
+          # registry_compile's tests emit metadata for it: the image's stable had its std, a fresh pin does not.
+          targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: launcher
@@ -56,13 +88,22 @@ jobs:
       - run: cargo test --no-fail-fast --release --locked
 
   runtime-leases:
+    # Only same-repository rollups and syncs compile on PR events; main and dispatch stay unchanged.
+    needs: gate
+    if: needs.gate.outputs.heavy == 'true'
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
+      - name: The pinned Rust (tools/ci/rust-version)
+        id: rust
+        shell: bash
+        run: echo "version=$(cat "$GITHUB_WORKSPACE/tools/ci/rust-version")" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.rust.outputs.version }}
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: .

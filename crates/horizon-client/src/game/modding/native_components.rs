@@ -165,6 +165,20 @@ impl Game<'_> {
         self.items().get(&stack.item)?;
         Some(self.use_duration(stack))
     }
+    /// `IItemExtension.getCreatorModId`, behind ItemResource's read: the item
+    /// id's namespace, or what the item's `creator_mod_id` Part answers.
+    pub(in crate::game) fn item_resource_creator_mod_id(
+        &self,
+        stack: &ItemStack,
+    ) -> Option<String> {
+        self.items().get(&stack.item)?;
+        let namespace = stack.item.split_once(':').map_or("minecraft", |(ns, _)| ns);
+        let mut mod_id = Some(namespace.to_owned());
+        if mod_api::__private::item_listens(mod_api::HookId::CreatorModId, &stack.item) {
+            self.native_creator_mod_id(stack, &mut mod_id);
+        }
+        mod_id
+    }
     /// `ItemStack.isBarVisible`, `getBarWidth`, `getBarColor`, before client-only hooks.
     pub(in crate::game) fn item_resource_bar(&self, stack: &ItemStack) -> Option<mod_api::ItemBar> {
         use super::api_values::TryIntoApi;

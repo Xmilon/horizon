@@ -34,6 +34,16 @@ pub trait PlayersClientHost {
     /// clamped to -4..4; a spectator, or a value that is not a number, is left alone.
     #[access(WorldOnly)]
     fn push_player(&mut self, kick: [f32; 3]);
+    /// Side: client.
+    /// For a client mod: the local player's collision exclusions, the client half of
+    /// `EntityRef::set_collision_exclusions`, with the same boxes, rules and refusals (a client
+    /// with no player of its own answers `Stale`). The client moves its player itself, so a mod
+    /// sets the same boxes on both sides: the engine sends neither set to the other.
+    #[access(WorldOnly)]
+    fn set_collision_exclusions(
+        &mut self,
+        boxes: &[[f64; 6]],
+    ) -> Result<(), CollisionExclusionsError>;
 }
 /// The handles' reads of the `players` area, implemented by the game and reached through [`Backend`].
 // hidden: a handle's backend, reached through `Backend`; mods call the handle, never this trait
@@ -697,7 +707,7 @@ pub trait PlayersBackendMut {
     fn player_remove_fake(&mut self, player: PlayerRef) -> bool;
     /// Side: server.
     /// `Player.awardStat(stat, amount)`: adds `amount`, as the game does
-    /// for its own counts, so `player_stat_award` hears it and may cancel
+    /// for its own counts, so `player_stat_award` hears it and may rewrite or cancel
     /// it, and scoreboard criteria follow. False for a player it can't
     /// reach.
     #[access(WorldOnly)]

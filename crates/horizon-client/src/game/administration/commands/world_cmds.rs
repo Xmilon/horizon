@@ -138,7 +138,7 @@ impl Game<'_> {
             "spear" => DamageKind::Spear,
             "mob_attack" | "mob_attack_no_aggro" => DamageKind::MobAttack,
             "arrow" => DamageKind::Arrow,
-            "thrown" | "trident" | "mob_projectile" => DamageKind::Thrown,
+            "thrown" | "mob_projectile" => DamageKind::Thrown,
             "fireball" | "unattributed_fireball" => DamageKind::Fireball,
             "wither_skull" => DamageKind::WitherSkull,
             "explosion" | "player_explosion" | "bad_respawn_point" => DamageKind::Explosion,
@@ -243,11 +243,40 @@ impl Game<'_> {
             return false;
         }
         let attacker = cause.or(by).and_then(|t| self.network_entity_id(t));
-        let mut attack = self.attack_of(attacker.unwrap_or(0));
-        attack.direct = Some(by.and_then(|t| self.network_entity_id(t)).unwrap_or(0));
+        let attack = self.command_attack(attacker.unwrap_or(0), by);
         self.with_attack(attack, |g| {
             g.hurt_target_from_source(target, amount, ty, by, cause, from)
         })
+    }
+
+    /// `DamageCommand.damage`: an explicit direct entity keeps its actual class and weapon.
+    fn command_attack(
+        &self,
+        attacker: i32,
+        direct: Option<Target>,
+    ) -> horizon_client::health::Attack {
+        let mut attack = self.attack_of(attacker);
+        attack.direct = Some(
+            direct
+                .and_then(|target| self.network_entity_id(target))
+                .unwrap_or(0),
+        );
+        match direct {
+            Some(Target::Projectile(id)) => {
+                if let Some(shot) = self.creatures.projectiles.iter().find(|shot| shot.id == id) {
+                    Self::set_projectile_attack(&mut attack, shot);
+                }
+            }
+            Some(Target::Trident(id)) => {
+                if let Some(shot) = self.tridents.iter().find(|shot| shot.id == id) {
+                    attack.projectile = Some(id as i32);
+                    attack.projectile_is_arrow = true;
+                    Self::set_projectile_weapon(&mut attack, Some(&shot.stack));
+                }
+            }
+            _ => {}
+        }
+        attack
     }
 
     fn hurt_target_from_source(
@@ -263,7 +292,7 @@ impl Game<'_> {
             // The causing mob is the one the hit is credited to and thorns
             // answer; the source position gives the knockback its direction.
             Target::Player | Target::Guest(_) => {
-                // `DamageSource(type, cause, by)`: the death message names the
+                // `DamageSource(type, by, cause)`: the death message names the
                 // causing entity, else the direct one. A mob is noted by
                 // `hurt_player_from`, a player here.
                 let named = match cause.or(by) {
@@ -338,7 +367,7 @@ impl Game<'_> {
                     self.command_damage_mob(id, amount, damage)
                 }
             }
-            Target::Item(id) => self.command_damage_item(id, amount, ty, by, cause.or(by), from),
+            Target::Item(id) => self.hurt_item_entity(id, amount, ty, by, cause.or(by), from),
             Target::Boat(_) | Target::Cart(_) => {
                 self.command_damage_vehicle(target, amount, ty, by, cause.or(by), from)
             }
@@ -439,98 +468,18 @@ impl Game<'_> {
         }
     }
 
-    /// `ItemEntity.hurtServer`: the item branch reached by `DamageCommand.damage`.
-    fn command_damage_item(
-        &mut self,
-        id: u32,
-        amount: f32,
-        damage_type: &str,
-        direct: Option<Target>,
-        causing: Option<Target>,
-        position: Option<[f64; 3]>,
-    ) -> bool {
-        let Some(index) = self.dropped.iter().position(|item| item.id == id) else {
-            return false;
-        };
-        let Some(kind) = self.motion.health.damage.id(damage_type) else {
-            return false;
-        };
-        let creative = self.creative_source_of(causing);
-        let vanilla = self.saved_refuses_damage(id, damage_type, creative);
-        let entity_id = |target| match target {
-            Some(Target::Player) => self.own_entity_id(),
-            Some(Target::Guest(conn)) => self.command_guest(conn).map_or(0, |g| g.entity_id),
-            Some(target) => {
-                crate::game::native_entities::target_id(target).map_or(0, |id| id as i32)
-            }
-            None => 0,
-        };
-        let causing_id = entity_id(causing);
-        let source = horizon_client::health::HurtSource {
-            damage_type,
-            causing: causing_id,
-            direct: entity_id(direct),
-            position,
-        };
-        if crate::game::entity::damage_level_of!(self, scoped).invulnerability_check(
-            horizon_client::health::Hurting::Entity(id as i32, "minecraft:item", source),
-            vanilla,
-        ) {
-            return false;
-        }
-        let registry = &self.motion.health.damage;
-        if !self
-            .ui
-            .rules
-            .bool_at(horizon_client::gamerules::vanilla::MOB_GRIEFING)
-            && matches!(causing, Some(Target::Mob(_)))
-            || registry.in_tag(kind, "minecraft:is_fall")
-                && self.entity_tag_matches("minecraft:fall_damage_immune", "minecraft:item")
-        {
-            return false;
-        }
-        if self.stack_can_be_hurt_by(&self.dropped[index].stack, damage_type) == Some(false)
-            || registry.in_tag(kind, "minecraft:is_fire")
-                && self.stack_can_be_hurt_by(&self.dropped[index].stack, "minecraft:in_fire")
-                    == Some(false)
-        {
-            return false;
-        }
-        let item = &mut self.dropped[index];
-        // Java subtracts in float before truncating to int, including fractions
-        // and accepted zero-damage hits.
-        item.health = (item.health as f32 - amount) as i32;
-        item.needs_sync = true;
-        let at = item.position;
-        self.sculk_prepare();
-        let who = match causing {
-            Some(Target::Player) => Some(Who::Player),
-            Some(Target::Mob(id)) => Some(Who::Mob(id)),
-            _ => None,
-        };
-        let context = self.who_context(who, None);
-        self.post_game_event("minecraft:entity_damage", [at.x, at.y, at.z], context);
-        if self.dropped[index].health <= 0 {
-            let contents = self.dropped[index].hurt(0).unwrap_or_default();
-            self.dropped.remove(index);
-            self.spawn_destroyed_contents(contents.into_iter().map(|stack| (stack, at)).collect());
-        }
-        true
-    }
-
     /// `DamageCommand.damage`: retain the accepted hit's player context and run
     /// `Zombie.hurtServer`'s reinforcement requests before the command returns.
     /// Health-changing hits also raise their damage vibration before return.
     fn command_damage_mob(&mut self, id: u32, amount: f32, damage: Damage) -> bool {
-        let mut attack = self.attack_of_who(damage.attacker);
-        attack.direct = self.combat.attack().direct;
+        let attack = self.combat.attack();
         let mut reinforcements = Vec::new();
         let mut health_changed = false;
         let hurt = self.mobs.iter_mut().find(|m| m.id == id).is_some_and(|m| {
             let queued = m.outbox.len();
             let old_health = m.health;
             let hurt = m.damage(
-                crate::game::entity::damage_level_of!(self, &attack),
+                crate::game::entity::damage_level_of!(self, attack),
                 amount,
                 damage,
             );
@@ -1535,7 +1484,8 @@ impl Game<'_> {
                 let v = if id == "attribute.get"
                     && let Some(bonus) = absorption_bonus
                 {
-                    horizon_client::mobs::armor::max_absorption_of(Some(&*map), 0.0, bonus)
+                    horizon_client::mobs::armor::max_absorption_of(map, 0.0, bonus)
+                        .ok_or_else(no_attribute)?
                 } else if id == "attribute.get" {
                     map.value(key).map_err(|_| no_attribute())?
                 } else {
@@ -2684,6 +2634,7 @@ mod vehicle_damage_command_tests {
         use horizon_core::geometry::Vec3;
         with_game(|game| {
             game.player = Some(PlayerMotion::new(game.motion, Vec3::new(4.5, 100.0, 4.5)).unwrap());
+            crate::game::native_entity_refs::tests::bind_local_player(game, 1, 99);
             game.creative = true;
             assert!(game.run_command("fill 0 99 0 15 99 15 stone"));
             assert!(game.run_command("attribute @s minecraft:armor base set 2"));
@@ -2810,6 +2761,7 @@ mod vehicle_damage_command_tests {
         use horizon_core::geometry::Vec3;
         with_game(|game| {
             game.player = Some(PlayerMotion::new(game.motion, Vec3::new(4.5, 200.0, 4.5)).unwrap());
+            crate::game::native_entity_refs::tests::bind_local_player(game, 1, 99);
             assert!(
                 game.run_command("summon pig 6.5 200 4.5 {UUID:[I;82,0,0,1],NoAI:1b,NoGravity:1b}")
             );

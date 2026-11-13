@@ -60,6 +60,7 @@ pub(super) fn synchronous_startup(options: &Options) -> bool {
         || std::env::var_os("HORIZON_SCREEN_BUILD_FIXTURE").is_some()
         || std::env::var_os("HORIZON_DISPENSE_FIXTURE").is_some()
         || std::env::var_os("HORIZON_SCULK_FIXTURE").is_some()
+        || std::env::var_os("HORIZON_HOT_PATHS").is_some()
         || std::env::var_os("HORIZON_COMMAND_SCRIPT").is_some()
         || std::env::var_os("HORIZON_NET_REPORT").is_some()
 }

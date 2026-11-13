@@ -16,8 +16,12 @@ permissions:
 # with a manual dispatch on a suspect commit (through a branch pointing at it) when needed. Dispatches
 # queue in their own group per ref and never displace main's runs.
 concurrency:
-  group: fn-replace-check-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: false
+  # Main pushes share one group: a running check finishes and only the newest push waits, so a burst
+  # of merges checks the latest head once (owner's rule, 2026-11-13). A dispatch on main gets a group
+  # of its own and is never folded into main's. Elsewhere a newer dispatch on the same branch
+  # replaces the one before, which checked a superseded head.
+  group: fn-replace-check-${{ github.event_name == 'push' && 'main-push' || github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 env:
   # sccache (shared per Dyna host) cannot cache incremental compiles, so every Rust job builds non-incremental.
   CARGO_INCREMENTAL: 0
@@ -78,7 +82,7 @@ jobs:
             echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
             export PATH="$CARGO_HOME/bin:$PATH"
           fi
-          pinned=$(sed -n 's/^pub const VERSION: &str = "\(.*\)";$/\1/p' launcher/src/rust_toolchain.rs)
+          pinned=$(cat tools/ci/rust-version)
           rustup toolchain install "$pinned" --profile minimal
           echo "RUSTUP_TOOLCHAIN=$pinned" >> "$GITHUB_ENV"
       # On a Dyna runner RUNNER_TEMP is a small tmpfs and the build volume is shared: the SDK and the
@@ -94,6 +98,14 @@ jobs:
             mkdir -p "$scratch"
           fi
           echo "FNR_SCRATCH=$scratch" >> "$GITHUB_ENV"
+      # Every job that builds in this runner's persistent target keeps its source snapshot true: a
+      # build of another tree without it left artifacts that a later job judged fresh (stale generated
+      # sources, 2026-11-13). Only byte-identical Git objects regain their previous timestamps.
+      - name: Restore unchanged source timestamps
+        run: python3 tools/ci/source_mtimes.py "${CARGO_TARGET_DIR:-target}/ci-source-mtimes-v2.json"
+      # Every build and test in this job runs at the runner's size, not the host's (tools/ci/cargo_jobs.py).
+      - name: Cap build parallelism to the runner
+        run: python3 tools/ci/cargo_jobs.py --job-mib 3072 --cap
       # The SDK is built with the launcher's Rust: a mod's code is compiled against its metadata.
       - name: Server SDK, warnings denied
         run: python3 tools/prebuilt_game.py build "$FNR_SCRATCH/prebuilt" --server

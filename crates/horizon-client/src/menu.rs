@@ -2258,12 +2258,10 @@ impl Menu {
             .recipes
             .find_with(env.loop_context, &grid, n, &map_scale)
         {
-            self.state
-                .crafted
-                .push((format!("minecraft:{id}"), grid.clone()));
-            self.state
-                .item_crafted
-                .push((format!("minecraft:{id}"), taken.clone()));
+            let id = format!("minecraft:{id}");
+            let made = (id.clone(), taken.clone(), grid.clone());
+            self.state.crafted.push((id, grid.clone()));
+            self.state.item_crafted.push(made);
         }
         let remaining = env
             .recipes
@@ -4129,13 +4127,54 @@ pub(crate) mod tests {
             menu.set_slot(env, 1, stack("oak_log", 1));
             menu.settle(env);
             menu.click(env, 0, 0, Input::Pickup).unwrap();
+            let mut grid = vec![None; 9];
+            grid[0] = stack("oak_log", 1);
             assert_eq!(
                 menu.item_crafted,
                 vec![(
                     "minecraft:oak_planks".to_owned(),
-                    stack("oak_planks", 4).unwrap()
+                    stack("oak_planks", 4).unwrap(),
+                    grid
                 )]
             );
+        });
+    }
+
+    /// The inventory's own 2x2 grid is recorded as its 4 cells, the log in
+    /// the cell it was in.
+    #[test]
+    fn an_inventory_craft_records_its_four_grid_cells() {
+        with_menu(Kind::Inventory, |env, menu| {
+            menu.creative = false;
+            menu.set_slot(env, 2, stack("oak_log", 1));
+            menu.settle(env);
+            menu.click(env, 0, 0, Input::Pickup).unwrap();
+            assert_eq!(
+                menu.item_crafted,
+                vec![(
+                    "minecraft:oak_planks".to_owned(),
+                    stack("oak_planks", 4).unwrap(),
+                    vec![None, stack("oak_log", 1), None, None]
+                )]
+            );
+        });
+    }
+
+    /// A shift-click that crafts three times records three takes, each with
+    /// the grid as it was before that craft.
+    #[test]
+    fn a_shift_click_craft_records_each_batch_with_its_grid() {
+        with_menu(Kind::Crafting, |env, menu| {
+            menu.creative = false;
+            menu.set_slot(env, 1, stack("oak_log", 3));
+            menu.settle(env);
+            menu.click(env, 0, 0, Input::QuickMove).unwrap();
+            let logs: Vec<_> = menu
+                .item_crafted
+                .iter()
+                .map(|(_, _, grid)| (grid.len(), grid[0].as_ref().map(|s| s.count)))
+                .collect();
+            assert_eq!(logs, [(9, Some(3)), (9, Some(2)), (9, Some(1))]);
         });
     }
 
@@ -4192,11 +4231,14 @@ pub(crate) mod tests {
             listener(&mut event);
             assert_eq!(carried, stack("oak_planks", 4));
             assert!(menu.slot(1).is_none());
+            let mut grid = vec![None; 9];
+            grid[0] = stack("oak_log", 1);
             assert_eq!(
                 menu.item_crafted,
                 vec![(
                     "minecraft:oak_planks".to_owned(),
-                    stack("oak_planks", 4).unwrap()
+                    stack("oak_planks", 4).unwrap(),
+                    grid
                 )]
             );
         });

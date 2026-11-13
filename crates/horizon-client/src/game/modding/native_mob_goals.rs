@@ -182,7 +182,7 @@ impl Game<'_> {
         let snapshot: Vec<_> = self
             .mobs
             .iter()
-            .map(|m| super::creatures::seen(m, self.level.player_uuid))
+            .map(|m| super::creatures::seen(m, self.level.player_uuid, self.items()))
             .collect();
         let mut mobs = self.mobs.lift();
         #[cfg(test)]
@@ -637,7 +637,7 @@ mod tests {
             let mut mobs = game.mobs.lift();
             let snapshot: Vec<_> = mobs
                 .iter()
-                .map(|m| super::super::creatures::seen(m, game.level.player_uuid))
+                .map(|m| super::super::creatures::seen(m, game.level.player_uuid, game.items()))
                 .collect();
             let mut test_level = horizon_client::health::TestLevel::new(0);
             let mut level = test_level.level();
@@ -655,7 +655,8 @@ mod tests {
                 selector.tick(&mut mobs[0], &mut cx);
             }
             mobs[0].ai.goals = selector;
-            game.mobs = mobs;
+            game.mobs
+                .restore(mobs, horizon_client::join_seq::RestoreOrder::SurvivorsFirst);
             let mut expected = game.world.random.clone();
             let draw = expected.next_int_bound(1000).unwrap();
             let next = expected.next_int_bound(1000).unwrap();
@@ -682,7 +683,7 @@ mod tests {
             mobs[0].ai.target = Some(Who::Player);
             let snapshot: Vec<_> = mobs
                 .iter()
-                .map(|m| super::super::creatures::seen(m, game.level.player_uuid))
+                .map(|m| super::super::creatures::seen(m, game.level.player_uuid, game.items()))
                 .collect();
             let mut test_level = horizon_client::health::TestLevel::new(0);
             let mut level = test_level.level();
@@ -701,7 +702,8 @@ mod tests {
             }
             assert!(selector.is_running("HoldGroundAttack"));
             mobs[0].ai.goals = selector;
-            game.mobs = mobs;
+            game.mobs
+                .restore(mobs, horizon_client::join_seq::RestoreOrder::SurvivorsFirst);
             assert_eq!(handle.remove_goal(game, "HoldGroundAttack"), Some(1));
             assert!(game.mobs[1].ai.aggressive);
             assert_eq!(game.mobs[1].ai.target, Some(Who::Player));
@@ -720,7 +722,7 @@ mod tests {
             mobs[1].extra.followers = 1;
             let snapshot: Vec<_> = mobs
                 .iter()
-                .map(|m| m.seen(game.level.player_uuid))
+                .map(|m| m.seen(game.level.player_uuid, game.items()))
                 .collect();
             let mut test_level = horizon_client::health::TestLevel::new(0);
             let mut level = test_level.level();
@@ -743,7 +745,8 @@ mod tests {
                 "starting an established follower must not change the school"
             );
             mobs[0].ai.goals = selector;
-            game.mobs = mobs;
+            game.mobs
+                .restore(mobs, horizon_client::join_seq::RestoreOrder::SurvivorsFirst);
             assert_eq!(follower.remove_goal(game, "FollowFlockLeaderGoal"), Some(1));
             assert_eq!(
                 game.mobs[0].extra.leader, None,

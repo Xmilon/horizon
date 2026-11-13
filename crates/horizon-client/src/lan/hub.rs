@@ -21,10 +21,7 @@ use crate::{
     text::Text,
     world::World,
 };
-use horizon_core::{
-    geometry::{Aabb, ShapeOp, Vec3, VoxelShape},
-    random::LegacyRandom,
-};
+use horizon_core::random::LegacyRandom;
 use horizon_protocol::ids::play::clientbound as ids;
 use horizon_protocol::{
     entity_data::{Particle, ParticleData, Value, serializer},
@@ -36,17 +33,19 @@ use {
     horizon_core::nbt::{JavaString, Tag},
     horizon_mod_runtime::attachments::Holder,
     horizon_world::{
-        block_collision::BlockCollisionRegistry, block_collision_scan::BlockCollisionScan,
-        collision_context::CollisionContext, native_load_context::LoopContext,
+        block_collision::BlockCollisionRegistry, native_load_context::LoopContext,
         world_movement::in_range_of_ground,
     },
 };
 
 /// GameEvent types (ClientboundGameEventPacket).
 pub mod advancements;
+mod block_changes;
 pub mod chat;
 pub mod chat_filter;
 mod item_particles;
+mod move_collision;
+mod moves;
 mod raw_inbox;
 mod spawn_info;
 use advancements::AdvancementOwners;
@@ -460,6 +459,8 @@ pub struct Hub {
     /// Server mods' commands, a root in the commands report's format, sent
     /// after vanilla's; the key the game last set them for.
     mod_commands: (serde_json::Value, Option<u64>),
+    /// Players' areas in other levels and what their clients view of them (#3716).
+    pub viewed: super::viewed_levels::ViewedLevels,
 }
 
 fn string(s: &str) -> Tag {
@@ -837,6 +838,7 @@ impl Hub {
             teams: Vec::new(),
             nicknames: std::collections::HashMap::new(),
             former_names: std::collections::HashMap::new(),
+            viewed: Default::default(),
         }
     }
 
@@ -1460,7 +1462,7 @@ impl Hub {
     }
 
     /// The levels of a server, in MinecraftServer.levelKeys order.
-    fn level_keys(&self) -> Vec<String> {
+    pub(in crate::lan) fn level_keys(&self) -> Vec<String> {
         ["overworld", "the_end", "the_nether"]
             .map(|l| format!("minecraft:{l}"))
             .into_iter()
@@ -1667,7 +1669,7 @@ impl Hub {
             .center
             .is_some_and(|c| c != self.guests[i].chunk());
         if recentered {
-            self.update_view(i, super::chunk_watch::listened());
+            self.update_view(i, self.chunk_watches.recording());
         }
         let g = &self.guests[i];
         g.send(&C::GameEvent(play::GameEvent {
@@ -2219,7 +2221,7 @@ impl Hub {
     /// ServerClockManager.createFullSyncPacket: every clock. Horizon keeps the
     /// overworld clock (the day time); the End's clock runs with the game
     /// time. Clocks do not advance without the advance_time rule.
-    fn time_packet(&self, world: &World, rate: f32) -> C {
+    pub(in crate::lan) fn time_packet(&self, world: &World, rate: f32) -> C {
         let overworld = self
             .sync
             .id("minecraft:world_clock", "minecraft:overworld")
@@ -2396,13 +2398,12 @@ impl Hub {
         events
     }
 
-    /// Keeps, in a frozen player's inbox, the packets that answer the server
-    /// (teleport, chunk batch, loaded, keep-alive, ping, tick end, client
-    /// information) and drops the rest. A chat message or signed command is
-    /// dropped too, but the messages it says the client has seen are taken
-    /// first (`unpackAndApplyLastSeen`), and a chat acknowledgement is handled
-    /// here, in the order they came: the client counts them as acknowledged,
-    /// and its next message after the freeze would not validate otherwise.
+    /// Keeps server-answer packets in a frozen player's inbox (teleport, chunk batch,
+    /// loaded, keep-alive, ping, tick end, client information) and drops the rest.
+    /// Chat messages and signed commands are dropped, but their last-seen messages
+    /// are taken first (`unpackAndApplyLastSeen`). Chat acknowledgements are handled
+    /// here in arrival order: the client counts them as acknowledged, and its next
+    /// message after the freeze would not validate otherwise.
     pub(crate) fn keep_acknowledgements(&mut self, i: usize, events: &mut Vec<HostEvent>) {
         let inbox = self.guests.update(i, |g| std::mem::take(&mut g.inbox));
         let mut credits = Vec::new();
@@ -2430,6 +2431,7 @@ impl Hub {
                 | S::ClientInformation(_)
                 | S::ClientTickEnd(_)
                 | S::KeepAlive(_)
+                | S::PingRequest(_)
                 | S::Pong(_) => {
                     self.guests
                         .update(i, |g| g.inbox.push_back(InboxItem::Packet(packet, credit)));
@@ -2460,6 +2462,9 @@ impl Hub {
                 self.ticking = (ctx.tick_rate, ctx.tick_frozen);
                 self.stepping = ctx.tick_steps.revision;
             }
+            if self.viewed_pass(ctx) {
+                return events;
+            }
             if !self
                 .guests
                 .iter()
@@ -2482,6 +2487,7 @@ impl Hub {
         }
         crate::spans::time("lan_sync_world", || self.sync_world(ctx));
         crate::spans::time("lan_chunks", || self.update_chunks(ctx));
+        crate::spans::time("lan_viewed_levels", || self.send_viewed(ctx));
         crate::spans::time("lan_block_changes", || {
             self.broadcast_light_changes(ctx.world);
             self.broadcast_block_changes(ctx.world);
@@ -2772,7 +2778,7 @@ impl Hub {
         if let Some(far) = self.far.as_mut() {
             far.poll();
         }
-        let watching = super::chunk_watch::listened();
+        let watching = self.chunk_watches.recording();
         let mut batches = Vec::new();
         for i in 0..self.guests.len() {
             if self.watches(&self.guests[i]) {
@@ -3079,234 +3085,9 @@ impl Hub {
     /// tick's block events, entities and block entities, this tick's
     /// scheduled and random ticks), as it is now.
     pub fn broadcast_changes(&mut self, world: &mut World) {
-        if self.guests.iter().any(|g| self.here(g)) {
+        if self.guests.iter().any(|g| self.here(g)) || self.viewed_here() {
             self.broadcast_light_changes(world);
             self.broadcast_block_changes(world);
-        }
-    }
-    /// `ChunkHolder.broadcastChanges`' light part: the light sections that
-    /// changed in a column go to the players for whom it is on the border of
-    /// what they track (`ChunkMap.isChunkOnTrackedBorder`); the others light
-    /// the blocks they are sent themselves.
-    fn broadcast_light_changes(&mut self, world: &mut World) {
-        let Some(log) = world.light_log.as_mut() else {
-            return;
-        };
-        if log.is_empty() {
-            return;
-        }
-        let mut changes: Vec<_> = log.drain().collect();
-        // One entry per column, so the order is the columns'.
-        changes.sort_unstable_by_key(|&(column, _)| column);
-        for ((x, z), sections) in changes {
-            if let Some(far) = self.far.as_mut() {
-                far.changed(x, z);
-            }
-            let tracked = |g: &Guest, x: i32, z: i32| g.sent_chunks.contains(&(x, z));
-            let viewers: Vec<usize> = (0..self.guests.len())
-                .filter(|&i| {
-                    let g = &self.guests[i];
-                    self.watches(g)
-                        && tracked(g, x, z)
-                        && (-1..=1).any(|dz| (-1..=1).any(|dx| !tracked(g, x + dx, z + dz)))
-                })
-                .collect();
-            if viewers.is_empty() {
-                continue;
-            }
-            let Some(chunk) = world.chunks.get(&(x, z)) else {
-                continue;
-            };
-            let body = self.encoder.light_update(chunk, sections);
-            for &i in &viewers {
-                self.guests[i].sender.send(body.clone());
-            }
-        }
-    }
-
-    fn broadcast_block_changes(&mut self, world: &mut World) {
-        // Chunks changed in bulk (`World::edit_runs`) go whole to those who see them: one packet each, where a
-        // change of each block would be thousands (the client lights and meshes them once, on its workers).
-        let bulk: Vec<(i32, i32)> = if world.bulk_log.is_empty() {
-            Vec::new()
-        } else {
-            let mut keys: Vec<_> = world.bulk_log.drain().collect();
-            keys.sort_unstable();
-            keys
-        };
-        if !bulk.is_empty() {
-            // The single-player window's far terrain draws a column it isn't sent as the window last saw it: it is
-            // handed the column to summarize again (`handoff::changed`).
-            let unsent = |g: &Guest, key: &(i32, i32)| {
-                self.here(g)
-                    && g.address == super::conn::MEMORY_ADDRESS
-                    && !g.sent_chunks.contains(key)
-            };
-            for key in &bulk {
-                if let Some(chunk) = world.chunks.get(key)
-                    && self.guests.iter().any(|g| unsent(g, key))
-                {
-                    super::handoff::changed(chunk);
-                }
-            }
-            let recording = self.recording();
-            let columns: Vec<&Chunk> = bulk
-                .iter()
-                .filter_map(|k| world.chunks.get(k).map(|c| &**c))
-                .collect();
-            self.encoder.warm(&columns);
-            for chunk in columns {
-                let key = (chunk.x, chunk.z);
-                if let Some(far) = self.far.as_mut() {
-                    far.changed(key.0, key.1);
-                }
-                let viewers: Vec<usize> = (0..self.guests.len())
-                    .filter(|&i| {
-                        self.watches(&self.guests[i]) && self.guests[i].sent_chunks.contains(&key)
-                    })
-                    .collect();
-                if viewers.is_empty() {
-                    continue;
-                }
-                let body = self.encoder.body_in(chunk, world);
-                for &i in &viewers {
-                    self.guests[i].sender.send(body.clone());
-                }
-                if recording {
-                    // The prediction's replay excuses a client near the column: any of its blocks may have
-                    // changed, so the one nearest the player stands for them.
-                    for &i in &viewers {
-                        self.guests.update(i, |g| {
-                            let Some(record) = g.record.as_deref_mut() else {
-                                return;
-                            };
-                            let slack = super::prediction::slack(std::array::from_fn(|i| {
-                                g.position[i] - g.previous_position[i]
-                            }));
-                            let column =
-                                |c: f64, at: i32| (c.floor() as i32).clamp(at * 16, at * 16 + 15);
-                            let at = [
-                                column(g.position[0], key.0),
-                                g.position[1].floor() as i32,
-                                column(g.position[2], key.1),
-                            ];
-                            if super::prediction::near(g.position, at, slack) {
-                                record.changed_near(self.ticks, at);
-                            }
-                        });
-                    }
-                }
-            }
-        }
-        let Some(log) = world.block_log.as_mut() else {
-            return;
-        };
-        if !bulk.is_empty() {
-            // (what changed in them one at a time went with them, but for one-shot fields: a chunk has none)
-            log.retain(|p| {
-                bulk.binary_search(&(p.0 >> 4, p.2 >> 4)).is_err()
-                    || matches!(
-                        world.block_entities.get(p),
-                        Some(crate::containers::BlockEntity::Mod(m)) if m.has_client_update_fields()
-                    )
-            });
-        }
-        if log.is_empty() {
-            return;
-        }
-        let mut changes = std::mem::take(log);
-        changes.sort_unstable();
-        changes.dedup();
-        // The prediction's replay excuses a client that hadn't seen a change near it.
-        let recording = self.recording();
-        // Group by section.
-        let mut sections: std::collections::BTreeMap<(i32, i32, i32), Vec<(i32, i32, i32)>> =
-            Default::default();
-        for p in changes {
-            sections
-                .entry((p.0 >> 4, p.1 >> 4, p.2 >> 4))
-                .or_default()
-                .push(p);
-        }
-        for ((sx, sy, sz), positions) in sections {
-            if let Some(far) = self.far.as_mut() {
-                far.changed(sx, sz);
-            }
-            let viewers: Vec<usize> = (0..self.guests.len())
-                .filter(|&i| {
-                    self.watches(&self.guests[i]) && self.guests[i].sent_chunks.contains(&(sx, sz))
-                })
-                .collect();
-            if viewers.is_empty() {
-                continue;
-            }
-            let packet = if positions.len() == 1 {
-                let (x, y, z) = positions[0];
-                C::BlockUpdate(play::BlockUpdate {
-                    pos: [x, y, z],
-                    state: world.block(x, y, z).0 as i32,
-                })
-            } else {
-                C::SectionBlocksUpdate(play::SectionBlocksUpdate {
-                    section: [sx, sy, sz],
-                    changes: positions
-                        .iter()
-                        .map(|&(x, y, z)| {
-                            let state = i64::from(world.block(x, y, z).0);
-                            state << 12
-                                | i64::from(x & 15) << 8
-                                | i64::from(z & 15) << 4
-                                | i64::from(y & 15)
-                        })
-                        .collect(),
-                })
-            };
-            let body = packet.encode();
-            for &i in &viewers {
-                self.guests[i].sender.send(body.clone());
-            }
-            if recording {
-                let bounds = super::prediction::bounds(&positions);
-                for &i in &viewers {
-                    self.guests.update(i, |g| {
-                        super::prediction::note_changes(g, self.ticks, bounds, &positions);
-                    });
-                }
-            }
-            // Block entities with data the client shows.
-            for &(x, y, z) in &positions {
-                let state = world.block(x, y, z).0;
-                if !self
-                    .encoder
-                    .entity_matches(state, world.block_entities.get(&(x, y, z)))
-                {
-                    continue;
-                }
-                // A decorated pot is no block entity: its tag is the chunk's saved one.
-                let state = world.block(x, y, z).0;
-                let tag = match world.block_entities.get(&(x, y, z)) {
-                    Some(entity) => self.encoder.change_tag((x, y, z), state, entity),
-                    None => world
-                        .chunks
-                        .get(&(x >> 4, z >> 4))
-                        .and_then(|c| super::chunks::pot_tag(c, (x, y, z))),
-                };
-                let Some(tag) = tag else {
-                    continue;
-                };
-                let Some(kind) = self.encoder.entity_type(state) else {
-                    continue;
-                };
-                let body = C::BlockEntityData(play::BlockEntityData {
-                    pos: [x, y, z],
-                    kind,
-                    tag,
-                })
-                .encode();
-                for &i in &viewers {
-                    self.guests[i].sender.send(body.clone());
-                }
-            }
         }
     }
 
@@ -3604,7 +3385,7 @@ impl Hub {
         let modified_particles =
             mod_api::__private::listened(mod_api::HookId::EffectParticleModification);
         let placed: Vec<usize> = (0..self.guests.len())
-            .filter(|&i| self.here(&self.guests[i]))
+            .filter(|&i| self.here(&self.guests[i]) && self.guests[i].body_present())
             .collect();
         let guest_states: Vec<_> = placed
             .into_iter()
@@ -4031,8 +3812,7 @@ impl Hub {
         let sync = self.sync.clone();
         // broadcastAll(ClientboundUpdateTagsPacket).
         self.broadcast(&C::UpdateTags(sync.tags.clone()));
-        // For each player: ClientboundUpdateRecipesPacket, then
-        // sendInitialRecipeBook.
+        // For each player: ClientboundUpdateRecipesPacket, then sendInitialRecipeBook.
         for i in 0..self.guests.len() {
             if !self.guests[i].placed {
                 continue;
@@ -4935,133 +4715,6 @@ impl Hub {
         }
     }
 
-    /// `ServerGamePacketListenerImpl.tickPlayer`'s flying check: a player the
-    /// last move left hovering for more than `getMaximumFlyingTicks` ticks is
-    /// kicked.
-    fn tick_floating(&mut self, i: usize, events: &mut Vec<HostEvent>) {
-        let kick = self.guests.update(i, |g| {
-            if g.client_is_floating && !g.sleeping && g.vehicle.is_none() && !g.dead {
-                g.above_ground_ticks += 1;
-                if g.above_ground_ticks > maximum_flying_ticks(PLAYER_GRAVITY) {
-                    events.push(HostEvent::Warn(format!(
-                        "{} was kicked for floating too long!",
-                        g.name
-                    )));
-                    return Some(g.conn);
-                }
-            } else {
-                g.client_is_floating = false;
-                g.above_ground_ticks = 0;
-            }
-            None
-        });
-        if let Some(conn) = kick {
-            self.kick(conn, translatable("multiplayer.disconnect.flying", &[]));
-        }
-        // The vehicle the player drives, by its own gravity: a boat may hover 160 ticks, a horse 80.
-        let kick = self.guests.update(i, |g| {
-            if g.vehicle_floating && g.vehicle.is_some() {
-                g.above_ground_vehicle_ticks += 1;
-                if g.above_ground_vehicle_ticks > maximum_flying_ticks(g.vehicle_gravity) {
-                    events.push(HostEvent::Warn(format!(
-                        "{} was kicked for floating a vehicle too long!",
-                        g.name
-                    )));
-                    return Some(g.conn);
-                }
-            } else {
-                g.vehicle_floating = false;
-                g.above_ground_vehicle_ticks = 0;
-            }
-            None
-        });
-        if let Some(conn) = kick {
-            self.kick(conn, translatable("multiplayer.disconnect.flying", &[]));
-        }
-    }
-
-    /// The collision part of handlePlayerPositionChange: whether the move
-    /// counts as moved wrongly (logged), and whether it is refused (the
-    /// player is sent back where they were).
-    fn collide(&self, i: usize, to: [f64; 3], ctx: &TickCtx) -> (bool, bool, bool) {
-        let g = &self.guests[i];
-        // noPhysics (spectators) and sleepers move freely.
-        let Some(binding) = ctx.collision else {
-            return (false, false, false);
-        };
-        if g.spectator() || g.sleeping {
-            return (false, false, false);
-        }
-        // getBoundingBox: the box of the body's pose (swimming and crawling
-        // are 0.6 tall), so a swimmer under a ceiling isn't sent back.
-        let d = g.dimensions();
-        let (half, height) = (f64::from(d.width) / 2.0, f64::from(d.height));
-        let at = |p: [f64; 3]| {
-            Aabb::new(
-                Vec3::new(p[0] - half, p[1], p[2] - half),
-                Vec3::new(p[0] + half, p[1] + height, p[2] + half),
-            )
-        };
-        let (old, new) = (at(g.position), at(to));
-        let mut scene = SceneCollisions {
-            world: ctx.world,
-            binding,
-            subject: None,
-        };
-        // player.move, then how far from the target it ended (vanilla drops
-        // the vertical part: `yDist > -0.5 || yDist < 0.5` always holds).
-        let movement = Vec3::new(
-            to[0] - g.position[0],
-            to[1] - g.position[1],
-            to[2] - g.position[2],
-        );
-        let done = scene
-            .resolve_with_context(
-                old,
-                movement,
-                0.6,
-                g.on_ground,
-                // The mover's own sneaking, as CollisionContext.of(player):
-                // a sneaking player descends through scaffolding.
-                CollisionContext::position(g.position[1]).with_descending(g.sneaking),
-            )
-            .ok();
-        let fail = !g.creative()
-            && done.is_some_and(|done| {
-                let (dx, dz) = (movement.x - done.x, movement.z - done.z);
-                dx * dx + dz * dz > 0.0625
-            });
-        // Entity.move: verticalCollisionBelow, the player "stands on something".
-        let stands = done.is_some_and(|done| movement.y < 0.0 && done.y != movement.y);
-        if fail && scene.unobstructed(old).unwrap_or(true) {
-            return (true, true, stands);
-        }
-        // isEntityCollidingWithAnythingNew: a block the old box did not
-        // already touch.
-        let shrink = f64::from(1.0E-5_f32);
-        let shrink = Vec3::new(shrink, shrink, shrink);
-        let Ok(old_shape) = VoxelShape::from_box(old.deflate(shrink)) else {
-            return (fail, false, stands);
-        };
-        let context = CollisionContext::position(g.position[1]).with_descending(g.sneaking);
-        let Ok(scan) =
-            BlockCollisionScan::new(&mut scene, context, new.deflate(shrink), false, 1 << 20)
-        else {
-            return (fail, false, stands);
-        };
-        for hit in scan {
-            let Ok(hit) = hit else { break };
-            if !hit
-                .shape
-                .join_is_not_empty(&old_shape, ShapeOp::AND)
-                .unwrap_or(true)
-            {
-                return (fail, true, stands);
-            }
-        }
-        (fail, false, stands)
-    }
-
     /// Acknowledge a block interaction (ClientboundBlockChangedAckPacket).
     /// ServerGamePacketListenerImpl.ackBlockChangesUpTo: sent with the next tick's block
     /// changes (`tick`).
@@ -5216,6 +4869,8 @@ impl Hub {
             super::chunk_watch::unwatch_all(&mut self.chunk_watches, g);
             // PlayerList.respawn: into the level in place (the respawn level).
             g.dimension = self.config.dimension.clone();
+            // A new player: a mod's collision exclusions were the dead one's (#3717).
+            g.collision_exclusions.clear();
             // restartClientLoadTimerAfterRespawn: the client loads a whole new level before it
             // reports it loaded.
             g.load_timeout = super::guest::CLIENT_LOADED_TIMEOUT;
@@ -5236,6 +4891,7 @@ impl Hub {
             g.far_sent_chunks.clear();
             g.chunk_queue.clear();
             g.far_queue.clear();
+            g.viewed.forget_views();
             g.entity_id
         });
         self.respawned(id);
@@ -5368,6 +5024,8 @@ impl Hub {
             // Out of the old level with its chunks (ChunkMap.removeEntity).
             super::chunk_watch::unwatch_all(&mut self.chunk_watches, g);
             g.dimension = self.config.dimension.clone();
+            // A mod's collision exclusions were the old level's (#3717).
+            g.collision_exclusions.clear();
             // The load timer is not restarted: vanilla resets the client's loaded state on death and
             // respawn only, and covers a level change with its separate `isChangingDimension` term.
             g.tracker.clear();
@@ -5375,6 +5033,7 @@ impl Hub {
             g.far_sent_chunks.clear();
             g.chunk_queue.clear();
             g.far_queue.clear();
+            g.viewed.forget_views();
             g.center = None;
             g.yaw = yaw;
             if let Some(pitch) = pitch {
@@ -5610,6 +5269,8 @@ fn equipment_source(g: &Guest, index: usize) -> Option<&ItemStack> {
 #[cfg(test)]
 mod tests {
     mod cave_air_tests;
+    mod collision_exclusion_tests;
+    mod effect_meta_tests;
     #[path = "../far_tests.rs"]
     mod far_tests;
     mod ordered_inbox_tests;
@@ -7891,6 +7552,30 @@ mod tests {
                 })
             })
             .collect()
+    }
+
+    /// With no mod listening, a registered passage (`record_for_passages`) makes the hub
+    /// record the chunks it sends from then on, for the passages the game sends with them.
+    #[test]
+    fn a_passage_makes_the_hub_record_the_chunks_it_sends() {
+        use super::super::chunk_watch::ChunkWatchKind::{Sent, Watch};
+        let (mut hub, _rx) = hub_with_a_guest();
+        let mut world = floor_at(1);
+        {
+            let value = 2;
+            hub.guests.update(0, |g| g.view_distance = value);
+        }
+        hub.chunk_watches.record_for_passages();
+        send_chunks(&mut hub, &mut world);
+        let mut got = watches(&mut hub);
+        got.sort_by_key(|(k, _, c)| (*k as u8, *c));
+        let overworld = "minecraft:overworld".to_string();
+        let four = [[-1, -1], [-1, 0], [0, -1], [0, 0]];
+        let expected: Vec<_> = [Watch, Sent]
+            .into_iter()
+            .flat_map(|kind| four.map(|c| (kind, overworld.clone(), c)))
+            .collect();
+        assert_eq!(got, expected);
     }
 
     /// `ChunkWatchEvent`: each near chunk sent is watched then sent, once;

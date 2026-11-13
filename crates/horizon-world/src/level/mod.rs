@@ -125,6 +125,7 @@ mod query;
 pub(crate) use query::data_2d;
 pub mod orientation;
 mod rails;
+pub use rails::RailShape;
 mod redstone;
 pub mod removal;
 pub mod sculk;
@@ -140,9 +141,13 @@ mod update;
 mod weather;
 
 #[cfg(test)]
+mod fertile_tests;
+#[cfg(test)]
 mod fire_tests;
 #[cfg(test)]
 mod growth_tests;
+#[cfg(test)]
+mod infiniburn_tests;
 #[cfg(test)]
 mod piston_carry_tests;
 #[cfg(test)]
@@ -151,7 +156,10 @@ mod survive_tests;
 mod tests;
 
 pub use bonemeal::{BonemealCheck, TemplateSettings};
-pub use buckets::{BucketContent, fluid_bucket, fluid_empty_sound, fluid_pickup_sound};
+pub use buckets::{
+    BucketContent, Douse, Drain, FluidChange, FluidWrite, PlacedLiquid, fluid_bucket,
+    fluid_empty_sound, fluid_pickup_sound,
+};
 pub use data::{BlockData, ItemBinding, ItemKind, Named, Props, PushReaction, StateFacts, Tags};
 pub use falling::Landing;
 pub use fluids::{
@@ -226,19 +234,19 @@ pub fn vanilla_sea_level(level: LevelKey) -> i32 {
     }
 }
 
-/// The sea levels of the levels a mod registered, from the noise settings their stems name, by
-/// level key: set at each world's load (`set_sea_levels`), as the dimension types' facts are.
+/// The sea level each level's generator builds with (`ChunkGenerator.getSeaLevel`), by level key.
+/// Filled when a world opens from the noise settings its data packs replace (`set_sea_levels`),
+/// and by each level's generator as it opens (`register_sea_level`).
 static SEA_LEVELS: std::sync::LazyLock<RwLock<HashMap<LevelKey, i32>>> =
     std::sync::LazyLock::new(Default::default);
 
-/// Replaces the registered levels' sea levels, at a world's load.
+/// Replaces every registered sea level, as a world opens.
 pub fn set_sea_levels(levels: Vec<(LevelKey, i32)>) {
     *SEA_LEVELS.write().unwrap_or_else(|e| e.into_inner()) = levels.into_iter().collect();
 }
 
-/// Registers one level's sea level, as a server told a client the level of a mod or a data pack
-/// has (`CommonPlayerSpawnInfo.seaLevel`); the levels of a world's own load are set by
-/// `set_sea_levels`.
+/// Registers one level's sea level: its generator's, or the one a server sent
+/// (`CommonPlayerSpawnInfo.seaLevel`).
 pub fn register_sea_level(level: LevelKey, sea_level: i32) {
     SEA_LEVELS
         .write()
@@ -510,6 +518,10 @@ pub trait LevelAccess: BlockEntityNeighbors {
     fn allow_leaves_decay(&self, _pos: BlockPos) -> bool {
         true
     }
+    /// Session-only watered areas, checked before vanilla's farmland water scan.
+    fn has_water_ticket(&self, _pos: BlockPos) -> bool {
+        false
+    }
     fn allow_moisture_change(&self, _pos: BlockPos, _from: i32, _to: i32) -> bool {
         true
     }
@@ -604,6 +616,22 @@ pub trait LevelAccess: BlockEntityNeighbors {
         _extending: bool,
         _push: &[BlockPos],
         _destroy: &[BlockPos],
+    ) {
+    }
+    /// NeoForge's `IBlockExtension.onDestroyedByPushReaction`: the piston move
+    /// `piston_move_blocks` resolved destroys the block `state` at `pos`, the
+    /// blocks moving `direction`, after it dropped its resources and before
+    /// its cell becomes air; `fluid` is the fluid state the cell holds. `ticks`
+    /// schedules the ticks the level's writes schedule; a write to a cell of
+    /// the move is overwritten, as the pushed states were read before. The
+    /// default does nothing.
+    fn on_destroyed_by_push_reaction(
+        &mut self,
+        _ticks: &mut Ticks,
+        _pos: BlockPos,
+        _state: BlockStateId,
+        _direction: Direction,
+        _fluid: FluidState,
     ) {
     }
     /// Observe a committed `Level.setBlock` state change, before its side effects.
@@ -754,6 +782,34 @@ pub trait LevelAccess: BlockEntityNeighbors {
         _sustains: &mut Option<bool>,
     ) {
     }
+    /// Whether a part may answer `IBlockExtension.isFertile`: asked once per
+    /// `CropBlock.getGrowthSpeed`, so with none the speed is vanilla's loop.
+    /// The default is false.
+    fn asks_is_fertile(&self) -> bool {
+        false
+    }
+    /// `IBlockExtension.isFertile` for the soil `state` at `pos`, a block in
+    /// `#grows_crops` under a crop: `fertile` starts at vanilla's answer
+    /// (`moisture > 0`). The default does nothing.
+    fn before_is_fertile(&self, _state: BlockStateId, _pos: BlockPos, _fertile: &mut bool) {}
+    /// Whether a part may answer `IBlockExtension.canBeHydrated` for the
+    /// farmland `state`: asked once before its scan, so with none the scan is
+    /// vanilla's. The default is false.
+    fn asks_can_be_hydrated(&self, _state: BlockStateId) -> bool {
+        false
+    }
+    /// `IBlockExtension.canBeHydrated` for the farmland `state` at `pos` and
+    /// the non-empty `fluid` at `fluid_pos`: an answer put in `hydrates`
+    /// decides, left `None` the `#water` rule does. The default does nothing.
+    fn before_can_be_hydrated(
+        &self,
+        _state: BlockStateId,
+        _pos: BlockPos,
+        _fluid: FluidState,
+        _fluid_pos: BlockPos,
+        _hydrates: &mut Option<bool>,
+    ) {
+    }
     /// `VegetationBlock.mayPlaceOn(ground, level, groundPos)` for the plant
     /// `state`, before the plant answers it: the blocks a plant can stand on,
     /// which its `canSurvive` asks. An answer put in `may` is the result. The
@@ -889,6 +945,10 @@ pub trait LevelAccess: BlockEntityNeighbors {
     fn sea_level(&self) -> i32 {
         sea_level_of(self.level_key())
     }
+    /// `DimensionType.infiniburn` resolved once for this level; None lets the fire tick resolve the tag from the bundle.
+    fn infiniburn(&self) -> Option<&data::BlockSet> {
+        None
+    }
     /// The level's dimension type.
     fn dimension_type(&self) -> &DimensionFacts {
         DimensionFacts::of_level(self.level_key())
@@ -918,7 +978,7 @@ pub trait LevelAccess: BlockEntityNeighbors {
     /// containers, jukeboxes, lecterns, ...). State-only sources (cake,
     /// composter, cauldrons, beehives, ...) are evaluated by the library.
     fn block_entity_analog_signal(
-        &self,
+        &mut self,
         _pos: BlockPos,
         _state: BlockStateId,
         _direction: Direction,
@@ -993,6 +1053,45 @@ pub trait LevelAccess: BlockEntityNeighbors {
         &self,
         _state: BlockStateId,
         _other: BlockStateId,
+        vanilla: bool,
+    ) -> bool {
+        vanilla
+    }
+    /// Whether the rail queries below need the level hooks.
+    fn has_rail_hook(&self) -> bool {
+        false
+    }
+    /// `IBaseRailBlockExtension.getRailDirection` of the rail `state` at `pos`, with no cart, once
+    /// the library read `vanilla` from its `shape`: the track it lays. The default keeps it.
+    fn adjust_rail_direction(
+        &self,
+        _pos: BlockPos,
+        _state: BlockStateId,
+        vanilla: RailShape,
+    ) -> RailShape {
+        vanilla
+    }
+    /// `IBaseRailBlockExtension.canMakeSlopes` of the rail `state` at `pos` once the library
+    /// answered `vanilla`: whether it may climb toward a raised rail. The default keeps it.
+    fn adjust_rail_can_make_slopes(
+        &self,
+        _pos: BlockPos,
+        _state: BlockStateId,
+        vanilla: bool,
+    ) -> bool {
+        vanilla
+    }
+    /// `IBaseRailBlockExtension.isFlexibleRail` of the rail `state` at `pos` once the library
+    /// answered `vanilla`: whether it may curve. The default keeps it.
+    fn adjust_rail_flexible(&self, _pos: BlockPos, _state: BlockStateId, vanilla: bool) -> bool {
+        vanilla
+    }
+    /// `IBaseRailBlockExtension.isValidRailShape` of the rail `state` for `shape`, about to be
+    /// written, once the library answered `vanilla`. The default keeps it.
+    fn adjust_rail_valid_shape(
+        &self,
+        _state: BlockStateId,
+        _shape: RailShape,
         vanilla: bool,
     ) -> bool {
         vanilla
@@ -1387,6 +1486,18 @@ impl Behaviours {
     ) -> bool {
         self.sim(level, ticks)
             .destroy_block(pos, drop, flags::UPDATE_LIMIT)
+    }
+    /// `Block.dropResources(state, level, pos)`: the loot of `state` at `pos`, with what the
+    /// block entity there copies into it, as `destroy_block` drops it (nothing under
+    /// `doTileDrops` false), without touching the block.
+    pub fn drop_resources<L: LevelAccess + ?Sized>(
+        &self,
+        level: &mut L,
+        ticks: &mut Ticks,
+        pos: BlockPos,
+        state: BlockStateId,
+    ) {
+        self.sim(level, ticks).drop_resources(state, pos);
     }
     /// A player breaking a block (`playerWillDestroy` + `Level.destroyBlock`
     /// without drops; the caller handles the player's loot/tool). Double

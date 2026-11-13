@@ -12,6 +12,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from tools import prebuilt_game
+from tests.test_ci_concurrency import yaml
 
 
 class StageToolTests(unittest.TestCase):
@@ -119,10 +120,14 @@ class RegistryPatchTests(unittest.TestCase):
 class DeterministicArchiveTests(unittest.TestCase):
     def test_workflow_archive_is_independent_of_creation_order_and_mtimes(self):
         # Execute the workflow command itself, so a regression in its flags breaks this proof.
-        workflow = (prebuilt_game.ROOT / ".github/workflows/prebuilt-game.yml").read_text()
-        command = next(line.strip() for line in workflow.splitlines() if "tar --sort=name" in line)
+        workflow = yaml.safe_load((prebuilt_game.ROOT / ".github/workflows/prebuilt-game.yml").read_text())
+        command = next(step["run"] for step in workflow["jobs"]["build"]["steps"] if step.get("name") == "Archive")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            # The step runs `python` as setup-python provides it.
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            (bin_dir / "python").symlink_to(sys.executable)
             archives = []
             for index, order in enumerate([("a", "b"), ("b", "a")]):
                 work = root / str(index)
@@ -135,7 +140,9 @@ class DeterministicArchiveTests(unittest.TestCase):
                 for folder in [payload, payload.parent, payload.parent.parent]:
                     os.utime(folder, (2000 + index, 2000 + index))
                 subprocess.run(["bash", "-o", "pipefail", "-c", command], cwd=work,
-                               env={**os.environ, "ARCHIVE": "sdk.tar.gz"}, check=True)
+                               env={**os.environ, "ARCHIVE": "sdk.tar.gz",
+                                    "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                                    "GITHUB_STEP_SUMMARY": str(root / f"summary-{index}")}, check=True)
                 archives.append((work / "sdk.tar.gz").read_bytes())
             self.assertEqual(archives[0], archives[1])
 

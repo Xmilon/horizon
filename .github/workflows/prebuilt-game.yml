@@ -2,7 +2,7 @@ name: prebuilt game
 # The prebuilt game (#589): horizon-client as a Rust dylib plus every crate's metadata, one archive per OS, so the
 # launcher builds native trait mods against it with rustc alone, in seconds, instead of rebuilding the game.
 # Each OS builds with explicit --target <host>: target metadata lives in deps/, host proc-macros in host/.
-# Built with the launcher's pinned Rust (launcher/src/rust_toolchain.rs), because rustc reads only metadata from its own
+# Built with the pinned Rust (tools/ci/rust-version, which the launcher builds native mods with), because rustc reads only metadata from its own
 # version. Built once a day from main's head (a run whose commit already has a release stops early) and published as
 # a prerelease tagged prebuilt-<sha>, never marked latest. Exact-SHA SDKs are retained: Nightlies and installed
 # games can continue referencing older builds. Only compiler outputs go in:
@@ -71,7 +71,7 @@ jobs:
       - name: The launcher's pinned Rust
         id: rust
         run: |
-          echo "version=$(sed -n 's/^pub const VERSION: &str = "\(.*\)";$/\1/p' launcher/src/rust_toolchain.rs)" >> "$GITHUB_OUTPUT"
+          echo "version=$(cat tools/ci/rust-version)" >> "$GITHUB_OUTPUT"
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ steps.rust.outputs.version }}-${{ matrix.target }}
@@ -91,8 +91,26 @@ jobs:
       - name: Exported names, toward Windows' 65,535
         run: python tools/prebuilt_game.py exports prebuilt | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Archive
+        # Python's tarfile, not tar: macOS's bsdtar has no --sort, and the archive must come out
+        # the same on every OS (sorted ./ entries, zero times and owners, no gzip name or time).
         run: |
-          tar --sort=name --mtime="@0" --owner=0 --group=0 --numeric-owner -cf - -C prebuilt . | gzip -n > "$ARCHIVE"
+          python - <<'PY'
+          import gzip, os, tarfile
+          def clean(info):
+              info.mtime, info.uid, info.gid, info.uname, info.gname = 0, 0, 0, "", ""
+              return info
+          paths = ["."]
+          for root, dirs, files in os.walk("prebuilt"):
+              dirs.sort()
+              rel = os.path.relpath(root, "prebuilt")
+              paths += sorted(os.path.normpath(os.path.join(rel, n)) for n in dirs + files)
+          with open(os.environ["ARCHIVE"], "wb") as out, gzip.GzipFile(
+              filename="", mode="wb", fileobj=out, mtime=0
+          ) as gz, tarfile.open(fileobj=gz, mode="w", format=tarfile.GNU_FORMAT) as tar:
+              for path in sorted(set(paths)):
+                  name = "." if path == "." else "./" + path.replace(os.sep, "/")
+                  tar.add(os.path.join("prebuilt", path), arcname=name, recursive=False, filter=clean)
+          PY
           echo "$(du -h "$ARCHIVE" | cut -f1) $ARCHIVE" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:

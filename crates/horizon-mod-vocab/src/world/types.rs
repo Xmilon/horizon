@@ -328,6 +328,36 @@ impl LevelRef {
     }
 }
 
+/// A mod-owned watered area in one server level. Created by [`LevelRef::add_water_ticket`].
+/// Explicit removal, owner disable and level unload invalidate it. Never saved.
+#[derive(horizon_mod_api_macros::Wire)]
+#[wire(internal_field_layouts)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+// exhaustive: its fields are private, so mods cannot build or destructure it
+pub struct WaterTicket {
+    pub(crate) level: LevelRef,
+    pub(crate) id: u64,
+}
+
+impl WaterTicket {
+    /// Construct a handle at the game boundary.
+    // hidden: a game-side constructor; mods receive tickets from `add_water_ticket`
+    #[doc(hidden)]
+    pub fn new(level: LevelRef, id: u64) -> Self {
+        Self { level, id }
+    }
+    /// The level this transient ticket belongs to.
+    pub fn level(self) -> LevelRef {
+        self.level
+    }
+    /// The session-only identity used by the game.
+    // hidden: a game-side helper; mods use the handle's methods
+    #[doc(hidden)]
+    pub fn id(self) -> u64 {
+        self.id
+    }
+}
+
 /// A raid of a level (`Raid`), by the id `Raids` keeps it under, which the
 /// raids file saves. `level.raid_at(host, pos)`, `level.raids(host)`,
 /// `level.raid(host, id)` and `mob.raid(host)` make one. A handle resolves
@@ -861,7 +891,7 @@ pub enum ClipBlock {
     Outline,
 }
 
-/// Fluid mode for a level ray. More modes are a follow-up.
+/// Fluid mode for a level ray. Only the listed modes are supported.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, horizon_mod_api_macros::Wire)]
 pub enum ClipFluid {
@@ -958,7 +988,7 @@ impl TickId {
     }
 }
 
-/// The world phases (`native_world_lifecycle`'s `phase`).
+/// The world phases (`world_lifecycle`'s `phase`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 /// The phase names are the hook log's stable vocabulary (the Debug text
 /// the mixins write); keep them despite the shared prefix.
@@ -993,7 +1023,7 @@ pub enum ServerTickPhase {
 
 /// Context for every world lifecycle phase.
 /// `authority` is the server role. LocalAuthoritative and RemoteClient never
-/// fire today. `epoch` identifies the open attempt, including failed opens;
+/// fire. `epoch` identifies the open attempt, including failed opens;
 /// the same epoch identifies its ready, final-close, or failed-close event.
 /// `tick` counts non-paused server ticks since the world opened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1346,7 +1376,7 @@ pub trait LevelWriteHost: LevelTicksHost + LevelRandomHost {
     ) -> bool {
         unimplemented!("LevelWriteHost::set_block_property")
     }
-    /// Play a sound for nearby players through `native_play_sound`.
+    /// Play a sound for nearby players through `play_sound`.
     fn play_sound(
         &mut self,
         _sound: &str,
@@ -1421,4 +1451,12 @@ impl StructureSearchResult {
             position,
         }
     }
+}
+
+/// Why a server-wide game rule read was refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, horizon_mod_api_macros::Wire)]
+#[non_exhaustive]
+pub enum GameRuleReadError {
+    /// No rule has this identifier.
+    UnknownRule,
 }

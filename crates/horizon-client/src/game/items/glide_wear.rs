@@ -36,7 +36,7 @@ impl Game<'_> {
 
     pub(super) fn wear_glider(&mut self, points: u32) {
         // Every 20th glide tick only, so collecting the candidates here is fine.
-        let pieces: Vec<usize> = gliding_slots(
+        let mut pieces: Vec<usize> = gliding_slots(
             self.res.items(),
             &self.armor,
             self.inventory[self.selected].as_ref(),
@@ -46,6 +46,10 @@ impl Game<'_> {
         if pieces.is_empty() {
             return;
         }
+        // `Util.getRandom(slotsWithGliders, this.random)` over `EquipmentSlot.VALUES` order:
+        // mainhand, offhand, feet, legs, chest, head; the entity's own random, which never
+        // touches the level's stream.
+        pieces.sort_unstable_by_key(|&slot| [5, 4, 3, 2, 0, 1][slot]);
         let pick = random_source::entity().next_int_bound(pieces.len() as i32);
         let slot = pieces[pick.unwrap_or(0) as usize];
         let stack = match slot {

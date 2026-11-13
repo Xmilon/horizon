@@ -178,7 +178,8 @@ How agents, checks, releases and signed updates keep this safe: [security](docs/
 
 ### Large pull requests
 
-500 lines stays the default. A pull request that can't be split below it starts from a spec:
+500 lines of code ([what counts](#pull-requests)) stays the default. A pull request that can't be split below it
+starts from a spec:
 
 1. **Open an issue with the spec** before the code: what changes, the files it touches, the behaviour players and
    other code will see, and the tests or harnesses that prove it.

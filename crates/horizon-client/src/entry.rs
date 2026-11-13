@@ -3,6 +3,8 @@
 mod horizon_look;
 use crate::{crash, game, logging};
 use horizon_mod_package::selection::{Argument, LaunchArguments};
+pub(crate) mod dedicated_arguments;
+pub(crate) mod runtime_environment;
 
 /// Validated startup state. No native hooks or workers may run before prepare returns.
 pub struct Startup {
@@ -102,6 +104,7 @@ pub fn start<G>(
         options,
         _capture,
     } = startup;
+    runtime_environment::capture(&launch);
     horizon_threads::configure_allocator();
     horizon_chat_filter::install();
     horizon_look::give();
@@ -185,6 +188,8 @@ pub fn start<G>(
     if horizon_world::native_worldgen_hooks::install(
         horizon_world::native_worldgen_hooks::NativeWorldgenHooks {
             alter_ground: crate::game::api_values::alter_ground,
+            on_tree_grow: crate::game::native_tree_grow::on_tree_grow,
+            feature: crate::game::native_worldgen_parts::feature,
         },
     )
     .is_err()

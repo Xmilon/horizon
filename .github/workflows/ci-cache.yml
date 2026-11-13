@@ -23,11 +23,11 @@ jobs:
       - name: Install Rust toolchain and the ALSA and udev headers the client links against
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
+          bash tools/ci/rustup_install.sh --profile minimal --component rustfmt --component clippy --target wasm32-unknown-unknown
       - name: Lint cache toolchain
         id: toolchain
         run: |
-          echo "hash=$(rustc +stable -vV | sha256sum | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+          echo "hash=$(rustc -vV | sha256sum | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
           echo "slot=$(date -u +%Y%m%d)-$(( 10#$(date -u +%H) / 6 ))" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
         id: lint-cache
@@ -42,15 +42,15 @@ jobs:
             lint-workspace-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.hash }}-
       - name: Restore unchanged source timestamps
         if: steps.lint-cache.outputs.cache-hit != 'true'
-        run: python3 tools/ci/source_mtimes.py target/ci-source-mtimes.json
+        run: python3 tools/ci/source_mtimes.py target/ci-source-mtimes-v2.json
       # The same commands as dyna-ci.yml's lint, so the artifacts match. A lint failure still leaves reusable
       # artifacts, so the snapshot is saved either way.
       - name: Build the lint graphs
         if: steps.lint-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: |
-          cargo +stable clippy --keep-going --workspace --all-targets -- -D warnings
-          cargo +stable clippy --keep-going -p horizon-client -p horizon-game -p horizon-mod-host --all-targets --no-default-features -- -D warnings
+          cargo clippy --keep-going --workspace --all-targets -- -D warnings
+          cargo clippy --keep-going -p horizon-client -p horizon-game -p horizon-mod-host --all-targets --no-default-features -- -D warnings
       - uses: actions/cache/save@v4
         if: ${{ !cancelled() && steps.lint-cache.outputs.cache-hit != 'true' }}
         with:
@@ -69,7 +69,7 @@ jobs:
       - name: Install Rust toolchain and the ALSA and udev headers the client links against
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev libudev-dev
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          bash tools/ci/rustup_install.sh --profile minimal --component rustfmt --component clippy
       - uses: Swatinem/rust-cache@v2
         with:
           # A new key: the dependency-only snapshot under the old one blocked saving this one.
@@ -77,4 +77,4 @@ jobs:
           cache-workspace-crates: true
       # The same targets as dyna-ci.yml's verify, built and not run.
       - name: Build verify's test targets
-        run: cargo +stable test --workspace --lib --bins --tests --no-run
+        run: cargo test --workspace --lib --bins --tests --no-run

@@ -619,6 +619,7 @@ impl Game<'_> {
     /// Discard state belonging to an already removed connectionless guest.
     pub(super) fn cleanup_fake_player(&mut self, host: &mut super::lan::LanHost, guest: &Guest) {
         host.play.remove(&guest.conn);
+        host.forget_menus(guest.conn);
         host.poses.remove(&guest.conn);
         host.mob_players.retain(|_, conn| *conn != guest.conn);
         self.destroying.remove(&guest.entity_id);
@@ -691,6 +692,7 @@ impl Game<'_> {
         let host = self.lan.as_mut().expect("validated fake's host");
         host.hub.guests.update(gi, |guest| state.swap(guest));
         let play = host.play.insert(conn, Default::default());
+        let menus = host.menus.insert(conn, Default::default());
         let outcome = self.perform_fake_action(gi, conn, action);
         let host = self.lan.as_mut().expect("guest turns retain the host");
         let (held, other) = host.hub.guests.update(gi, |guest| {
@@ -710,6 +712,10 @@ impl Game<'_> {
             state.swap(guest);
             (held, other)
         });
+        host.menus.remove(&conn);
+        if let Some(menus) = menus {
+            host.menus.insert(conn, menus);
+        }
         host.play.remove(&conn);
         if let Some(play) = play {
             host.play.insert(conn, play);
@@ -879,13 +885,17 @@ impl Game<'_> {
 
     /// The chunks players started and stopped watching that the hub
     /// recorded (`lan::chunk_watch`), told to the mods in the hub's order,
-    /// with no player's state swapped in. The player handle is built from
-    /// the record, so an unwatch after a disconnect still names them.
+    /// with no player's state swapped in, and a sent chunk's passages sent
+    /// after it. The player handle is built from the record, so an unwatch
+    /// after a disconnect still names them. Nothing while the log is empty.
     pub(super) fn run_chunk_watches(&mut self) {
         use horizon_client::lan::chunk_watch::ChunkWatchKind;
         let Some(host) = self.lan.as_mut() else {
             return;
         };
+        if host.hub.chunk_watches.is_empty() {
+            return;
+        }
         let runs = host.hub.chunk_watches.take();
         let Some(epoch) = self.native_lifecycle.epoch() else {
             return;
@@ -906,7 +916,10 @@ impl Game<'_> {
                 let chunk = mod_api::ChunkRef::new(level, watch.chunk);
                 match watch.kind {
                     ChunkWatchKind::Watch => self.native_chunk_watch(player, chunk),
-                    ChunkWatchKind::Sent => self.native_chunk_sent(player, chunk),
+                    ChunkWatchKind::Sent => {
+                        self.native_chunk_sent(player, chunk);
+                        self.send_chunk_passages(level, watch.uuid, watch.chunk);
+                    }
                     ChunkWatchKind::Unwatch => self.native_chunk_unwatch(player, chunk),
                 }
             }
@@ -1785,6 +1798,128 @@ impl Game<'_> {
         self.native_command_filter = filter;
         self.command_source = outer;
         ok
+    }
+    /// Runs the command `line` (a leading slash allowed) with the entity as
+    /// its source, as vanilla runs a portal's or a sign's command:
+    /// `ServerPlayer.createCommandSourceStack` (another entity:
+    /// `Entity.createCommandSourceStackForNameResolution`), `.withPermission(level)`,
+    /// then `Commands.performPrefixedCommand`. `level` is taken as given, above
+    /// or below the entity's own. `@s` is the entity, and the command runs from
+    /// its position and rotation in its level. A player is answered as for their
+    /// own command (feedback and failures), and the other operators hear of it
+    /// (`broadcastToAdmins`); another entity's source is silent
+    /// (`CommandSource.NULL`). Whether the command ran: false for a line that
+    /// fails to parse or to run, and, with nothing run, for a stale or removed
+    /// entity, an entity outside the level in place (a player in another level
+    /// included: that level is parked while the hook runs), and on a client.
+    /// During a guest's turn, displaced outer players are excluded, as in
+    /// `native_run_command`.
+    pub(super) fn entity_run_command(
+        &mut self,
+        entity: mod_api::EntityRef,
+        line: &str,
+        level: mod_api::PermissionLevel,
+    ) -> bool {
+        use super::commands::Target;
+        if self.lan.is_none() {
+            return false;
+        }
+        let Some(target) = self.native_entity_target(entity) else {
+            return false;
+        };
+        let line = line.strip_prefix('/').unwrap_or(line);
+        let permission = level.level();
+        match target {
+            // The acting player, in place for this turn.
+            Target::Player => match self.lan_acting_uuid {
+                Some(uuid) => self.run_command_as_player(uuid, line, permission),
+                None => false,
+            },
+            Target::Guest(conn) => {
+                let Some(host) = &self.lan else {
+                    return false;
+                };
+                let Some(uuid) = host
+                    .hub
+                    .guest(conn)
+                    .filter(|g| host.hub.here(g))
+                    .map(|g| g.uuid)
+                else {
+                    return false;
+                };
+                self.as_guest(conn, |game| {
+                    game.run_command_as_player(uuid, line, permission)
+                })
+                .unwrap_or(false)
+            }
+            target => {
+                let Some(pos) = self.target_position(target) else {
+                    return false;
+                };
+                // `CommandSource.NULL`: no feedback, no failure, no operator told.
+                let source = execute::Source {
+                    entity: Some(target),
+                    pos,
+                    rot: self.target_rotation(target),
+                    eyes: false,
+                    silent: true,
+                    store: None,
+                    dimension: self.dim,
+                    origin_dimension: self.dim,
+                    origin_player: false,
+                    level: None,
+                    block: None,
+                    cart: None,
+                };
+                self.run_command_from(source, line, permission).0
+            }
+        }
+    }
+    /// `entity_run_command` for the player `uuid` in place: their own source,
+    /// its lines sent to them and its `broadcastToAdmins` to the other operators.
+    fn run_command_as_player(&mut self, uuid: u128, line: &str, permission: u8) -> bool {
+        use super::commands::Target;
+        // `ServerPlayer.createCommandSourceStack`: the player's own position and
+        // rotation, never an outer command's (`player_source` reads those).
+        let Some(pos) = self.target_position(Target::Player) else {
+            return false;
+        };
+        let source = execute::Source {
+            pos,
+            rot: self.target_rotation(Target::Player),
+            ..self.player_source()
+        };
+        let outer_admins = std::mem::take(&mut self.admin_feedback);
+        let (ok, lines) = self.run_command_from(source, line, permission);
+        for line in &lines {
+            self.native_send(uuid, system_chat(line));
+        }
+        self.send_admin_feedback(self.lan_acting);
+        self.admin_feedback = outer_admins;
+        ok
+    }
+    /// `line` run from `source` at `permission`, with what it tells its source:
+    /// the outer command's source, state and output are kept apart and put back.
+    fn run_command_from(
+        &mut self,
+        source: execute::Source,
+        line: &str,
+        permission: u8,
+    ) -> (bool, Vec<Text>) {
+        let outer = self.command_source.replace(source);
+        let filter = std::mem::replace(&mut self.native_command_filter, true);
+        let console = self.console_broadcast.take();
+        let capture = self.chat_capture.replace(Vec::new());
+        let outer_exec = std::mem::take(&mut self.exec);
+        let level = std::mem::replace(&mut self.ui.registries.permission, permission);
+        let ok = self.run_command(line);
+        self.ui.registries.permission = level;
+        self.exec = outer_exec;
+        let lines = std::mem::replace(&mut self.chat_capture, capture).unwrap_or_default();
+        self.console_broadcast = console;
+        self.native_command_filter = filter;
+        self.command_source = outer;
+        (ok, lines)
     }
     /// The open world's folder (`world/`, beside its `level.dat`): a server
     /// mod keeps its data in a folder of its own there, so the world's
@@ -4433,6 +4568,53 @@ pub(super) mod fake_action_tests {
                     .is_on_cooldown("minecraft:bucket")
             );
             assert_eq!(game.lan.as_ref().unwrap().hub.guests.len(), 2);
+        });
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn scoped_fake_use_restores_the_persistent_menu_owner() {
+        super::super::native_entity_refs::tests::with_game(|game| {
+            let (player, conn, _) = fake(game, Some("minecraft:diamond"), 1);
+            let mut menu = Box::new(horizon_client::menu::Menu::new(
+                horizon_client::menu::Kind::Inventory,
+            ));
+            menu.carried = Some(ItemStack::new("minecraft:stick", 3));
+            let owner = (&*menu) as *const horizon_client::menu::Menu;
+            *game
+                .lan
+                .as_mut()
+                .unwrap()
+                .menus
+                .entry(conn)
+                .or_default()
+                .crafting
+                .inventory = Some(menu);
+            place(game, [1, 64, 0], "minecraft:chest");
+            let setup = mod_api::PlayerActionSetup::new(
+                Some(crate::game::api_values::test_snapshot(&ItemStack::new(
+                    "minecraft:oak_log",
+                    1,
+                ))),
+                [0.5, 64.0 + f64::from(1.62_f32), 0.5],
+                0.0,
+                90.0,
+                false,
+            );
+            let result = game
+                .player_perform_action_scoped(player, on_top([1, 64, 0]), setup)
+                .unwrap();
+            assert_eq!(
+                result.outcome,
+                ActionOutcome::EffectBlocked(FakeEffect::Menu)
+            );
+            let restored = game.lan.as_ref().unwrap().menus[&conn]
+                .crafting
+                .inventory
+                .as_ref()
+                .unwrap();
+            assert_eq!((&**restored) as *const horizon_client::menu::Menu, owner);
+            assert_eq!(restored.carried, Some(ItemStack::new("minecraft:stick", 3)));
         });
     }
 
