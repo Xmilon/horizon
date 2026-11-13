@@ -259,7 +259,9 @@ fn container_holder(game: &mut super::Game<'_>, keys: usize) -> mod_api::BlockEn
     };
     holder.items = vec![None; 9];
     for key in 0..keys {
-        holder.nbt.insert(format!("k{key}").as_str().into(), Tag::Long(key as i64));
+        holder
+            .nbt
+            .insert(format!("k{key}").as_str().into(), Tag::Long(key as i64));
     }
     entity
 }
@@ -273,19 +275,22 @@ fn container_moves_roll_back_slots_and_saved_data_in_any_order() {
             let entity = container_holder(game, 3);
             let level = entity.level(game).unwrap();
             let items = level.capability(game, &ITEMS, [1, 64, 1], None).unwrap();
-            let dirt = ItemResource::of(
-                &ItemStack::new("minecraft:dirt", 1)
-                    .try_into_api()
-                    .unwrap(),
-            );
+            let dirt =
+                ItemResource::of(&ItemStack::new("minecraft:dirt", 1).try_into_api().unwrap());
             let saved = |game: &super::Game<'_>| {
                 let BlockEntity::Mod(holder) = game.world.block_entities.get(&(1, 64, 1)).unwrap()
                 else {
                     panic!()
                 };
-                (holder.items.clone(), holder.nbt.clone(), holder.data.clone())
+                (
+                    holder.items.clone(),
+                    holder.nbt.clone(),
+                    holder.data.clone(),
+                )
             };
-            commit(game, |host, tx| assert_eq!(items.insert(host, tx, 0, &dirt, 10), 10));
+            commit(game, |host, tx| {
+                assert_eq!(items.insert(host, tx, 0, &dirt, 10), 10)
+            });
             let before = saved(game);
             // Slot writes, then a whole-entity write, then slots again, through nested
             // transactions that commit into one that aborts.
@@ -308,7 +313,11 @@ fn container_moves_roll_back_slots_and_saved_data_in_any_order() {
                 Err(())
             });
             assert_eq!(aborted, Err(()));
-            assert_eq!(saved(game), before, "slots, saved data and data slots back as they were");
+            assert_eq!(
+                saved(game),
+                before,
+                "slots, saved data and data slots back as they were"
+            );
             // The same writes committed stay.
             commit(game, |host, tx| {
                 assert_eq!(items.extract(host, tx, 0, &dirt, 4), 4);
@@ -326,27 +335,32 @@ fn container_moves_roll_back_slots_and_saved_data_in_any_order() {
 }
 
 fn dirt() -> ItemResource {
-    ItemResource::of(
-        &ItemStack::new("minecraft:dirt", 1)
-            .try_into_api()
-            .unwrap(),
-    )
+    ItemResource::of(&ItemStack::new("minecraft:dirt", 1).try_into_api().unwrap())
 }
 
 /// A mod holder's slots, saved data and data slots, compared whole.
 fn holder_state(
     game: &super::Game<'_>,
-) -> (Vec<Option<ItemStack>>, horizon_core::nbt::Compound, Vec<i32>) {
+) -> (
+    Vec<Option<ItemStack>>,
+    horizon_core::nbt::Compound,
+    Vec<i32>,
+) {
     let BlockEntity::Mod(holder) = game.world.block_entities.get(&(1, 64, 1)).unwrap() else {
         panic!()
     };
-    (holder.items.clone(), holder.nbt.clone(), holder.data.clone())
+    (
+        holder.items.clone(),
+        holder.nbt.clone(),
+        holder.data.clone(),
+    )
 }
 
 #[test]
 #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES; runs in an isolated scratch process"]
 fn a_container_move_keeps_one_slot_not_the_entity() {
-    const NAME: &str = "game::native_block_entity_item_tests::a_container_move_keeps_one_slot_not_the_entity";
+    const NAME: &str =
+        "game::native_block_entity_item_tests::a_container_move_keeps_one_slot_not_the_entity";
     with_mod_parts(NAME, |root| {
         super::native_entity_refs::tests::with_game_at(root, |game| {
             let entity = container_holder(game, 100_000);
@@ -370,7 +384,11 @@ fn a_container_move_keeps_one_slot_not_the_entity() {
                         .unwrap();
                 }
             }
-            assert_eq!(game.journal_kept(), (0, 1), "one slot kept, the entity not copied");
+            assert_eq!(
+                game.journal_kept(),
+                (0, 1),
+                "one slot kept, the entity not copied"
+            );
             game.transaction_close(&root, false);
             assert_eq!(holder_state(game), before);
             // A hopper's slot has its cooldown beside it: kept whole.
@@ -400,7 +418,8 @@ fn a_container_move_keeps_one_slot_not_the_entity() {
 #[test]
 #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES; runs in an isolated scratch process"]
 fn a_child_whole_capture_keeps_its_older_slot_entries() {
-    const NAME: &str = "game::native_block_entity_item_tests::a_child_whole_capture_keeps_its_older_slot_entries";
+    const NAME: &str =
+        "game::native_block_entity_item_tests::a_child_whole_capture_keeps_its_older_slot_entries";
     with_mod_parts(NAME, |root| {
         super::native_entity_refs::tests::with_game_at(root, |game| {
             let entity = container_holder(game, 3);
@@ -451,29 +470,33 @@ fn a_child_whole_capture_keeps_its_older_slot_entries() {
                     })
                     .unwrap()
                 }),
-                ("three depths writing one slot around a whole capture", &|host| {
-                    host.transaction(|host, _| {
+                (
+                    "three depths writing one slot around a whole capture",
+                    &|host| {
                         host.transaction(|host, _| {
                             host.transaction(|host, _| {
-                                insert(host, 4, 3);
+                                host.transaction(|host, _| {
+                                    insert(host, 4, 3);
+                                    Ok::<_, ()>(())
+                                })
+                                .unwrap();
+                                whole(host, 10);
                                 Ok::<_, ()>(())
                             })
                             .unwrap();
-                            whole(host, 10);
+                            insert(host, 4, 6);
                             Ok::<_, ()>(())
                         })
-                        .unwrap();
-                        insert(host, 4, 6);
-                        Ok::<_, ()>(())
-                    })
-                    .unwrap()
-                }),
+                        .unwrap()
+                    },
+                ),
             ];
             for (case, write) in cases {
-                let aborted: Result<(), ()> = (game as &mut dyn ServerHost).transaction(|host, _| {
-                    write(host);
-                    Err(())
-                });
+                let aborted: Result<(), ()> =
+                    (game as &mut dyn ServerHost).transaction(|host, _| {
+                        write(host);
+                        Err(())
+                    });
                 assert!(aborted.is_err());
                 assert_eq!(holder_state(game), before, "{case}");
             }
@@ -502,14 +525,22 @@ fn an_insert_past_a_short_mod_list_rolls_back_its_length() {
                 Err(())
             });
             assert!(aborted.is_err());
-            assert_eq!(holder_state(game), before, "the list is empty again, not six long");
+            assert_eq!(
+                holder_state(game),
+                before,
+                "the list is empty again, not six long"
+            );
         });
     });
 }
 
 /// Each block whose slots the journal keeps one at a time, with its block entity and these
 /// stacks, at `pos`.
-fn container_at(game: &mut super::Game<'_>, pos: (i32, i32, i32), block: &str) -> Vec<Option<ItemStack>> {
+fn container_at(
+    game: &mut super::Game<'_>,
+    pos: (i32, i32, i32),
+    block: &str,
+) -> Vec<Option<ItemStack>> {
     let state = game.pack.assets.registry.default_state(block).unwrap();
     game.world.set(pos.0, pos.1, pos.2, state).unwrap();
     let mut entity = BlockEntity::for_block(block).unwrap();
@@ -541,26 +572,31 @@ fn each_slot_journalled_container_aborts_to_its_exact_stacks() {
         super::native_entity_refs::tests::with_game_at(root, |game| {
             let entity = mod_holder(game);
             let level = entity.level(game).unwrap();
-            for block in ["minecraft:chest", "minecraft:barrel", "minecraft:shulker_box"] {
+            for block in [
+                "minecraft:chest",
+                "minecraft:barrel",
+                "minecraft:shulker_box",
+            ] {
                 let pos = (3, 64, 1);
                 let before = container_at(game, pos, block);
                 let items = level.capability(game, &ITEMS, [3, 64, 1], None).unwrap();
                 let stone = ItemResource::of(&before[0].clone().unwrap().try_into_api().unwrap());
-                let aborted: Result<(), ()> = (game as &mut dyn ServerHost).transaction(|host, _| {
-                    host.transaction(|host, tx| {
-                        assert_eq!(items.extract(host, tx, 0, &stone, 10), 10);
-                        assert_eq!(items.insert(host, tx, 1, &dirt(), 5), 5);
-                        Ok::<_, ()>(())
-                    })
-                    .unwrap();
-                    host.transaction(|host, tx| {
-                        assert_eq!(items.extract(host, tx, 2, &dirt(), 3), 3);
-                        assert_eq!(items.insert(host, tx, 0, &stone, 4), 4);
-                        Ok::<_, ()>(())
-                    })
-                    .unwrap();
-                    Err(())
-                });
+                let aborted: Result<(), ()> =
+                    (game as &mut dyn ServerHost).transaction(|host, _| {
+                        host.transaction(|host, tx| {
+                            assert_eq!(items.extract(host, tx, 0, &stone, 10), 10);
+                            assert_eq!(items.insert(host, tx, 1, &dirt(), 5), 5);
+                            Ok::<_, ()>(())
+                        })
+                        .unwrap();
+                        host.transaction(|host, tx| {
+                            assert_eq!(items.extract(host, tx, 2, &dirt(), 3), 3);
+                            assert_eq!(items.insert(host, tx, 0, &stone, 4), 4);
+                            Ok::<_, ()>(())
+                        })
+                        .unwrap();
+                        Err(())
+                    });
                 assert!(aborted.is_err());
                 assert_eq!(slots_at(game, pos), Some(before), "{block}");
                 game.world.block_entities.remove(&pos);
@@ -595,23 +631,21 @@ fn a_kept_slot_goes_back_only_into_the_block_entity_it_came_from() {
             let replace = |game: &mut super::Game<'_>, block: &str, commit: bool| {
                 container_at(game, pos, "minecraft:chest");
                 let items = level.capability(game, &ITEMS, [3, 64, 1], None).unwrap();
-                let stone = ItemResource::of(
-                    &ItemStack::new("minecraft:stone", 1)
-                        .try_into_api()
-                        .unwrap(),
-                );
-                let result: Result<(), ()> = (game as &mut dyn ServerHost).transaction(|host, tx| {
-                    // Takes from the chest's full slot 0: the slot kept is its 64 stone, which
-                    // an abort must not write into whatever replaced the chest.
-                    assert_eq!(items.extract(host, tx, 0, &stone, 10), 10);
-                    let state = host.block_state_id(block).unwrap();
-                    assert!(
-                        level
-                            .set_block(host, [3, 64, 1], state, mod_api::BlockUpdateFlags::NONE)
-                            .unwrap()
-                    );
-                    if commit { Ok(()) } else { Err(()) }
-                });
+                let stone =
+                    ItemResource::of(&ItemStack::new("minecraft:stone", 1).try_into_api().unwrap());
+                let result: Result<(), ()> =
+                    (game as &mut dyn ServerHost).transaction(|host, tx| {
+                        // Takes from the chest's full slot 0: the slot kept is its 64 stone, which
+                        // an abort must not write into whatever replaced the chest.
+                        assert_eq!(items.extract(host, tx, 0, &stone, 10), 10);
+                        let state = host.block_state_id(block).unwrap();
+                        assert!(
+                            level
+                                .set_block(host, [3, 64, 1], state, mod_api::BlockUpdateFlags::NONE)
+                                .unwrap()
+                        );
+                        if commit { Ok(()) } else { Err(()) }
+                    });
                 assert_eq!(result.is_ok(), commit);
             };
             replace(game, "minecraft:air", false);
@@ -635,7 +669,8 @@ fn a_kept_slot_goes_back_only_into_the_block_entity_it_came_from() {
 #[test]
 #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES; runs in an isolated scratch process"]
 fn timing_container_moves_beside_saved_data() {
-    const NAME: &str = "game::native_block_entity_item_tests::timing_container_moves_beside_saved_data";
+    const NAME: &str =
+        "game::native_block_entity_item_tests::timing_container_moves_beside_saved_data";
     if std::env::var_os("HORIZON_JOURNAL_TIMING").is_none() {
         return;
     }
@@ -688,9 +723,7 @@ fn storage_asks_a_game_container_by_kind_and_rolls_back_with_its_transaction() {
             game.world
                 .block_entities
                 .insert((3, 64, 1), BlockEntity::Chest(vec![None; 27]));
-            let of = |id: &str| {
-                ItemResource::of(&ItemStack::new(id, 1).try_into_api().unwrap())
-            };
+            let of = |id: &str| ItemResource::of(&ItemStack::new(id, 1).try_into_api().unwrap());
             let (stone, dirt) = (of("minecraft:stone"), of("minecraft:dirt"));
             let storage = level
                 .capability(game, &mod_api::STORAGE, [3, 64, 1], None)
@@ -701,7 +734,11 @@ fn storage_asks_a_game_container_by_kind_and_rolls_back_with_its_transaction() {
                 assert_eq!(storage.insert(host, tx, &dirt, 5), 5);
             });
             assert_eq!(storage.amount(game, &stone), Ok(100));
-            assert_eq!(storage.space_for(game, &stone), Ok(24 * 64 + 28), "two stone slots, one dirt");
+            assert_eq!(
+                storage.space_for(game, &stone),
+                Ok(24 * 64 + 28),
+                "two stone slots, one dirt"
+            );
             let aborted: Result<(), ()> = (game as &mut dyn ServerHost).transaction(|host, tx| {
                 assert_eq!(storage.extract(host, tx, &stone, 70), 70);
                 assert_eq!(storage.insert(host, tx, &dirt, 2000), 25 * 64 + 59);
@@ -710,11 +747,16 @@ fn storage_asks_a_game_container_by_kind_and_rolls_back_with_its_transaction() {
             assert!(aborted.is_err());
             assert_eq!(storage.amount(game, &stone), Ok(100));
             assert_eq!(storage.amount(game, &dirt), Ok(5));
-            let BlockEntity::Chest(slots) = game.world.block_entities.get(&(3, 64, 1)).unwrap() else {
+            let BlockEntity::Chest(slots) = game.world.block_entities.get(&(3, 64, 1)).unwrap()
+            else {
                 panic!()
             };
             let counts: Vec<u32> = slots.iter().flatten().map(|s| s.count).collect();
-            assert_eq!(counts, [64, 36, 5], "slots back as they were, in their order");
+            assert_eq!(
+                counts,
+                [64, 36, 5],
+                "slots back as they were, in their order"
+            );
             let mut page = mod_api::StoragePage::new(64).unwrap();
             assert_eq!(storage.page(game, 0, &mut page), Ok(None));
             assert_eq!(page.entries().len(), 3);
@@ -731,10 +773,20 @@ fn storage_asks_a_game_container_by_kind_and_rolls_back_with_its_transaction() {
                 BlockEntity::for_block("minecraft:furnace").unwrap(),
             );
             let top = level
-                .capability(game, &mod_api::STORAGE, [5, 64, 1], Some(mod_api::Direction::Up))
+                .capability(
+                    game,
+                    &mod_api::STORAGE,
+                    [5, 64, 1],
+                    Some(mod_api::Direction::Up),
+                )
                 .unwrap();
             let bottom = level
-                .capability(game, &mod_api::STORAGE, [5, 64, 1], Some(mod_api::Direction::Down))
+                .capability(
+                    game,
+                    &mod_api::STORAGE,
+                    [5, 64, 1],
+                    Some(mod_api::Direction::Down),
+                )
                 .unwrap();
             commit(game, |host, tx| {
                 assert_eq!(top.insert(host, tx, &stone, 200), 64, "the input slot only");
@@ -774,7 +826,11 @@ fn storage_writes_abort_to_the_exact_state_of_every_container_kind() {
                 // An insert into an empty hopper sets its cooldown.
                 ("minecraft:hopper", None, "minecraft:dirt"),
                 // An input into an empty furnace restarts its cooking.
-                ("minecraft:furnace", Some(mod_api::Direction::Up), "minecraft:raw_iron"),
+                (
+                    "minecraft:furnace",
+                    Some(mod_api::Direction::Up),
+                    "minecraft:raw_iron",
+                ),
                 // A disc starts its song at the root commit.
                 ("minecraft:jukebox", None, "minecraft:music_disc_cat"),
                 // A pot keeps its item in its saved data.
@@ -797,20 +853,21 @@ fn storage_writes_abort_to_the_exact_state_of_every_container_kind() {
                 };
                 let resource = of(item);
                 let before = whole_state(game, pos);
-                let aborted: Result<(), ()> = (game as &mut dyn ServerHost).transaction(|host, _| {
-                    host.transaction(|host, tx| {
-                        assert_eq!(storage.insert(host, tx, &resource, 1), 1, "{block}");
-                        Ok::<_, ()>(())
-                    })
-                    .unwrap();
-                    host.transaction(|host, tx| {
-                        assert_eq!(storage.extract(host, tx, &resource, 1), 1, "{block}");
-                        assert_eq!(storage.insert(host, tx, &resource, 1), 1, "{block}");
-                        Ok::<_, ()>(())
-                    })
-                    .unwrap();
-                    Err(())
-                });
+                let aborted: Result<(), ()> =
+                    (game as &mut dyn ServerHost).transaction(|host, _| {
+                        host.transaction(|host, tx| {
+                            assert_eq!(storage.insert(host, tx, &resource, 1), 1, "{block}");
+                            Ok::<_, ()>(())
+                        })
+                        .unwrap();
+                        host.transaction(|host, tx| {
+                            assert_eq!(storage.extract(host, tx, &resource, 1), 1, "{block}");
+                            assert_eq!(storage.insert(host, tx, &resource, 1), 1, "{block}");
+                            Ok::<_, ()>(())
+                        })
+                        .unwrap();
+                        Err(())
+                    });
                 assert!(aborted.is_err());
                 assert_eq!(whole_state(game, pos), before, "{block} after the abort");
                 // Committed, the item is there.
@@ -845,7 +902,8 @@ fn storage_writes_abort_to_the_exact_state_of_every_container_kind() {
 #[test]
 #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES; runs in an isolated scratch process"]
 fn an_aborted_bulk_transfer_conserves_every_item() {
-    const NAME: &str = "game::native_block_entity_item_tests::an_aborted_bulk_transfer_conserves_every_item";
+    const NAME: &str =
+        "game::native_block_entity_item_tests::an_aborted_bulk_transfer_conserves_every_item";
     with_mod_parts(NAME, |root| {
         super::native_entity_refs::tests::with_game_at(root, |game| {
             let entity = mod_holder(game);
@@ -853,8 +911,12 @@ fn an_aborted_bulk_transfer_conserves_every_item() {
             let (a, b) = ((3, 64, 1), (5, 64, 1));
             container_at(game, a, "minecraft:chest");
             container_at(game, b, "minecraft:barrel");
-            let from = level.capability(game, &mod_api::STORAGE, [3, 64, 1], None).unwrap();
-            let to = level.capability(game, &mod_api::STORAGE, [5, 64, 1], None).unwrap();
+            let from = level
+                .capability(game, &mod_api::STORAGE, [3, 64, 1], None)
+                .unwrap();
+            let to = level
+                .capability(game, &mod_api::STORAGE, [5, 64, 1], None)
+                .unwrap();
             let kinds: Vec<ItemResource> = ["minecraft:stone", "minecraft:dirt"]
                 .iter()
                 .map(|id| ItemResource::of(&ItemStack::new(id, 1).try_into_api().unwrap()))
@@ -868,16 +930,19 @@ fn an_aborted_bulk_transfer_conserves_every_item() {
             };
             let (before_a, before_b) = (slots_at(game, a), slots_at(game, b));
             let before = total(game);
-            let aborted: Result<u64, mod_api::StorageError> =
-                (game as &mut dyn ServerHost).transaction(|host, tx| {
-                    let moved = mod_api::transfer_matching(host, &from, &to, |_| true, u64::MAX, tx)?;
+            let aborted: Result<u64, mod_api::StorageError> = (game as &mut dyn ServerHost)
+                .transaction(|host, tx| {
+                    let moved =
+                        mod_api::transfer_matching(host, &from, &to, |_| true, u64::MAX, tx)?;
                     assert!(moved > 0);
                     Err(mod_api::StorageError::ZeroPage)
                 });
             assert!(aborted.is_err());
             assert_eq!((slots_at(game, a), slots_at(game, b)), (before_a, before_b));
             let moved = (game as &mut dyn ServerHost)
-                .transaction(|host, tx| mod_api::transfer_matching(host, &from, &to, |_| true, u64::MAX, tx))
+                .transaction(|host, tx| {
+                    mod_api::transfer_matching(host, &from, &to, |_| true, u64::MAX, tx)
+                })
                 .unwrap();
             assert_eq!(moved, 68, "64 stone, 3 dirt and the worn pickaxe");
             assert_eq!(total(game), before);
@@ -896,7 +961,8 @@ fn an_aborted_bulk_transfer_conserves_every_item() {
 #[test]
 #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES; runs in an isolated scratch process"]
 fn timing_storage_against_items_across_barrel_cells() {
-    const NAME: &str = "game::native_block_entity_item_tests::timing_storage_against_items_across_barrel_cells";
+    const NAME: &str =
+        "game::native_block_entity_item_tests::timing_storage_against_items_across_barrel_cells";
     if std::env::var_os("HORIZON_STORAGE_TIMING").is_none() {
         return;
     }
@@ -911,9 +977,10 @@ fn timing_storage_against_items_across_barrel_cells() {
             let side = (cells as f64).sqrt().ceil() as i32;
             for cx in 0..=(side * 2) / 16 {
                 for cz in 0..=side / 16 {
-                    game.world
-                        .chunks
-                        .insert((cx, cz), Arc::new(horizon_client::chunk::Chunk::empty(cx, cz)));
+                    game.world.chunks.insert(
+                        (cx, cz),
+                        Arc::new(horizon_client::chunk::Chunk::empty(cx, cz)),
+                    );
                 }
             }
             let at = |cell: i32| (cell % side * 2, cell / side);
@@ -922,7 +989,12 @@ fn timing_storage_against_items_across_barrel_cells() {
                 for cell in 0..cells {
                     let (x, z) = at(cell);
                     for (y, full) in [(64, true), (66, false)] {
-                        let state = game.pack.assets.registry.default_state("minecraft:barrel").unwrap();
+                        let state = game
+                            .pack
+                            .assets
+                            .registry
+                            .default_state("minecraft:barrel")
+                            .unwrap();
                         game.world.set(x, y, z, state).unwrap();
                         let mut barrel = BlockEntity::for_block("minecraft:barrel").unwrap();
                         if full {
@@ -943,7 +1015,9 @@ fn timing_storage_against_items_across_barrel_cells() {
                 for cell in 0..cells {
                     let (x, z) = at(cell);
                     for y in [64, 66] {
-                        let storage = level.capability(game, &mod_api::STORAGE, [x, y, z], None).unwrap();
+                        let storage = level
+                            .capability(game, &mod_api::STORAGE, [x, y, z], None)
+                            .unwrap();
                         for kind in &resources {
                             n += storage.amount(game, kind).unwrap();
                         }
@@ -951,7 +1025,9 @@ fn timing_storage_against_items_across_barrel_cells() {
                 }
                 n
             };
-            let report = |label: &str, busy: (u32, std::time::Duration), idle: std::time::Duration| {
+            let report = |label: &str,
+                          busy: (u32, std::time::Duration),
+                          idle: std::time::Duration| {
                 eprintln!(
                     "{label}: {cells} cells, {:.3} ms a tick while moving ({} ticks), {:.3} ms a tick idle",
                     busy.1.as_secs_f64() * 1e3 / f64::from(busy.0.max(1)),
@@ -967,8 +1043,10 @@ fn timing_storage_against_items_across_barrel_cells() {
                 let mut moved = 0;
                 for cell in 0..cells {
                     let (x, z) = at(cell);
-                    let below = level.capability(game, &ITEMS, [x, 64, z], Some(mod_api::Direction::Up));
-                    let above = level.capability(game, &ITEMS, [x, 66, z], Some(mod_api::Direction::Down));
+                    let below =
+                        level.capability(game, &ITEMS, [x, 64, z], Some(mod_api::Direction::Up));
+                    let above =
+                        level.capability(game, &ITEMS, [x, 66, z], Some(mod_api::Direction::Down));
                     let (Some(below), Some(above)) = (below, above) else {
                         continue;
                     };
@@ -1000,8 +1078,22 @@ fn timing_storage_against_items_across_barrel_cells() {
             let pipes: Vec<_> = (0..cells)
                 .map(|cell| {
                     let (x, z) = at(cell);
-                    let from = level.capability(game, &mod_api::STORAGE, [x, 64, z], Some(mod_api::Direction::Up)).unwrap();
-                    let to = level.capability(game, &mod_api::STORAGE, [x, 66, z], Some(mod_api::Direction::Down)).unwrap();
+                    let from = level
+                        .capability(
+                            game,
+                            &mod_api::STORAGE,
+                            [x, 64, z],
+                            Some(mod_api::Direction::Up),
+                        )
+                        .unwrap();
+                    let to = level
+                        .capability(
+                            game,
+                            &mod_api::STORAGE,
+                            [x, 66, z],
+                            Some(mod_api::Direction::Down),
+                        )
+                        .unwrap();
                     (from, to)
                 })
                 .collect();
@@ -1022,7 +1114,8 @@ fn timing_storage_against_items_across_barrel_cells() {
                     moves += 1;
                     let abort = moves.is_multiple_of(10);
                     let result = (game as &mut dyn ServerHost).transaction(|host, tx| {
-                        let n = mod_api::transfer(host, from, to, &kind, 8, tx).map_err(|_| 0u64)?;
+                        let n =
+                            mod_api::transfer(host, from, to, &kind, 8, tx).map_err(|_| 0u64)?;
                         if abort && n > 0 { Err(n) } else { Ok(n) }
                     });
                     moved += result.unwrap_or(0);

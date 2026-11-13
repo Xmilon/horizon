@@ -305,7 +305,9 @@ impl Game<'_> {
                 continue;
             };
             if !held.same_item_same_components(resource)
-                || at.side.is_some_and(|face| !c.can_take(&view, slot, held, face))
+                || at
+                    .side
+                    .is_some_and(|face| !c.can_take(&view, slot, held, face))
             {
                 continue;
             }

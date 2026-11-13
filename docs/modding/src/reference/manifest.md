@@ -1,8 +1,8 @@
-# Mod files
+# The manifest and the package
 
 A `.hmod` is one mod: content, native code, or both. `horizon_mod_package::Package` reads the shared manifest and
 validates the package; `horizon_mod_package::Content` reads its resources, and `horizon_mod_package::index::native::Bundle`
-reads its code. Content is preview, native code experimental ([data-formats.md](../../../api/data-formats.md)).
+reads its code.
 
 ## The zip
 
@@ -27,7 +27,7 @@ my_mod.hmod
 
 - **Content only:** no `Cargo.toml` or `[native]`. Nothing compiles.
 - **Native code:** root `Cargo.toml` and `src/`, with `[native]` in the same manifest. The launcher builds it
-  into the game. Its resources load through the same content reader as a content mod's.
+  against the pinned prebuilt game; mixins compile into a separate function-replacement patch library. The game itself does not compile. Its resources load through the same content reader as a content mod's.
 - **Wasm code:** `mod.wasm` at the top, declared by `[wasm]`, with the `Cargo.toml` and `src/` it was built from
   (a converted mod records `built_with` instead and carries no source). The game runs it with no rebuild.
 - Inconsistent code declarations and files refuse the package. `mod.wasm` anywhere else, undeclared, or
@@ -44,7 +44,7 @@ folders are unsupported.
 The shared [manifest fields](../how-to/content-mods.md#the-manifest) include `id`, `name`, `version`, `api = "0.2"`
 and `capabilities = ["registries"]`. The content API is checked for exact equality. Unknown fields
 refuse the manifest. Native mods may declare top-level `internals`, an array of tables with
-`path`, `hash`, and optional `kind` when a path names several member kinds. Native code adds `[native]`:
+`path`, optional `hash`, and `kind` when a path names several member kinds. Without `hash`, the build uses the fingerprint from the pinned game’s catalog. An explicitly empty `hash` is refused. Native code adds `[native]`:
 
 | Field | Type | Rule |
 | --- | --- | --- |
@@ -56,19 +56,19 @@ refuse the manifest. Native mods may declare top-level `internals`, an array of 
 API points use top-level declarations.
 API function listeners use top-level `[[inject]]`: `id`, `at`, lowercase `kind`, `with`, and optional `hash`,
 with optional `priority` (default 0). `head`, `return` and `replace` are supported.
-The removed `access` key is refused by name. Use `[[native.mixin]]` for game internals.
+The `access` key is refused by name. Use `[[native.mixin]]` for game internals.
 Unknown fields are refused by the schema. API function declarations use only `[[inject]]`.
-See [Injections](../injections.md) for the fields and point injections, and
-[Native mods](../how-to/native-mods.md#named-hook-points) for the named hook contracts.
+See [Injections](../concepts/injections.md) for the fields and point injections, and
+[Named hook points](../how-to/entities/named-hook-points.md) for the named hook contracts.
 
 A module has a unique, nonempty `id` (one id space with the injections), a `file` naming the game source
 file that receives it, a `name` that is a Rust module identifier, and a `source` payload file under
 `src/`, holding the module's items without an outer wrapper. An optional `visibility` is exactly
-`"pub"` or `"pub(crate)"`, the default. See [Support modules](../support-modules.md).
+`"pub"` or `"pub(crate)"`, the default. See [Support modules](../concepts/native-route/5-support-modules.md).
 
 `[[inject]]` only fills compiled slots and never compiles game code. Native source edits
-use `[[native.mixin]]` with `id`, `target`, uppercase `kind`, `helper` and upstream
-options. `[[native.loop]]`, `[[native.bridge]]` and `[[native.module]]` complete the route; `[[native.state]]` is refused. See [The native route](../native-route.md) for every table, its fields and its refusals.
+use `[[native.mixin]]` with `id`, `target`, uppercase `kind`, `helper` and the other
+horizon-mixins options ([Mixins](../concepts/native-route/2-mixins.md)). `[[native.loop]]`, `[[native.bridge]]` and `[[native.module]]` complete the route; `[[native.state]]` is refused. See [The native route](../concepts/native-route.md) for every table, its fields and its refusals.
 
 A wasm mod adds `[wasm]` instead, written by `cargo horizon-mod build --wasm`
 ([Building to `mod.wasm`](../how-to/wasm-mods.md)):
@@ -83,10 +83,25 @@ A wasm mod adds `[wasm]` instead, written by `cargo horizon-mod build --wasm`
 At load `mod.wasm` must start with `\0asm`, be at most 64 MiB and match `sha512`; each failure refuses the
 package with its reason.
 
+A wasm mod or library may declare the memory it expects its dependency group to have, as top-level
+`wasm_memory_mib`: an integer from 1 to 4096 (wasm32's 4 GiB), in MiB. The group gets the largest value any
+member declares; with none declared it gets 1024 (1 GiB). The instance's cap (`wasm.memory_cap_mib` in
+`horizon-mods.txt`, 4096 unless the player lowers it) bounds it: a declaration above the cap refuses the whole
+group at load, naming the group and both numbers. Native mods are not wasm groups: they share the game's memory,
+and the key means nothing to them. See [Memory](../how-to/wasm-mods.md#memory).
+
 Top-level `[dependencies]` declares other mods by id: a semver requirement string, or
 `{ version = "^1", optional = true }`. These versions refer to `horizon-mod.toml`, not Cargo metadata.
 Content layers load in dependency order. A missing required dependency, incompatible installed version or dependency cycle refuses startup; an absent optional dependency is ignored. Native code dependencies additionally require API packages
-([Dependencies between trait mods](../concepts/trait-mods.md#dependencies-between-trait-mods)).
+([Dependencies between mods](../concepts/dependencies.md)).
+
+Top-level `[properties]` holds free-form values other mods read: strings, integers, floats and booleans only,
+at most 64 keys and 8 KiB (keys and strings by length, 8 bytes per number, 1 per boolean); a table, an array
+or a larger table refuses the package. A mod reads any loaded package's manifest through
+`context.mods().get(id)`: `PackageInfo` gives `name`, `description`, `authors`, `license`, `homepage`,
+`issues`, `icon_path`, `runtime` (`Native`, `Wasm`, or `None` for content), `dependencies` (id, version
+requirement, optional) and `property(key)`, the same on client and server (NeoForge's
+`ModContainer.getModInfo`, `IModInfo` and `getModProperties`).
 
 ## Original Java jar layers
 
@@ -126,10 +141,10 @@ every owner of a shared missing file. The game never downloads jars.
 
 ## Source paths
 
-A code package contains root `Cargo.toml`, optional `build.rs`, `.rs` and `.toml` files under `src/`,
+A code package contains root `Cargo.toml`, optional `Cargo.lock` and `build.rs`, `.rs` and `.toml` files under `src/`,
 and root text files named `README*`, `LICENSE*`, `LICENCE*`, `COPYING*` or `NOTICE*`.
-The marked root `impl Hooks` uses `#[mod_api::horizon_mod]`; the attribute generates the factory
-([Trait mods](../concepts/trait-mods.md#trait-mods-draft)).
+Your root `impl Hooks` uses `#[mod_api::horizon_mod]`; the attribute generates the factory
+([Writing hooks](../start/writing-hooks.md)).
 
 Folder packaging selects source and resource files, excluding `.git/` and `target/`. It validates selected
 files before copying them. Whole archives are checked, not treated as source folders with ignored extra entries.

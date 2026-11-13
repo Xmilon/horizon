@@ -895,6 +895,30 @@ impl NoBackend for PierceLevelError {
     }
 }
 
+/// Why a player's collision exclusions were not set (`EntityRef::set_collision_exclusions`,
+/// `ClientHost::set_collision_exclusions`). The boxes the player had stay.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(horizon_mod_api_macros::Wire)]
+pub enum CollisionExclusionsError {
+    /// The handle is stale, or a client has no player of its own.
+    Stale,
+    /// The entity is not a player: only players keep collision exclusions.
+    NotAPlayer,
+    /// More than 64 boxes.
+    TooMany,
+    /// A coordinate that is NaN or infinite.
+    NotFinite,
+    /// A box whose minimum is above its maximum on an axis.
+    Inverted,
+}
+
+impl NoBackend for CollisionExclusionsError {
+    fn no_backend() -> Self {
+        Self::Stale
+    }
+}
+
 /// A vanilla `AbstractMinecart`, narrowed from an entity with `host.minecart(entity)`.
 #[derive(horizon_mod_api_macros::Wire)]
 #[wire(internal_field_layouts)]

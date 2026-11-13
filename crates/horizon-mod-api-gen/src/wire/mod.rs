@@ -5,6 +5,9 @@ mod append;
 mod borrowed;
 mod calls;
 mod host;
+mod prepared;
+#[cfg(test)]
+mod prepared_tests;
 pub use host::{generate_coverage, generate_host};
 mod trait_roles;
 mod ty;
@@ -189,27 +192,28 @@ const WORKERS: &[&str] = &[
     "SectionGeometry",
 ];
 
-/// What a call of `method` is to the runtime, for its limits and its wait.
+/// What a call of `method` is to the runtime, for its limits and its wait. A method given the
+/// worldgen context (`alter_ground`, a worldgen Part method) runs on the worldgen workers too.
 pub(super) fn call_class(types: &ty::Types<'_>, method: &Method) -> &'static str {
-    if WORKERS.contains(&method.owner) {
+    if WORKERS.contains(&method.owner) || takes(types, method, &["WorldgenHost"]) {
         "super::Call::Worker"
-    } else if loads(types, method) {
+    } else if takes(types, method, LOAD_CONTEXTS) {
         "super::Call::Load"
     } else {
         "super::Call::Hook"
     }
 }
 
-/// Whether `method` is a load-phase call: one of its arguments is a load-phase context.
-fn loads(types: &ty::Types<'_>, method: &Method) -> bool {
+/// Whether one of `method`'s arguments is one of `contexts`.
+fn takes(types: &ty::Types<'_>, method: &Method, contexts: &[&str]) -> bool {
     method.params.iter().any(|(_, ty)| {
         let ty = match ty {
             ty::Ty::Ref(inner, _) => &**inner,
             ty => ty,
         };
         match ty {
-            ty::Ty::Dyn(name, _) => LOAD_CONTEXTS.contains(&name.as_str()),
-            ty::Ty::Named(def) => LOAD_CONTEXTS
+            ty::Ty::Dyn(name, _) => contexts.contains(&name.as_str()),
+            ty::Ty::Named(def) => contexts
                 .iter()
                 .any(|name| types.defs[*def].rust.rsplit("::").next() == Some(*name)),
             _ => false,
@@ -326,6 +330,17 @@ pub(super) fn surface<'a>(
     root: &'a Path,
     included: &'a [(&'a str, &'a str)],
 ) -> Result<Surface<'a>, String> {
+    surface_reading(root, included, None)
+}
+
+/// [`surface`]; with `missing`, a listed boundary trait the tree does not have is pushed there
+/// instead of refusing the tree (the surface export reads older trees whose API predates a
+/// listed trait; the build never does).
+pub(super) fn surface_reading<'a>(
+    root: &'a Path,
+    included: &'a [(&'a str, &'a str)],
+    mut missing: Option<&mut Vec<String>>,
+) -> Result<Surface<'a>, String> {
     let mut types = Types::new(Index::new(root, included))?;
     let api = types.index.module("mod_api", &[])?;
     let (imported, mut exported, paths) = trait_roles::declared(root)?;
@@ -345,8 +360,14 @@ pub(super) fn surface<'a>(
     let hooks = hook_ids(&mut types)?;
     for owner in imports().iter().chain(exports()) {
         let (path, args) = owner_parts(owner)?;
-        let Found::Item(id) = types.index.resolve_path(api, &path)? else {
-            return Err(format!("{owner} is not a mod_api trait"));
+        let id = match (types.index.resolve_path(api, &path), missing.as_deref_mut()) {
+            (Ok(Found::Item(id)), _) => id,
+            (_, Some(missing)) => {
+                missing.push((*owner).to_owned());
+                continue;
+            }
+            (Err(error), None) => return Err(error),
+            (Ok(_), None) => return Err(format!("{owner} is not a mod_api trait")),
         };
         let Item::Trait(item) = types.index.item(id).clone() else {
             return Err(format!("{owner} is not a trait"));
@@ -425,7 +446,8 @@ pub(super) fn surface<'a>(
         .module("mod_api", &["wire".into(), "wire_types".into()])?;
     for owner in exports() {
         let (path, _) = owner_parts(owner)?;
-        let Found::Item(id) = types.index.resolve_path(api, &path)? else {
+        // Missing only where `missing` let the first pass skip it.
+        let Ok(Found::Item(id)) = types.index.resolve_path(api, &path) else {
             continue;
         };
         let Item::Trait(item) = types.index.item(id) else {
@@ -617,13 +639,31 @@ pub fn generate(root: &Path, included: &[(&str, &str)]) -> Result<Generated, Str
         &surface.parts,
     );
     guest.push_str(&calls::hook_names(&surface.hooks));
-    guest.push_str(&calls::dispatch(&surface.types, &surface.methods).0);
+    let prepared = crate::Catalog::load(root)?
+        .hooks
+        .into_iter()
+        .filter_map(|hook| hook.prepared.map(|field| (hook.name, field)))
+        .collect::<Vec<_>>();
+    guest.push_str(&calls::dispatch(&surface.types, &surface.methods, &prepared).0);
+    let abis = prepared::describe(&surface.methods, &prepared)?;
     let _ = writeln!(
         wire,
-        "#[doc(hidden)]\npub static WIRE_LAYOUT: ::std::sync::LazyLock<u64> = ::std::sync::LazyLock::new(|| {{ let mut hash = {:#x}; {layouts} hash }});",
+        "#[doc(hidden)]\npub fn wire_core_layout() -> u64 {{ let mut hash = {:#x}; {layouts} hash }}",
         layout(&surface),
         layouts = surface.types.defs.iter().filter(|def| def.lifetimes == 0).map(|def| format!("hash = crate::wire::layout_mix(hash, <{} as crate::wire::Wire>::layout(&mut vec![]));", def.rust.replace("mod_api::", "crate::"))).collect::<String>()
     );
+    writeln!(
+        wire,
+        "#[doc(hidden)] pub fn prepared_abi_layout() -> u64 {{ {} }}",
+        prepared::layout_code(&abis)
+    )
+    .unwrap();
+    let complete = if abis.is_empty() {
+        "wire_core_layout()"
+    } else {
+        "crate::wire::layout_mix(wire_core_layout(),prepared_abi_layout())"
+    };
+    writeln!(wire, "#[doc(hidden)] pub static WIRE_LAYOUT: ::std::sync::LazyLock<u64> = ::std::sync::LazyLock::new(|| {{ {complete} }});").unwrap();
     let sources = surface.types.index.read.take();
     Ok(Generated {
         wire,
@@ -798,7 +838,10 @@ fn public_path(index: &Index<'_>, path: &str) -> bool {
 }
 
 /// A hash of everything the two sides must agree on: every method's id and signature, and
-/// every type's shape (FNV-1a over their descriptions).
+/// every type's shape (FNV-1a over their descriptions). This is the core seed;
+/// `generate` appends owned Wire layouts and the prepared marker/entry ABI layouts
+/// to the final WIRE_LAYOUT. wire_core_layout also supports refusal diagnostics:
+/// a guest presenting it without the prepared component is refused, never accepted.
 fn layout(surface: &Surface<'_>) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325u64;
     let mut feed = |text: &str| {
@@ -864,6 +907,40 @@ mod tests {
                     );
                 }
                 super::generate(&root, &included).unwrap();
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn a_worldgen_part_method_crosses_and_waits_for_its_group_as_a_worker_call() {
+        std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(|| {
+                let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+                let generated = crate::sources(&root, crate::FillMode::Require).unwrap();
+                let included = [
+                    ("mod_api_generated.rs", generated.hooks.as_str()),
+                    ("mod_api_generated_host.rs", generated.host.as_str()),
+                    ("mod_api_host_areas.rs", generated.areas.as_str()),
+                ];
+                let providers = crate::capability_providers::generate(&root, &included)
+                    .unwrap()
+                    .0;
+                let mut surface_included = included.to_vec();
+                surface_included.push(("capability_providers_generated.rs", providers.as_str()));
+                let surface = super::surface(&root, &surface_included).unwrap();
+                let class = |name: &str| {
+                    let method = surface
+                        .methods
+                        .iter()
+                        .find(|method| method.owner == "BlockPart" && method.name == name)
+                        .unwrap_or_else(|| panic!("BlockPart::{name} does not cross"));
+                    super::call_class(&surface.types, method)
+                };
+                assert_eq!(class("on_tree_grow"), "super::Call::Worker");
+                assert_eq!(class("is_ladder"), "super::Call::Hook");
             })
             .unwrap()
             .join()

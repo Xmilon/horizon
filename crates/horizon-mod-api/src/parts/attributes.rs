@@ -51,6 +51,41 @@ impl AttributesRegistrar for PartRegistrar {
         }
         result
     }
+
+    fn widen_attribute_bounds(
+        &mut self,
+        id: &str,
+        min: f64,
+        max: f64,
+    ) -> Result<(), crate::AttributeRegistrationError> {
+        let result = if mod_vocab::__private::parts_installation::loaded_mods()
+            .get(self.mod_id)
+            .is_some_and(|package| package.side() != crate::Side::Both)
+        {
+            Err(crate::AttributeRegistrationError::WrongSide)
+        } else if !namespaced(id) {
+            Err(crate::AttributeRegistrationError::InvalidId)
+        } else if !min.is_finite() || !max.is_finite() {
+            Err(crate::AttributeRegistrationError::NotFinite)
+        } else if min > max {
+            Err(crate::AttributeRegistrationError::InvalidBounds)
+        } else {
+            self.attribute_widenings.push(AttributeBoundsWidening {
+                mod_id: self.mod_id.to_owned(),
+                id: id.to_owned(),
+                min,
+                max,
+            });
+            Ok(())
+        };
+        if let Err(error) = &result {
+            self.refused.push(format!(
+                "mod {} attribute bounds of {id:?}: {error:?}",
+                self.mod_id
+            ));
+        }
+        result
+    }
 }
 
 #[cfg(test)]
@@ -131,6 +166,47 @@ mod tests {
                 .iter()
                 .all(|refusal| refusal.contains("mod mymod"))
         );
+    }
+
+    /// Widening asks are checked as they come: a non-finite bound, `min >
+    /// max` and a malformed id refuse, naming the mod; a good ask stands,
+    /// whatever namespace it names (vanilla's, another mod's).
+    #[test]
+    fn attribute_bounds_widenings_validate() {
+        let mut registrar = PartRegistrar::new("rpg");
+        registrar
+            .widen_attribute_bounds("minecraft:max_health", 1.0, 1e6)
+            .unwrap();
+        for (min, max) in [
+            (f64::NAN, 1e6),
+            (1.0, f64::NAN),
+            (f64::NEG_INFINITY, 1e6),
+            (1.0, f64::INFINITY),
+        ] {
+            assert_eq!(
+                registrar.widen_attribute_bounds("minecraft:attack_damage", min, max),
+                Err(AttributeRegistrationError::NotFinite)
+            );
+        }
+        assert_eq!(
+            registrar.widen_attribute_bounds("minecraft:attack_damage", 10.0, 0.0),
+            Err(AttributeRegistrationError::InvalidBounds)
+        );
+        assert_eq!(
+            registrar.widen_attribute_bounds("Not An Id", 0.0, 1.0),
+            Err(AttributeRegistrationError::InvalidId)
+        );
+        assert_eq!(
+            registrar.attribute_widenings,
+            [AttributeBoundsWidening {
+                mod_id: "rpg".into(),
+                id: "minecraft:max_health".into(),
+                min: 1.0,
+                max: 1e6,
+            }]
+        );
+        assert_eq!(registrar.refused.len(), 6);
+        assert!(registrar.refused.iter().all(|r| r.contains("mod rpg")));
     }
 
     #[test]

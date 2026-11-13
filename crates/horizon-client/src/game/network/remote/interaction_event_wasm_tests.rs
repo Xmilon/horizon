@@ -231,8 +231,10 @@ fn advancement_tree(game: &mut Game<'_>) {
 }
 
 fn matrix(mods: mod_api::Mods) {
-    crate::game::api_values::install_parts(&mods).unwrap();
-    mod_platform::testing::with_mods(mods, || {
+    // with_mods registers the mods again for their controllers: install Parts after it, as
+    // registration-time declarations (a custom statistic) refuse once the registry is frozen.
+    mod_platform::testing::with_mods(mods.clone(), || {
+        crate::game::api_values::install_parts(&mods).unwrap();
         for client in [false, true] {
             with_interaction_game(client, |game| {
                 let registry = game.pack.assets.registry;
@@ -277,7 +279,11 @@ fn matrix(mods: mod_api::Mods) {
                             Default::default(),
                         );
                         control.data = case.controls.iter().map(|&b| i32::from(b)).collect();
-                        game.native_block_entity_tick([0, 64, 0], &mut control);
+                        game.native_block_entity_tick(
+                            &mut mod_api::BlockEntityTickReply::Changed,
+                            [0, 64, 0],
+                            &mut control,
+                        );
                         assert!(
                             control.data.is_empty(),
                             "the control callback must run and accept {case:?}"
@@ -313,7 +319,11 @@ fn matrix(mods: mod_api::Mods) {
                                 "{client:?} {hand:?} {name} {case:?}"
                             );
                         }
-                        game.native_block_entity_tick([0, 64, 0], &mut control);
+                        game.native_block_entity_tick(
+                            &mut mod_api::BlockEntityTickReply::Changed,
+                            [0, 64, 0],
+                            &mut control,
+                        );
                         let expected: Vec<i32> = case
                             .phases
                             .iter()
@@ -349,8 +359,13 @@ fn native_interaction_shared_matrix() {
 #[test]
 #[ignore = "needs HORIZON_TEST_RESOURCES, HORIZON_WASM_FIXTURE and HORIZON_WASM_STD; build with horizon-mod-wasm/listener-fixture"]
 fn wasm_interaction_shared_matrix() {
-    // Enters the guest: libtest's thread is smaller than the guest stack policy requires.
-    horizon_guest_stack::run_on_guest_stack(wasm_interaction_shared_matrix_on_guest_stack);
+    // Enters the guest: libtest's thread is smaller than the guest stack policy requires. The
+    // load budget: this checks behaviour, not speed, and a loaded runner can pass 100 ms.
+    horizon_guest_stack::run_on_guest_stack(|| {
+        horizon_mod_wasm::copy_probe::with_load_budget(
+            wasm_interaction_shared_matrix_on_guest_stack,
+        )
+    });
 }
 
 fn wasm_interaction_shared_matrix_on_guest_stack() {

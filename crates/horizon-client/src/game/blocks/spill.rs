@@ -240,6 +240,52 @@ pub(super) struct ItemRandom {
     pub bob: f32,
     pub yaw: f32,
     pub velocity: [f64; 3],
+    /// The state a drop hook gave the item entity; the default is a fresh one's.
+    pub state: DropState,
+}
+
+/// Item-entity state a drop hook can set (`ItemDrop`'s `thrower`, `target`, `no_gravity` and
+/// `age`). The default is what `new ItemEntity` starts with.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct DropState {
+    pub(crate) thrower: Option<u128>,
+    pub(crate) target: Option<u128>,
+    pub(crate) no_gravity: bool,
+    pub(crate) age: i32,
+}
+
+impl DropState {
+    /// The state `drop` asks for.
+    pub(crate) fn of(drop: &mod_api::ItemDrop) -> Self {
+        Self {
+            thrower: drop.thrower,
+            target: drop.target,
+            no_gravity: drop.no_gravity,
+            age: drop.age,
+        }
+    }
+    /// `drop` with this state.
+    pub(crate) fn to_api(self, drop: mod_api::ItemDrop) -> mod_api::ItemDrop {
+        drop.with_thrower(self.thrower)
+            .with_target(self.target)
+            .with_no_gravity(self.no_gravity)
+            .with_age(self.age)
+    }
+    /// `item` as a fresh item entity with this state (`setThrower`, `setTarget`,
+    /// `setNoGravity` and its age).
+    pub(crate) fn apply(
+        self,
+        item: horizon_client::entities::ItemEntity,
+    ) -> horizon_client::entities::ItemEntity {
+        let uuid = horizon_client::lan::playerdata::uuid_ints;
+        horizon_client::entities::ItemEntity {
+            thrower: self.thrower.map(uuid),
+            target: self.target.map(uuid),
+            no_gravity: self.no_gravity,
+            age: self.age,
+            ..item
+        }
+    }
 }
 
 /// The one ItemEntity constructor random sequence, shared by immediate and
@@ -259,6 +305,7 @@ pub(super) fn prepare_item_random(velocity: Option<[f64; 3]>) -> ItemRandom {
         bob,
         yaw,
         velocity,
+        state: DropState::default(),
     }
 }
 
@@ -281,6 +328,34 @@ pub(crate) struct BlockItemDrop {
     pub(super) position: [f64; 3],
     pub(super) velocity: [f64; 3],
     pub(super) pickup_delay: u32,
+    /// The item-entity state a drop hook set.
+    pub(super) state: DropState,
+}
+
+impl BlockItemDrop {
+    /// The drop as the mods hear and edit it.
+    pub(super) fn from_api(drop: &mod_api::ItemDrop, stack: ItemStack) -> Self {
+        Self {
+            random: None,
+            stack,
+            position: drop.position,
+            velocity: drop.velocity,
+            pickup_delay: drop.pickup_delay,
+            state: DropState::of(drop),
+        }
+    }
+    /// The constructor random the item entity joins with, carrying the state a hook set. A drop
+    /// with no state set keeps its random as it was (none: drawn when it joins).
+    pub(super) fn random_with_state(&self) -> Option<ItemRandom> {
+        if self.state == DropState::default() {
+            return self.random;
+        }
+        let mut random = self
+            .random
+            .unwrap_or_else(|| prepare_item_random(Some(self.velocity)));
+        random.state = self.state;
+        Some(random)
+    }
 }
 
 pub(super) struct BlockDrops {
@@ -543,6 +618,7 @@ impl GameLevel<'_> {
     pub(super) fn drop_resources_now(&mut self, pos: BlockPos, state: BlockStateId) {
         let key = (pos.x, pos.y, pos.z);
         let at = [pos.x, pos.y, pos.z];
+        self.unpack_loot(super::container_loot::LootTarget::Block(key), None);
         if let Some(entity) = self.world.block_entities.get(&key) {
             let entity = entity.clone();
             let block = self.facts.get(state).name.clone();
@@ -576,7 +652,7 @@ impl GameLevel<'_> {
                 kept.push(item.stack);
             } else {
                 self.spill.spawns.push(Spawn {
-                    random: item.random,
+                    random: item.random_with_state(),
                     stack: item.stack,
                     pos: item.position,
                     motion: Some(item.velocity),
@@ -696,6 +772,7 @@ impl GameLevel<'_> {
             position,
             velocity: random.velocity,
             pickup_delay: 10,
+            state: DropState::default(),
         }
     }
     /// The one event/filter boundary for prepared block item entities and XP.
@@ -769,6 +846,7 @@ impl GameLevel<'_> {
         side_effects: bool,
     ) -> u8 {
         let key = (pos.x, pos.y, pos.z);
+        self.unpack_loot(super::container_loot::LootTarget::Block(key), None);
         // A replacement is a new block entity, even at the same position.
         // Headless servers cannot rely on renderer visibility to discard this state.
         if &*self.facts.get(old).name == "minecraft:end_gateway" {
@@ -1064,17 +1142,23 @@ impl Game<'_> {
     /// Apply the shared block-drop event's item entities and experience unchanged.
     pub(super) fn spawn_block_drops(&mut self, pos: [i32; 3], dropped: BlockDrops) {
         for item in dropped.items {
-            self.add_item_entity_prepared(
-                item.stack,
-                item.position,
-                Some(item.velocity),
-                item.pickup_delay,
-                item.random,
-            );
+            self.add_item_drop(item);
         }
         if dropped.experience > 0 {
             self.spawn_orbs(pos.map(|v| f64::from(v) + 0.5), dropped.experience);
         }
+    }
+    /// Adds a drop's item entity, with the state a drop hook set.
+    pub(super) fn add_item_drop(&mut self, drop: BlockItemDrop) {
+        let random = drop.random_with_state();
+        let velocity = Some(drop.velocity);
+        self.add_item_entity_prepared(
+            drop.stack,
+            drop.position,
+            velocity,
+            drop.pickup_delay,
+            random,
+        );
     }
     /// Add the item entities the block behaviour spawned and follow up on the
     /// block entities it removed.

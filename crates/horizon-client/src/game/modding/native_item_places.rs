@@ -3,8 +3,8 @@
 //! menu slot shows (ender chest, crafting grid, a mod's chest menu). Mods read and write
 //! them through `ItemPlace`'s `stack`, `insert` and `extract`, which come here for these places; a block entity's slots,
 //! a stack inside an item and a mod's own places go through their handlers.
+use super::Game;
 use super::transactions::After;
-use super::{Game, minecarts::CartKind};
 use horizon_client::{first_person::Hand, items::ItemStack};
 use mod_api::__private::game::*;
 use mod_api::{EquipmentSlot, ItemPlace, LivingRef, Transaction};
@@ -33,9 +33,7 @@ impl Game<'_> {
     ) -> Option<R> {
         let key = (i32::MAX - 15, super::minecarts::CART_KEY_Y, id as i32);
         let at = |p: &horizon_core::geometry::Vec3| [p.x, p.y, p.z];
-        let container = |c: &super::minecarts::Minecart| {
-            c.id == id && matches!(c.kind, CartKind::Chest | CartKind::Hopper)
-        };
+        let container = |c: &super::minecarts::Minecart| c.id == id && c.kind.slots() > 0;
         let position = if let Some(c) = self.carts.iter().find(|c| container(c)) {
             at(&c.position)
         } else if let Some(b) = self.boats.iter().find(|b| b.id == id && b.chest) {
@@ -100,7 +98,7 @@ impl Game<'_> {
             return None;
         }
         if let Some(c) = self.carts.iter().find(|c| c.id == entity) {
-            let container = matches!(c.kind, CartKind::Chest | CartKind::Hopper);
+            let container = c.kind.slots() > 0;
             return container.then_some(c.items.len());
         }
         let b = self.boats.iter().find(|b| b.id == entity)?;
@@ -497,6 +495,132 @@ pub(super) mod tests {
         );
         guest.placed = true;
         guest
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn whole_stack_component_edit_preserves_slot_and_refuses_item_or_count_changes() {
+        use mod_api::Tag;
+        with_game(|game| {
+            open_to_lan(game);
+            let mut player = guest(1);
+            player.inventory[3] = Some(ItemStack::new("minecraft:paper", 16));
+            game.lan.as_mut().unwrap().hub.guests.push(player);
+            let host_before = game.inventory.clone();
+            let dropped_before = game.dropped.len();
+            let inventory =
+                |game: &super::Game<'_>| game.lan.as_ref().unwrap().hub.guests[0].inventory.clone();
+            let mut expected = inventory(game);
+            let name = Tag::String("named paper".into());
+            expected[3].as_mut().unwrap().data_mut().custom_name = Some(name.clone());
+            let slot = ItemPlace::PlayerSlot {
+                player: 123,
+                slot: 3,
+            };
+            let result = game.transaction(|host, tx| {
+                Ok::<_, ()>(slot.edit(host, tx, |stack| {
+                    stack
+                        .apply_components(&[("minecraft:custom_name".into(), name)].into())
+                        .unwrap();
+                }))
+            });
+            assert_eq!(result, Ok(true));
+            assert_eq!(game.dropped.len(), dropped_before);
+            assert_eq!(
+                inventory(game),
+                expected,
+                "all 16 named paper stay in slot 3"
+            );
+            assert_eq!(game.inventory, host_before);
+
+            // Refusing the edit must not need an outer abort to keep the slot intact.
+            assert_eq!(
+                game.transaction(|host, tx| {
+                    Ok::<_, ()>(slot.edit(host, tx, |stack| stack.set_count(15).unwrap()))
+                }),
+                Ok(false)
+            );
+            assert_eq!(inventory(game), expected);
+            let stone = ItemStack::new("minecraft:stone", 16)
+                .try_into_api()
+                .unwrap();
+            assert_eq!(
+                game.transaction(|host, tx| {
+                    Ok::<_, ()>(slot.edit(host, tx, |stack| *stack = stone))
+                }),
+                Ok(false)
+            );
+            assert_eq!(inventory(game), expected);
+            assert_eq!(game.inventory, host_before);
+
+            let empty = ItemPlace::PlayerSlot {
+                player: 123,
+                slot: 4,
+            };
+            assert_eq!(
+                game.transaction(|host, tx| {
+                    Ok::<_, ()>(empty.edit(host, tx, |_| panic!("empty place ran editor")))
+                }),
+                Ok(false)
+            );
+            assert_eq!(inventory(game), expected);
+            assert_eq!(game.dropped.len(), dropped_before);
+        });
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn whole_stack_component_edit_rolls_back_with_its_transaction() {
+        use mod_api::Tag;
+        with_game(|game| {
+            open_to_lan(game);
+            let mut player = guest(1);
+            player.inventory[3] = Some(ItemStack::new("minecraft:paper", 16));
+            game.lan.as_mut().unwrap().hub.guests.push(player);
+            let inventory =
+                |game: &super::Game<'_>| game.lan.as_ref().unwrap().hub.guests[0].inventory.clone();
+            let before = inventory(game);
+            let slot = ItemPlace::PlayerSlot {
+                player: 123,
+                slot: 3,
+            };
+            let mut named = ItemStack::new("minecraft:paper", 1);
+            named.data_mut().custom_name = Some(Tag::String("copied name".into()));
+            let source = named.try_into_api().unwrap();
+            let mut expected = before.clone();
+            expected[3].as_mut().unwrap().data_mut().custom_name =
+                Some(Tag::String("copied name".into()));
+            let expected_stack = expected[3].as_ref().unwrap().try_into_api().unwrap();
+            let original_stack = before[3].as_ref().unwrap().try_into_api().unwrap();
+            assert_eq!(
+                game.transaction(|host, tx| {
+                    assert!(slot.edit(host, tx, |stack| {
+                        stack.copy_component_from(&source, "minecraft:custom_name");
+                    }));
+                    assert_eq!(slot.stack(host), Some(expected_stack.clone()));
+                    Err::<(), ()>(())
+                }),
+                Err(())
+            );
+            assert_eq!(inventory(game), before);
+
+            // A child abort restores the slot even when the parent goes on to commit.
+            assert_eq!(
+                game.transaction(|host, _| {
+                    let child = host.transaction(|host, tx| {
+                        assert!(slot.edit(host, tx, |stack| {
+                            stack.copy_component_from(&source, "minecraft:custom_name");
+                        }));
+                        Err::<(), ()>(())
+                    });
+                    assert_eq!(child, Err(()));
+                    assert_eq!(slot.stack(host), Some(original_stack.clone()));
+                    Ok::<(), ()>(())
+                }),
+                Ok(())
+            );
+            assert_eq!(inventory(game), before);
+        });
     }
 
     #[test]

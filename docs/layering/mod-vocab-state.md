@@ -51,9 +51,9 @@ OUT_DIR file checked by the generator before writing it.
 | `client/particle_keys.rs::resolved::EMPTY` | `OnceLock<Particles>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
 | `content/crash.rs::CURRENT_CRASH_OWNER` | `Cell<CrashOwner>` | crash owner | The one addition to #2587: call and frame ownership stay local to avoid indirect callbacks on every subscribed dispatch. |
 | `content/registry_keys.rs::ENCHANTMENTS` | `std::sync::LazyLock<std::sync::RwLock<Option<horizon_mod_runtime::registry_keys::Names>>,>` | Parts lookup table | Resolved engine registry identity lookup, replaced on registry reload; it stores installed slot mappings, not authoring requests. |
-| `content/registry_keys.rs::ENTITY_TYPES` | `std::sync::LazyLock<std::sync::RwLock<Option<horizon_mod_runtime::registry_keys::Names>>,>` | Parts lookup table | Resolved engine registry identity lookup, replaced on registry reload; it stores installed slot mappings, not authoring requests. |
 | `content/registry_keys.rs::MENUS` | `std::sync::LazyLock<std::sync::RwLock<Option<horizon_mod_runtime::registry_keys::Names>>,>` | Parts lookup table | Resolved engine registry identity lookup, replaced on registry reload; it stores installed slot mappings, not authoring requests. |
 | `content/registry_keys.rs::resolved_block_keys::EMPTY` | `std::sync::OnceLock<horizon_mod_runtime::block_definitions::Blocks>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
+| `content/registry_keys.rs::resolved_entity_types::EMPTY` | `std::sync::OnceLock<horizon_mod_runtime::registry_keys::Names>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
 | `content/registry_keys.rs::resolved_items::EMPTY` | `std::sync::OnceLock<horizon_mod_runtime::registry_keys::Names>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
 | `dispatch_scope.rs::BACKEND` | `OnceLock<Option<Backend>>` | set-once socket | Set-once platform callback registration; mutable platform storage lives above the engine. |
 | `parts/block_entities.rs::resolved_block_entity_types::EMPTY` | `OnceLock<horizon_mod_runtime::registry_keys::Names>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
@@ -62,8 +62,12 @@ OUT_DIR file checked by the generator before writing it.
 | `parts/fluids.rs::resolved_fluids::EMPTY` | `OnceLock<horizon_mod_runtime::registry_keys::Names>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
 | `parts/shared.rs::GAME_PARTS` | `RefCell<GamePartsLookup>` | Parts lookup table | Per-game lookup table and its world/thread validity context, replaced when world tags change. |
 | `parts/shared.rs::INSTALLED` | `OnceLock<Installed>` | Parts lookup table | Frozen installed Parts inventory used by engine dispatch and registry lookups. |
+| `parts/shared.rs::IN_FEATURE` | `Cell<bool>` | Parts lookup table | Per-thread flag keeping a running feature's worldgen Part table stable. |
 | `parts/shared.rs::NO_PARTS` | `LazyLock<Parts>` | Parts lookup table | Immutable empty lookup result before installation. |
 | `parts/shared.rs::TEST_PARTS` | `Cell<Option<&'staticInstalled>>` | Parts lookup table | Per-thread installed lookup inventory for isolated engine tests. |
+| `parts/shared.rs::WORLDGEN_GENERATION` | `AtomicU64` | Parts lookup table | Generation of the published worldgen Part table, read without its lock. |
+| `parts/shared.rs::WORLDGEN_PARTS` | `RwLock<(u64,Option<Arc<Parts>>)>` | Parts lookup table | Part table the server published for world generation, with its generation, replaced at world open and /reload. |
+| `parts/shared.rs::WORLDGEN_TABLE` | `RefCell<Option<(u64,Option<Arc<Parts>>)>>` | Parts lookup table | Per-thread handle on the published worldgen Part table and its generation. |
 | `parts/shared.rs::requested_keys::EMPTY` | `LazyLock<horizon_mod_runtime::registry_keys::Requests>` | immutable cache | Empty or set-once resolved registry lookup returned when no installed Parts inventory supplies one. |
 | `runtime.rs::MODS` | `OnceLock<Installed>` | dispatch table | Dependency-ordered hook routing and its per-mod enabled bits remain engine-owned. |
 | `runtime.rs::MODS_SWITCHED` | `std::sync::atomic::AtomicU64` | dispatch table | Counts changes to the per-mod enabled bits it sits beside; read through the host's capability provider table, never by a guest's own copy. |

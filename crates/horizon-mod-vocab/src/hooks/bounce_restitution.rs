@@ -15,9 +15,12 @@ pub trait Hooks {
     ///
     /// Asked for the player and the mobs on both sides, so a client predicts its own bounce with
     /// the answer: register the mod on both and answer the same on each. The level host reads
-    /// the entity's level (match `LevelSide` for its side) and cannot write; the question is
-    /// also asked on the client's replayed ticks, so answer from the host and the event alone.
-    /// Dropped items keep their own slime rule for now. With no part attached to the state, the
+    /// the entity's level (match `LevelSide` for its side) and cannot write; the question can be
+    /// asked more than once for one tick: a client predicting its own move and a server
+    /// replaying a client's tick ask again. The answer must be a pure function of the host
+    /// and the event: no random draws, no part state that changes per call, and no counting
+    /// calls. The same inputs must give the same factor.
+    /// Dropped items keep their own slime rule. With no part attached to the state, the
     /// owning game checks the hook subscription and prepared API block key before any event
     /// conversion, so the cost is one table lookup. Diverges from upstream: new hook.
     #[hook(

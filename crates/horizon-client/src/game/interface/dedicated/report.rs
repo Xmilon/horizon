@@ -778,8 +778,22 @@ mod tests {
         assert_eq!(text(stop.dims[0].dimension), "minecraft:overworld");
         assert_eq!(types(&stop.dims[0].entities), [("minecraft:cow", 1)]);
         assert_eq!(types(&stop.dims[0].block_entities).len(), 1);
-        // Every string is a registry id, a span or job name, or the thread: no free text.
-        for s in &c.strings {
+        // Symbols and source filenames are free text by design; the secret scan above
+        // still covers them. Every other string is a registry ID, span/job name or thread.
+        let symbols: std::collections::HashSet<u32> = c
+            .samples
+            .iter()
+            .filter_map(|profile| profile.functions.as_ref())
+            .flat_map(|functions| {
+                functions
+                    .name
+                    .iter()
+                    .chain(&functions.file)
+                    .chain(&functions.crate_)
+                    .copied()
+            })
+            .collect();
+        for s in c.strings.iter().filter(|s| !symbols.contains(&s.id)) {
             let plain = s
                 .text
                 .chars()

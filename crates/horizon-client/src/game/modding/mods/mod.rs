@@ -2,8 +2,9 @@
 //! Mods in the game (`docs/modding/src/how-to/content-mods.md`): content mods' blocks, items, data and
 //! assets (`content_root`), and the Mods page's rows. Code mods are native (`native_hooks.rs`)
 //! or wasm (`horizon-mod-wasm`, loaded at startup); any other executable file is refused.
-use super::{Game, execution_role::ExecutionRole};
+use super::{Game, execution_role::ExecutionRole, registration_capability_coverage as coverage};
 mod menu_books;
+mod standalone;
 use horizon_client::{
     lang,
     mod_list::{self, Installed},
@@ -15,6 +16,7 @@ use horizon_world::{
 };
 use mod_api::__private::game::*;
 use mod_api::RegistrationContext;
+use standalone::collect_standalone_models;
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
@@ -236,8 +238,7 @@ fn builtin_registry_names(root: &Path) -> horizon_client::Result<BTreeMap<String
     Ok(registries)
 }
 
-/// Capture what registration reads (registries and settings) before the first registration
-/// hook runs, so every step sees the same values.
+/// Capture registration's stable registries, settings and stock capability type owners.
 pub(super) fn install_registration_data(root: &Path) -> horizon_client::Result<()> {
     let packages = mod_api::__private::loaded_mods();
     let directory = Game::game_dir();
@@ -259,7 +260,9 @@ pub(super) fn install_registration_data(root: &Path) -> horizon_client::Result<(
                 packages.ids(),
             ),
             directory,
-        ),
+            crate::entry::runtime_environment::get().clone(),
+        )
+        .with_capability_coverage(coverage::builtin, coverage::block_entity),
     );
     Ok(())
 }
@@ -396,14 +399,6 @@ fn collect_fluid_models(
     )
 }
 
-fn collect_standalone_models(role: ExecutionRole) -> Option<Vec<String>> {
-    if !role.is_client() {
-        return None;
-    }
-    let mut names = Vec::new();
-    Game::native_standalone_models(&RegistrationContext::new(), &mut names);
-    Some(names)
-}
 pub(super) fn collect_key_mappings<'declared>(
     role: ExecutionRole,
     declared: &'declared [(&'static str, mod_api::KeyRegistration)],
@@ -412,14 +407,19 @@ pub(super) fn collect_key_mappings<'declared>(
 }
 
 /// The native mods' entity model layers (`native_register_layer_definitions`), kept
-/// once at start for `bake_layer`.
-pub(super) fn register_layer_definitions(role: ExecutionRole) {
+/// once at start for `bake_layer`, then their skull types (`native_create_skull_models`), baked
+/// once from those layers (or vanilla's under `vanilla_root`), so `minecraft:head` item models may
+/// name their kinds.
+pub(super) fn register_layer_definitions(role: ExecutionRole, vanilla_root: &std::path::Path) {
     if !role.is_client() {
         return;
     }
     let mut layers = Vec::new();
     Game::native_register_layer_definitions(&RegistrationContext::new(), &mut layers);
     horizon_client::mobs::model_layers::register(layers);
+    let mut models = Vec::new();
+    Game::native_create_skull_models(&RegistrationContext::new(), &mut models);
+    horizon_client::skull_models::register(models, vanilla_root);
 }
 /// The native mods' F3 debug entries (`native_register_debug_entries`), kept once at start.
 pub(super) fn register_debug_entries(role: ExecutionRole) {
@@ -515,13 +515,15 @@ pub(super) fn register_resource_sources(role: ExecutionRole) {
     Game::native_register_block_state_models(&RegistrationContext::new(), &mut definitions);
     horizon_client_render::mod_block_state_models::register(definitions);
 }
-/// The client presentation registrations, resolved once before the first level opens: the
-/// dimension transition screens and the entity spectator shaders.
+/// The client presentation registrations, kept once at start, before resources load: the
+/// dimension transition screens, the entity spectator shaders, the render pipelines and the entity
+/// renderers.
 pub(super) fn register_client_presentations(role: ExecutionRole) {
     register_preset_editors(role);
     register_dimension_transition_screens(role);
     register_entity_spectator_shaders(role);
     register_render_pipelines(role);
+    register_entity_renderers(role);
 }
 
 /// Resolve client dimension-transition registrations once, before the first level opens.
@@ -602,6 +604,16 @@ fn add_section_geometry(role: ExecutionRole) {
     let mut registry = mod_api::SectionGeometryRegistry::default();
     Game::native_add_section_geometry(&RegistrationContext::new(), &mut registry);
     horizon_client::mesher::register_section_geometry(registry.into_renderers());
+}
+/// The native mods' entity renderers (`native_register_entity_renderers`), kept once at start,
+/// before resources load; every resource load resolves each type's renderer.
+pub(super) fn register_entity_renderers(role: ExecutionRole) {
+    if !role.is_client() {
+        return;
+    }
+    let mut registry = mod_api::EntityRendererRegistry::default();
+    Game::native_register_entity_renderers(&RegistrationContext::new(), &mut registry);
+    super::native_entity_renderers::register(registry.into_renderers());
 }
 /// The native mods' particle providers (`native_register_particle_providers`) and render groups
 /// (`native_register_particle_groups`), kept once at start, before resources load; every particle
@@ -977,7 +989,7 @@ pub(super) fn content_root(
 /// Publish the built-in registry orders mods iterate. The report already
 /// includes the types and menus the content overlay registered, in registration
 /// order (`BuiltInRegistries` protocol ids).
-fn register_iterated_registries(root: &std::path::Path) -> horizon_client::Result<()> {
+pub(super) fn register_iterated_registries(root: &std::path::Path) -> horizon_client::Result<()> {
     use horizon_protocol::registry::Builtin;
     let path = Builtin::find(root).ok_or("registries.json not found")?;
     let builtin = Builtin::load(&path)?;
@@ -1155,7 +1167,7 @@ fn register_mob_effects(mods: &[horizon_client::mod_content::ContentMod]) {
             EffectCategory::Harmful => Category::Harmful,
             EffectCategory::Neutral => Category::Neutral,
         };
-        (e.id.clone(), e.color, category)
+        (e.id.clone(), e.color, category, e.sort_order)
     }));
     if !set
         && brewing::mod_effects()
@@ -1657,7 +1669,14 @@ pub(super) fn living_mod_types()
     ));
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("entity-types.json"), table).unwrap();
-    let types = horizon_client::mobs::MobTypes::load_for_server(&root).unwrap();
+    // No attribute catalog: the rows' values stay as written.
+    let attributes = &horizon_world::attributes::entity::Catalog::from_json(&serde_json::json!({
+        "data_version": horizon_world::DATA_VERSION,
+        "attributes": [],
+        "entities": {},
+    }))
+    .unwrap();
+    let types = horizon_client::mobs::MobTypes::load_for_server(&root, attributes).unwrap();
     let _ = std::fs::remove_dir_all(&root);
     types
         .types
@@ -2522,57 +2541,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn standalone_models_collect_only_on_the_client() {
-        use mod_api::{self, Hooks, ModEntry, StandaloneModelsEvent};
-        use mod_platform::testing::with_mods;
-        use std::sync::{
-            Arc,
-            atomic::{AtomicUsize, Ordering},
-        };
-        #[derive(Default)]
-        struct Models(Arc<AtomicUsize>);
-        #[mod_api::horizon_mod]
-        impl Hooks for Models {
-            fn standalone_models(
-                &self,
-                context: &RegistrationContext,
-                event: &mut StandaloneModelsEvent<'_>,
-            ) {
-                assert_eq!(
-                    context.mods().ids().collect::<Vec<_>>(),
-                    ["registration_test"]
-                );
-                self.0.fetch_add(1, Ordering::Relaxed);
-                event.models.push("registration_test:block/shaft".into());
-            }
-        }
-        let calls = Arc::new(AtomicUsize::new(0));
-        with_mods(
-            vec![ModEntry::new(
-                "registration_test",
-                Box::new(Models(calls.clone())),
-            )]
-            .into(),
-            || {
-                mod_platform::__private::with_test_packages(&["registration_test"], || {
-                    assert_eq!(
-                        collect_standalone_models(ExecutionRole::IntegratedServer),
-                        None
-                    );
-                    assert_eq!(
-                        collect_standalone_models(ExecutionRole::DedicatedServer),
-                        None
-                    );
-                    assert_eq!(calls.load(Ordering::Relaxed), 0);
-                    let models = collect_standalone_models(ExecutionRole::Client).unwrap();
-                    assert_eq!(calls.load(Ordering::Relaxed), 1);
-                    assert_eq!(models, ["registration_test:block/shaft"]);
-                })
-            },
-        );
-    }
-
     fn hmod(dir: &std::path::Path, id: &str) {
         let manifest = format!(
             "id = '{id}'\nname = '{id}'\nversion = '0.3.0'\napi = '0.2'\nside = 'both'\ncapabilities = ['registries']\n[native]\ngame = '26.3'\nhorizon = '{}'\nmixins = '{}'\n",
@@ -2914,7 +2882,8 @@ mod tests {
         assert!(brewing::register_mod_effects([(
             "test:effect".to_owned(),
             0,
-            brewing::Category::Neutral
+            brewing::Category::Neutral,
+            None
         )]));
     }
 }

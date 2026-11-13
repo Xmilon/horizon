@@ -104,6 +104,8 @@ pub struct ThrownType {
     pub id: &'static str,
     pub item: &'static str,
     pub damage: f32,
+    /// its index in [`thrown_types`]: the slot a per-type table keeps it under.
+    pub slot: usize,
 }
 /// the thrown types content mods declare, in registry order.
 static THROWN_TYPES: std::sync::OnceLock<Vec<ThrownType>> = std::sync::OnceLock::new();
@@ -114,11 +116,15 @@ pub fn register_thrown_types(types: impl IntoIterator<Item = (String, String, f3
         return false;
     }
     let leak = |s: String| -> &'static str { Box::leak(s.into_boxed_str()) };
-    let types = types.into_iter().map(|(id, item, damage)| ThrownType {
-        id: leak(id),
-        item: leak(item),
-        damage,
-    });
+    let types = types
+        .into_iter()
+        .enumerate()
+        .map(|(slot, (id, item, damage))| ThrownType {
+            id: leak(id),
+            item: leak(item),
+            damage,
+            slot,
+        });
     THROWN_TYPES.set(types.collect()).is_ok()
 }
 /// the content mods' thrown types, in registry order.
@@ -2595,6 +2601,7 @@ mod tests {
             id: "ruby:bolt",
             item: "ruby:gem",
             damage: 2.0,
+            slot: 0,
         };
         let start = Vec3::new(0.0, 100.0, 0.0);
         let mut snowball = Projectile::new(ProjectileKind::Snowball, start, None);

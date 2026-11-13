@@ -3,7 +3,7 @@ use super::*;
 impl Game<'_> {
     /// Dropped items touching a guest go into their inventory
     /// (`ItemEntity.playerTouch`, then `ServerPlayer.onItemPickup`).
-    pub(super) fn guest_pickups(&mut self, gi: usize) {
+    pub(in crate::game) fn guest_pickups(&mut self, gi: usize) {
         let Some(host) = self.lan.as_ref() else {
             return;
         };
@@ -56,9 +56,8 @@ impl Game<'_> {
                 continue;
             };
             let answer = if listens {
-                let stack = self.dropped[i].stack.clone();
                 let answer = self
-                    .as_guest(conn, |g| g.native_pickup_answer(&stack))
+                    .as_guest(conn, |g| g.native_pickup_answer(item_id))
                     .unwrap_or_default();
                 // Only a dispatched callback can invalidate the original index.
                 let Some(at) = self.dropped.iter().position(|d| d.id == item_id) else {
@@ -84,6 +83,22 @@ impl Game<'_> {
             // removed it.
             let after = match rest {
                 Some(rest) if rest.count >= before => continue,
+                // `item_picked_up_partial`: the remainder is the entity's while mods hear it, and
+                // the count after comes from the entity.
+                Some(rest)
+                    if mod_api::__private::listened(mod_api::HookId::ItemPickedUpPartial) =>
+                {
+                    self.dropped[i].stack = rest.clone();
+                    let told = self.as_guest(conn, |g| g.native_pickup_partial(&stack, rest));
+                    let at = self.dropped.iter().position(|d| d.id == item_id);
+                    if let (Some(at), Some(remaining)) = (at, told) {
+                        match remaining {
+                            Some(remaining) => self.dropped[at].stack = remaining,
+                            None => self.dropped[at].stack.count = 0,
+                        }
+                    }
+                    at
+                }
                 Some(rest) => {
                     self.dropped[i].stack = rest;
                     Some(i)
@@ -93,7 +108,7 @@ impl Game<'_> {
                 None if mod_api::__private::listened(mod_api::HookId::ItemPickedUpPost) => {
                     self.dropped[i].stack.count = 0;
                     let raised = self
-                        .as_guest(conn, |g| g.native_pickup_post(&stack))
+                        .as_guest(conn, |g| g.native_pickup_post(item_id, &stack))
                         .flatten();
                     let at = self.dropped.iter().position(|d| d.id == item_id);
                     if let (Some(at), Some(raised)) = (at, raised) {

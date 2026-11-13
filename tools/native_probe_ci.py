@@ -41,8 +41,9 @@ def sdk_roots(root):
 
 
 def selected(paths, roots):
-    exact = {"Cargo.toml", "Cargo.lock", "launcher/src/rust_toolchain.rs",
-             "tools/prebuilt_game.py", "tools/native_dylib_probe.py", "tools/native_probe_ci.py",
+    exact = {"Cargo.toml", "Cargo.lock", "launcher/src/rust_toolchain.rs", "tools/ci/rust-version",
+             "tools/prebuilt_game.py", "tools/sdk_api_source.py", "tools/native_dylib_probe.py",
+             "tools/native_probe_ci.py",
              "tools/ci/dyna_ci_deps.sh", "tools/ci/apt_retry.sh",
              "tools/ci/dyna_ci_runner.sh", "tools/ci/install_launcher_deps.sh",
              ".github/workflows/native-dylib-probe.yml", "packaging/windows/exe.rs",

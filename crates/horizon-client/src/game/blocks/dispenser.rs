@@ -13,7 +13,6 @@ use horizon_client::{
     mobs::{Mob, Species, equip::equippable, sulfur_cube},
     particles::{ParticleOptions, ParticleType},
     projectiles::{Projectile, ProjectileKind},
-    random_source,
 };
 use mod_api::SoundSource;
 // Its old home, for mixin code that names it here.
@@ -1200,9 +1199,9 @@ impl Game<'_> {
             "minecraft:experience_bottle"
             | "minecraft:splash_potion"
             | "minecraft:lingering_potion" => {
-                let mut shot = Projectile::new(ProjectileKind::Snowball, at, None);
-                shot.shoot(&mut random_source::entity(), dir, power, uncertainty);
-                self.launch_thrown(one, at, shot.velocity, None);
+                let mut shot = super::potions::thrown_projectile(one, at, false);
+                shot.shoot_own(dir, power, uncertainty);
+                self.add_projectile(shot);
             }
             _ => {
                 let kind = match item.as_str() {
@@ -1269,14 +1268,18 @@ impl Game<'_> {
         self.next_entity += 1;
         let (_, uuid) = horizon_client::mobs::living_random();
         self.persist.uuids.insert(self.next_entity, uuid);
-        let mut stand =
+        let stand =
             horizon_client::entities::ArmorStand::new(self.next_entity, foot, y_rot(facing));
-        // Entity.applyImplicitComponents: a name from an anvil names the stand.
-        if let Some(name) = stack.custom_name() {
-            stand.custom_name = Some(horizon_client::text::Text::literal(name));
-        }
         self.world.modified.insert((front.0 >> 4, front.2 >> 4));
         self.armor_stands.push(stand);
+        // EntityType.appendDefaultStackConfig: the dispenser's yaw first, then
+        // the item's createDefaultStackConfig with no user.
+        self.apply_item_stack_config(
+            super::commands::Target::Stand(self.next_entity),
+            "minecraft:armor_stand",
+            &stack,
+            false,
+        );
         (shrink(stack), CLICK)
     }
     /// A tame donkey, mule or llama in front without a chest gets it.
@@ -1345,7 +1348,7 @@ impl Game<'_> {
         self.boats.push(boat);
         // BoatDispenseItemBehavior: createDefaultStackConfig with no user,
         // then setYRot(direction.toYRot()).
-        self.apply_vehicle_stack_config(super::commands::Target::Boat(id), &kind, &stack, false);
+        self.apply_item_stack_config(super::commands::Target::Boat(id), &kind, &stack, false);
         self.set_boat_yaw(id, yaw);
         if self.serving.is_some() || self.options.dedicated.is_some() {
             let boat = self.boats.last().unwrap();
@@ -1369,14 +1372,14 @@ impl Game<'_> {
             c[2] + f64::from(s[2]) * 1.125,
         );
         let front = offset(pos, facing);
-        let y_offset = if let Some(rail) = self.rail(front.0, front.1, front.2) {
+        let y_offset = if let Some(rail) = self.rail(None, front.0, front.1, front.2) {
             if rail.shape.is_slope() { 0.6 } else { 0.1 }
         } else {
             if !self.res.facts().is_air(self.block_at(front)) {
                 return (self.dispense_default_in_level(pos, facing, stack), CLICK);
             }
             let below = (front.0, front.1 - 1, front.2);
-            let Some(rail) = self.rail(below.0, below.1, below.2) else {
+            let Some(rail) = self.rail(None, below.0, below.1, below.2) else {
                 return (self.dispense_default_in_level(pos, facing, stack), CLICK);
             };
             if facing != Direction::Down && rail.shape.is_slope() {
@@ -1395,12 +1398,7 @@ impl Game<'_> {
         self.carts.push(cart);
         // AbstractMinecart.createMinecart: createDefaultStackConfig with no user.
         let id = self.next_entity;
-        self.apply_vehicle_stack_config(
-            super::commands::Target::Cart(id),
-            kind.id(),
-            &stack,
-            false,
-        );
+        self.apply_item_stack_config(super::commands::Target::Cart(id), kind.id(), &stack, false);
         if self.serving.is_some() || self.options.dedicated.is_some() {
             let cart = self.carts.last().unwrap();
             self.native_vehicle_create(
@@ -1785,6 +1783,25 @@ impl Game<'_> {
         if !self.with_level(|b, level, ticks| b.directional_can_place(level, ticks, &ctx)) {
             return Ok((Some(stack), FAIL));
         }
+        if mod_api::__private::listened(mod_api::HookId::EntityPlace)
+            && let Some(preview) =
+                self.with_level(|b, level, ticks| b.placement_preview(level, ticks, &ctx))
+        {
+            let against = ctx.placed_against_pos(preview.pos);
+            let against = self.world.block(against.x, against.y, against.z);
+            let mut canceled = false;
+            self.native_entity_place(
+                None,
+                preview.pos,
+                preview.state,
+                against,
+                mod_api::Placement::Single,
+                &mut canceled,
+            );
+            if canceled {
+                return Ok((Some(stack), FAIL));
+            }
+        }
         let outcome = self.with_level(|b, level, ticks| b.place_block(level, ticks, &ctx));
         let PlaceOutcome::Placed { pos: placed, state } = outcome else {
             self.process_level_events()?;
@@ -1800,6 +1817,7 @@ impl Game<'_> {
         if self.world.block_entities.get(&target).is_some() {
             self.apply_placed_item([target.0, target.1, target.2], &stack, false);
         }
+        self.block_item_placed(&stack, None, placed, &ctx);
         self.process_level_events()?;
         Ok((shrink(stack), CLICK))
     }
@@ -2025,7 +2043,7 @@ impl Game<'_> {
         );
     }
     /// `ShearsDispenseItemBehavior.tryShearEntity`: the first live, ready
-    /// `Shearable` in the block is sheared.
+    /// `Shearable` in the block is sheared (an entity part's `IShearable` answer comes first).
     pub(super) fn shear_entity(&mut self, target: Pos) -> Result<bool> {
         let shears = ItemStack::new("minecraft:shears", 1);
         for t in self.targets_at(target) {
@@ -2034,19 +2052,19 @@ impl Game<'_> {
                 return Ok(true);
             }
             let Target::Mob(i) = t else { continue };
+            let part = self.part_shearable(i, None, &shears);
             let m = &self.mobs[i];
-            if !m.alive() {
+            if !m.alive() || part.is_some_and(|(_, shearable)| !shearable) {
                 continue;
             }
-            let at = m.position;
-            let entity_id = m.id;
-            let kind = m.kind.id.clone();
+            let (at, entity_id, kind) = (m.position, m.id, m.kind.id.clone());
             let sound_at = Some([at.x, at.y, at.z]);
             // shear(level, BLOCKS, tool): level.playSound(null, this, sound, BLOCKS, 1, 1).
             let shear_sound = |name: &'static str| {
                 LevelSound::new(name, [at.x, at.y, at.z], 1.0, 1.0).in_source(SoundSource::Blocks)
             };
             match m.species() {
+                _ if let Some((part, _)) = part => self.part_shear(i, part, None, &shears),
                 Species::SulfurCube if sulfur_cube::has_body(m) => {
                     // SulfurCube.shear: the swallowed block comes out at the
                     // passenger attachment, and nothing is swallowed for 5 s.

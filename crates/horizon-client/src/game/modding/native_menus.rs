@@ -11,6 +11,8 @@ use horizon_client::{
     lan::{data::component_nbt, menu::NativeMenuEvent},
     text::Text,
 };
+use mod_api::__private::game::*;
+use mod_api::{MenuRef, MenuReplace};
 
 /// The inventory slot (0..9 the hotbar, 9..36 the rest) a click on `slot`
 /// of a native menu of `size` slots landed on, when it is the player's
@@ -77,23 +79,46 @@ impl Game<'_> {
     }
     /// Opens a chest menu of `rows` rows (1 to 6) titled `title` for the
     /// player, showing `items` (by slot, padded with empty ones), in place of
-    /// the menu they had open: its window id.
+    /// the menu they had open: its window id, a new one each time. The old
+    /// menu closes as a close does, its cursor stack going back to the
+    /// inventory, and `replace` says whether the client is first sent a close.
     pub(super) fn open_menu(
         &mut self,
         uuid: u128,
         rows: u8,
         title: Text,
         items: Vec<Option<ItemStack>>,
+        replace: MenuReplace,
     ) -> Option<i32> {
         let conn = self.native_conn(uuid)?;
-        // ServerPlayer.openMenu closes the menu that was open.
-        self.guest_close_all(conn);
+        // ServerPlayer.openMenu closes the menu that was open: `closeContainer`, or
+        // `doCloseContainer` for a provider that skips the client's close.
+        match replace {
+            MenuReplace::CloseFirst => self.guest_close_menus_and_tell(conn),
+            MenuReplace::InPlace => self.guest_close_all(conn),
+        }
         self.lan.as_mut()?.hub.open_native_menu(
             conn,
             rows,
             component_nbt(&title.component()),
             items,
         )
+    }
+    /// The native menu the player has open as window `window`, for its slots;
+    /// None for another window, a menu the game opened, or a player not here.
+    pub(super) fn menu(&self, uuid: u128, window: i32) -> Option<MenuRef> {
+        let conn = self.native_conn(uuid)?;
+        self.lan
+            .as_ref()?
+            .hub
+            .guest(conn)?
+            .menu
+            .as_ref()
+            .filter(|m| {
+                m.window == window && m.slots == horizon_client::lan::menu::Slots::Native
+            })?;
+        self.player_container_menu(self.player(uuid)?)
+            .filter(|menu| menu.fields().window == window)
     }
     /// Closes the player's native menu (a `native_menu_closed` follows).
     pub(super) fn close_menu(&mut self, uuid: u128) {
@@ -132,6 +157,7 @@ const MOUNT_MENU: &str = "horizon:mount_inventory";
 pub(super) fn open_menu_of(host: &LanHost, conn: u32) -> Option<(i32, &str, Option<[i32; 3]>)> {
     let g = host.hub.guest(conn)?;
     let play = host.play.get(&conn);
+    let menus = host.menus.get(&conn);
     if let Some(m) = &g.menu {
         let menu = host.hub.registry_name("minecraft:menu", m.kind)?;
         // A vehicle's menu is keyed by a stand-in, not a block.
@@ -144,9 +170,9 @@ pub(super) fn open_menu_of(host: &LanHost, conn: u32) -> Option<(i32, &str, Opti
     let play = play?;
     let (window, menu, pos) = if let Some(gm) = &play.merchant {
         (gm.window, "minecraft:merchant", None)
-    } else if let Some((window, _, _, pos)) = play.crafting.table.as_ref() {
+    } else if let Some((window, _, _, pos)) = menus.and_then(|m| m.crafting.table.as_ref()) {
         (*window, "minecraft:crafting", Some(*pos))
-    } else if let Some(st) = play.station.as_ref() {
+    } else if let Some(st) = menus.and_then(|m| m.station.as_ref()) {
         (
             st.window,
             super::lan_stations::menu_of(st.kind)?.0,
@@ -312,7 +338,204 @@ impl Game<'_> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::api_values::TryIntoApi;
+    use super::super::native_entity_refs::tests::with_game;
+    use super::super::native_item_places::tests::{guest, open_to_lan};
     use super::*;
+    use horizon_client::lan::{Out, PlayerSender};
+    use horizon_protocol::{
+        buf::Reader,
+        packets::play::{self, Clientbound as C, Serverbound as S},
+    };
+    use mod_api::{HostTransaction, ItemPlace, ItemResource, ServerHost};
+    use std::sync::{Arc, mpsc};
+
+    /// Guest 1 (UUID 123) on a world open to LAN, and what their client is sent.
+    fn watched_guest(game: &mut Game<'_>) -> mpsc::Receiver<Out> {
+        open_to_lan(game);
+        let (tx, rx) = mpsc::channel();
+        let mut player = guest(1);
+        player.sender = PlayerSender::new(tx, Arc::default());
+        game.lan.as_mut().unwrap().hub.guests.push(player);
+        rx
+    }
+
+    /// The packets sent since the last call.
+    fn sent(rx: &mpsc::Receiver<Out>) -> Vec<C> {
+        rx.try_iter()
+            .flat_map(|out| match out {
+                Out::Packet(body) => vec![body],
+                Out::Packets(bodies) => bodies,
+                _ => Vec::new(),
+            })
+            .map(|body| {
+                let mut reader = Reader::new(&body);
+                let id = reader.varint().unwrap();
+                C::decode(id, reader.rest()).unwrap()
+            })
+            .collect()
+    }
+
+    fn open(game: &mut Game<'_>, rows: u8, title: &str, replace: MenuReplace) -> i32 {
+        let host: &mut dyn ServerHost = game;
+        host.open_menu(
+            123,
+            rows,
+            mod_api::Text::literal(title),
+            Vec::new(),
+            replace,
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources"]
+    fn a_slot_written_outside_a_click_is_one_set_slot_at_the_next_sync() {
+        with_game(|game| {
+            let rx = watched_guest(game);
+            let window = open(game, 1, "shop", MenuReplace::CloseFirst);
+            assert_eq!(window, 1);
+            let host: &mut dyn ServerHost = game;
+            assert_eq!(host.menu(123, 2), None, "another window");
+            assert_eq!(host.menu(124, 1), None, "another player");
+            let menu = host.menu(123, 1).unwrap();
+            assert_eq!(menu.container_id(host), Some(1));
+            sent(&rx);
+
+            let diamond = ItemStack::new("minecraft:diamond", 1)
+                .try_into_api()
+                .unwrap();
+            let slot = ItemPlace::MenuSlot { menu, slot: 4 };
+            let written = host.transaction(|host, tx| {
+                Ok::<_, ()>(slot.insert(host, tx, &ItemResource::of(&diamond), 3))
+            });
+            assert_eq!(written, Ok(3));
+            assert!(sent(&rx).is_empty(), "nothing before the tick's sync");
+
+            game.lan.as_mut().unwrap().hub.sync_containers(&game.world);
+            let packets = sent(&rx);
+            assert_eq!(packets.len(), 1, "{packets:?}");
+            let C::ContainerSetSlot(set) = &packets[0] else {
+                panic!("{packets:?}");
+            };
+            // The open's content took state 1; this is the next.
+            assert_eq!((set.container, set.state, set.slot), (1, 2, 4));
+            assert_eq!(set.item.as_ref().map(|item| item.count), Some(3));
+            game.lan.as_mut().unwrap().hub.sync_containers(&game.world);
+            assert!(sent(&rx).is_empty(), "sent once");
+
+            // Closed, the menu answers nothing.
+            game.close_menu(123);
+            let host: &mut dyn ServerHost = game;
+            assert_eq!(host.menu(123, 1), None);
+        });
+    }
+
+    #[test]
+    #[ignore = "needs prepared resources"]
+    fn a_menu_opened_in_place_sends_no_close_returns_the_cursor_and_ignores_the_old_window() {
+        with_game(|game| {
+            let rx = watched_guest(game);
+            let closes = |packets: &[C]| -> Vec<i32> {
+                packets
+                    .iter()
+                    .filter_map(|p| match p {
+                        C::ContainerClose(close) => Some(close.container),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            let opens = |packets: &[C]| -> Vec<(i32, horizon_core::nbt::Tag)> {
+                packets
+                    .iter()
+                    .filter_map(|p| match p {
+                        C::OpenScreen(open) => Some((open.container, open.title.clone())),
+                        _ => None,
+                    })
+                    .collect()
+            };
+            // From the inventory nothing is open, so nothing closes.
+            assert_eq!(open(game, 1, "one", MenuReplace::CloseFirst), 1);
+            let packets = sent(&rx);
+            assert_eq!(closes(&packets), Vec::<i32>::new());
+            assert_eq!(opens(&packets).len(), 1);
+
+            let stone = ItemStack::new("minecraft:stone", 4);
+            game.lan
+                .as_mut()
+                .unwrap()
+                .hub
+                .guests
+                .update(0, |g| g.carried = Some(stone.clone()));
+            game.lan.as_mut().unwrap().hub.native_menu_events.clear();
+            assert_eq!(open(game, 2, "two", MenuReplace::InPlace), 2);
+            let packets = sent(&rx);
+            assert_eq!(
+                closes(&packets),
+                Vec::<i32>::new(),
+                "no close: the mouse stays"
+            );
+            assert_eq!(
+                opens(&packets),
+                vec![(2, component_nbt(&Text::literal("two").component()))]
+            );
+            let g = &game.lan.as_ref().unwrap().hub.guests[0];
+            assert_eq!(g.carried, None, "the cursor stack went back");
+            assert_eq!(
+                g.inventory.iter().flatten().cloned().collect::<Vec<_>>(),
+                vec![stone]
+            );
+            assert_eq!(g.menu.as_ref().map(|m| (m.window, m.size)), Some((2, 18)));
+            assert_eq!(
+                game.lan.as_ref().unwrap().hub.native_menu_events,
+                vec![NativeMenuEvent::Closed {
+                    uuid: 123,
+                    window: 1
+                }],
+                "the old menu closed on the server"
+            );
+
+            // The old window's click and close land on nothing.
+            game.lan.as_mut().unwrap().hub.native_menu_events.clear();
+            game.lan_guest_packet(
+                1,
+                S::ContainerClick(play::ContainerClick {
+                    container: 1,
+                    state: 1,
+                    slot: 0,
+                    button: 0,
+                    input: 0,
+                    changed: Vec::new(),
+                    carried: None,
+                }),
+            );
+            game.lan_guest_packet(1, S::ContainerClose(play::ContainerClose { container: 1 }));
+            assert_eq!(
+                game.lan.as_ref().unwrap().hub.native_menu_events,
+                Vec::new()
+            );
+            let host: &mut dyn ServerHost = game;
+            assert_eq!(host.menu(123, 1), None);
+            assert!(host.menu(123, 2).is_some(), "the new menu stays open");
+
+            // The default sends the close first.
+            sent(&rx);
+            assert_eq!(open(game, 3, "three", MenuReplace::CloseFirst), 3);
+            let packets = sent(&rx);
+            assert_eq!(closes(&packets), vec![2]);
+            assert_eq!(opens(&packets).len(), 1);
+            let close_at = packets
+                .iter()
+                .position(|p| matches!(p, C::ContainerClose(_)))
+                .unwrap();
+            let open_at = packets
+                .iter()
+                .position(|p| matches!(p, C::OpenScreen(_)))
+                .unwrap();
+            assert!(close_at < open_at);
+        });
+    }
 
     #[test]
     fn menu_clicks_map_to_the_inventory_below() {

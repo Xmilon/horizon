@@ -41,6 +41,7 @@ impl PartRegistrar {
         checkpoint!(
             game_rule_categories,
             game_rules,
+            custom_stats,
             block_entity_types,
             entity_attributes,
             general_entity_types,
@@ -54,6 +55,7 @@ impl PartRegistrar {
             structure_types,
             dimensions,
             chunk_generators,
+            biome_sources,
             refused
         )
     }

@@ -1,5 +1,7 @@
 //! Shared table state, cross-kind registration and common test fixtures only.
 use super::*;
+use std::cell::Cell;
+use std::sync::{PoisonError, RwLock, atomic::AtomicU64};
 // no wire: process-local registration and dispatch storage contains trait objects and owning-mod identities.
 /// A part, with the mod that attached it.
 // exhaustive: its fields are private, so mods cannot build or destructure it
@@ -9,7 +11,7 @@ pub struct Attached<P: ?Sized> {
     /// The mod's place in dispatch order.
     pub(crate) mod_index: usize,
     /// Its place in its mod's registrations: a mod's parts on one thing keep this order, key or
-    /// tag (#41 §3).
+    /// tag ( §3).
     pub(crate) order: usize,
     /// The part's kind, its Rust type's name: one part of each kind per thing.
     pub(crate) type_name: &'static str,
@@ -67,9 +69,9 @@ pub struct Parts {
     pub(crate) items: HashMap<Box<str>, Vec<Attached<dyn ItemPart>>>,
     pub(crate) menus: HashMap<Box<str>, Vec<Attached<dyn MenuPart>>>,
     pub(crate) fluids: HashMap<Box<str>, Vec<Attached<dyn FluidPart>>>,
-    /// Entity parts by entity type id (`minecraft:zombie`), for the goal
-    /// registration at every `Mob` construction (#1077). They carry no scoped
-    /// hook, so they never enter `hooks`.
+    /// Entity parts by entity type id (`minecraft:zombie`, `mymod:robot`), for the goal
+    /// registration at every `Mob` construction and the scoped hooks the entity
+    /// scope owns (`general_entity_tick`).
     pub(crate) entities: HashMap<Box<str>, Vec<Attached<dyn EntityPart>>>,
     /// Capability providers by capability name, then by block entity type, in registration
     /// order.
@@ -77,6 +79,16 @@ pub struct Parts {
     /// Block capability providers by capability name, then by block, in registration order:
     /// those asked of a block whatever block entity it has, or none.
     pub(crate) block_capabilities: Capabilities<BlockProviderOf>,
+    /// Canonical block capability metadata, retained independently of provider availability.
+    pub(crate) block_capability_metadata: HashMap<&'static str, (Arc<str>, Option<bool>)>,
+    /// Built-in declaration order followed by the order mods first mention a capability.
+    pub(crate) block_capability_order: Vec<&'static str>,
+    /// Explicit domains and declarations of the game's default providers.
+    pub(crate) default_block_containers: HashMap<Box<str>, Vec<(usize, crate::ModContainer)>>,
+    pub(crate) default_block_fluids: HashMap<Box<str>, Vec<(usize, crate::ModFluidTanks)>>,
+    pub(crate) default_block_energy: HashMap<Box<str>, Vec<(usize, crate::ModEnergyBuffer)>>,
+    pub(crate) default_item_containers:
+        HashMap<Box<str>, Vec<(usize, Arc<dyn crate::ItemContainerProvider>)>>,
     /// Item capability providers by capability name, then by item, in registration order.
     pub(crate) item_capabilities: Capabilities<ItemProviderOf>,
     /// Entity capability providers by capability name, then by entity type, in registration
@@ -86,6 +98,8 @@ pub struct Parts {
     pub(crate) place_providers: HashMap<&'static str, PlaceProviderPart>,
     /// The tooltip appenders, in registration order.
     pub(crate) tooltip_appenders: Vec<TooltipAppenderPart>,
+    /// The crash report lines, in registration order.
+    pub(crate) crash_sections: Vec<CrashSectionPart>,
     /// Command argument types the mods registered, by namespaced id, in registration order.
     pub(crate) command_arguments: Vec<CommandArgumentInfo>,
     /// Frozen raw payload declarations and their sole receiving owners.
@@ -106,6 +120,7 @@ pub struct HookParts {
     pub(crate) items: HashMap<Box<str>, Vec<Attached<dyn ItemPart>>>,
     pub(crate) menus: HashMap<Box<str>, Vec<Attached<dyn MenuPart>>>,
     pub(crate) fluids: HashMap<Box<str>, Vec<Attached<dyn FluidPart>>>,
+    pub(crate) entities: HashMap<Box<str>, Vec<Attached<dyn EntityPart>>>,
 }
 
 /// Which things a capability's providers are registered by.
@@ -181,13 +196,16 @@ pub fn has_scoped_hook(hook: HookId) -> bool {
 }
 
 // no wire: process-local registration and dispatch storage contains trait objects and owning-mod identities.
-/// The parts table a dispatch reads: the process-wide one, or this game thread's.
+/// The parts table a dispatch reads: the process-wide one, this game thread's, or the one the
+/// server published for its world generation.
 #[non_exhaustive]
 pub enum PartsRef {
     /// The process-wide table.
     Shared(&'static Parts),
     /// This game thread's table.
     Game(Rc<Parts>),
+    /// The table the server published for its world generation, as this thread holds it.
+    Worldgen(Arc<Parts>),
 }
 
 impl std::ops::Deref for PartsRef {
@@ -196,8 +214,95 @@ impl std::ops::Deref for PartsRef {
         match self {
             Self::Shared(parts) => parts,
             Self::Game(parts) => parts,
+            Self::Worldgen(parts) => parts,
         }
     }
+}
+
+/// The Part table the server published for its world generation, with its generation: 0 before
+/// a server published one.
+static WORLDGEN_PARTS: RwLock<(u64, Option<Arc<Parts>>)> = RwLock::new((0, None));
+/// The generation in `WORLDGEN_PARTS`, read without its lock.
+static WORLDGEN_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    /// This thread's handle on the published table, with the generation it belongs to.
+    static WORLDGEN_TABLE: RefCell<Option<(u64, Option<Arc<Parts>>)>> =
+        const { RefCell::new(None) };
+    /// Whether this thread runs a feature, whose lookups keep the table it started with.
+    static IN_FEATURE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Publish the Part table this server resolved against its tags, at world open and at each
+/// `/reload`, for the Part methods asked while a feature generates: the worldgen workers and the
+/// server thread read it from their next feature on. Only a server publishes, so a client window's
+/// table never reaches the workers.
+pub fn publish_worldgen_parts(parts: Option<Parts>) {
+    let mut published = WORLDGEN_PARTS
+        .write()
+        .unwrap_or_else(PoisonError::into_inner);
+    let generation = published.0 + 1;
+    *published = (generation, parts.map(Arc::new));
+    WORLDGEN_GENERATION.store(generation, Ordering::Release);
+}
+
+/// The parts a worldgen Part method asks, on any thread: the table the server published, never
+/// this thread's game table nor the process-wide key parts. It never fails: before a server
+/// published, no part answers. One atomic load; the table's handle is fetched again only when the
+/// server published since, and never inside a feature, which keeps the table it started with.
+pub fn worldgen_parts() -> PartsRef {
+    #[cfg(test)]
+    TEST_PART_LOOKUPS.set(TEST_PART_LOOKUPS.get() + 1);
+    WORLDGEN_TABLE.with_borrow_mut(|table| {
+        if !IN_FEATURE.get() || table.is_none() {
+            refresh_worldgen_table(table);
+        }
+        match table {
+            Some((_, Some(parts))) => PartsRef::Worldgen(parts.clone()),
+            _ => PartsRef::Shared(&NO_PARTS),
+        }
+    })
+}
+
+fn refresh_worldgen_table(table: &mut Option<(u64, Option<Arc<Parts>>)>) {
+    let generation = WORLDGEN_GENERATION.load(Ordering::Acquire);
+    if table.as_ref().is_some_and(|(seen, _)| *seen == generation) {
+        return;
+    }
+    let published = WORLDGEN_PARTS
+        .read()
+        .unwrap_or_else(PoisonError::into_inner);
+    *table = Some((published.0, published.1.clone()));
+}
+
+/// Run one feature: its worldgen lookups read the table published when it started, so a feature
+/// that started before a `/reload` finishes with the tables it started with.
+pub fn worldgen_feature<T>(feature: impl FnOnce() -> T) -> T {
+    struct Leave(bool);
+    impl Drop for Leave {
+        fn drop(&mut self) {
+            IN_FEATURE.set(self.0);
+        }
+    }
+    let outer = IN_FEATURE.replace(true);
+    let _leave = Leave(outer);
+    if !outer {
+        WORLDGEN_TABLE.with_borrow_mut(refresh_worldgen_table);
+    }
+    feature()
+}
+
+/// The mods whose parts on `state`'s block answer the worldgen hook `hook`, for a refused answer
+/// to name.
+pub fn worldgen_part_mods(hook: HookId, state: crate::BlockState) -> Vec<&'static str> {
+    let parts = worldgen_parts();
+    parts.for_hook(hook).map_or_else(Vec::new, |table| {
+        table
+            .block_value(state)
+            .iter()
+            .map(|part| part.mod_id)
+            .collect()
+    })
 }
 
 /// The parts hook `hook` asks: this game thread's resolved table, then the shared key parts
@@ -459,6 +564,7 @@ impl Parts {
         index!(items, item_subscribed);
         index!(menus, menu_subscribed);
         index!(fluids, fluid_subscribed);
+        index!(entities, entity_subscribed);
     }
 }
 
@@ -567,3 +673,7 @@ mod lookup_context_tests {
         assert!(!named.get(), "an empty table resolved the block's name");
     }
 }
+
+#[cfg(test)]
+#[path = "shared/worldgen_tests.rs"]
+mod worldgen_tests;

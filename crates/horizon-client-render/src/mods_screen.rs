@@ -639,7 +639,7 @@ impl ModsScreen {
         if hit(g.search, x, y) {
             self.search.focused = true;
             self.list_focused = false;
-            self.search.click(m, x, false);
+            self.search.click(m, x, false, false);
             return (Action::None, false);
         }
         self.search.focused = false;

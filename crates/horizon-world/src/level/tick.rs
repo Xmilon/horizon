@@ -649,11 +649,16 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             self.remove_block(pos, false);
         }
         let below_state = self.below_state(pos);
-        let infiniburn = match self.level.dimension_type().infiniburn.as_str() {
-            "#minecraft:infiniburn_nether" => &b.tags.infiniburn_nether,
-            "#minecraft:infiniburn_end" => &b.tags.infiniburn_end,
-            _ => &b.tags.infiniburn_overworld,
-        };
+        static EMPTY: std::sync::LazyLock<super::data::BlockSet> =
+            std::sync::LazyLock::new(super::data::BlockSet::default);
+        let infiniburn = self
+            .level
+            .infiniburn()
+            .or_else(|| {
+                let name = &self.level.dimension_type().infiniburn;
+                b.tag(name.strip_prefix('#').unwrap_or(name))
+            })
+            .unwrap_or(&EMPTY);
         let mut infini = None;
         self.level
             .before_is_fire_source(below_state, below(pos), &mut infini);
@@ -857,13 +862,20 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         let b = self.b;
         let mut speed = 1.0f32;
         let under = below(pos);
+        let asks = self.level.asks_is_fertile();
         for xx in -1..=1 {
             for zz in -1..=1 {
                 let mut block_speed = 0.0f32;
-                let state = self.state(under.offset(xx, 0, zz));
+                let at = under.offset(xx, 0, zz);
+                let state = self.state(at);
                 if b.in_set(state, &b.tags.grows_crops) {
                     block_speed = 1.0;
-                    if b.table.int(state, b.props.moisture) > 0 {
+                    // IBlockExtension.isFertile: vanilla's moisture, as a part leaves it.
+                    let mut fertile = b.table.int(state, b.props.moisture) > 0;
+                    if asks {
+                        self.level.before_is_fertile(state, at, &mut fertile);
+                    }
+                    if fertile {
                         block_speed = 3.0;
                     }
                 }
@@ -1041,16 +1053,28 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         }
         self.level.crop_grow_post(pos, state);
     }
+    /// `FarmlandBlock.randomTick`, with session-only watered areas before `isNearWater`.
     fn farmland_random_tick(&mut self, state: BlockStateId, pos: BlockPos) {
         let b = self.b;
         let moisture = b.table.int(state, b.props.moisture);
-        let mut near_water = false;
-        'search: for x in -4..=4 {
-            for y in 0..=1 {
-                for z in -4..=4 {
-                    if b.is_water_fluid(self.fluid_at(pos.offset(x, y, z)).kind()) {
-                        near_water = true;
-                        break 'search;
+        let mut near_water = self.level.has_water_ticket(pos);
+        // IBlockExtension.canBeHydrated: the farmland's parts, looked up once.
+        let asks = !near_water && self.level.asks_can_be_hydrated(state);
+        if !near_water {
+            'search: for x in -4..=4 {
+                for y in 0..=1 {
+                    for z in -4..=4 {
+                        let at = pos.offset(x, y, z);
+                        let fluid = self.fluid_at(at);
+                        let mut hydrates = None;
+                        if asks && fluid.kind() != FluidKind::Empty {
+                            self.level
+                                .before_can_be_hydrated(state, pos, fluid, at, &mut hydrates);
+                        }
+                        if hydrates.unwrap_or_else(|| b.is_water_fluid(fluid.kind())) {
+                            near_water = true;
+                            break 'search;
+                        }
                     }
                 }
             }

@@ -36,7 +36,7 @@ fn real_library_dependency() {
                 mod_api::PackageKind::Code,
                 mod_api::Side::Both,
                 vec![manifest.id.clone()],
-                manifest.dependencies.keys().cloned().collect(),
+                Vec::new(),
             ));
             packages.push(WasmPackage {
                 manifest,
@@ -81,14 +81,24 @@ fn real_library_dependency() {
                 "wasm_test_dependent:dependent".into(),
                 Default::default(),
             );
-            mod_api::dispatch_block_entity_tick(&mut Quiet, [0, 64, 0], &mut entity);
+            mod_api::dispatch_block_entity_tick(
+                &mut Quiet,
+                &mut mod_api::BlockEntityTickReply::Changed,
+                [0, 64, 0],
+                &mut entity,
+            );
             assert_eq!(&entity.data[..2], [37, 1], "library call and owned Drop");
             let address = entity.data[2];
             let mut observer = mod_api::ModBlockEntity::new(
                 "wasm_test_observer:observer".into(),
                 Default::default(),
             );
-            mod_api::dispatch_block_entity_tick(&mut Quiet, [0, 64, 0], &mut observer);
+            mod_api::dispatch_block_entity_tick(
+                &mut Quiet,
+                &mut mod_api::BlockEntityTickReply::Changed,
+                [0, 64, 0],
+                &mut observer,
+            );
             assert_eq!(
                 observer.data,
                 [73, address],

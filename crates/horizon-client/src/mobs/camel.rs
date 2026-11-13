@@ -539,7 +539,7 @@ mod tests {
                     let mut r = mob(2, name);
                     r.extra.mount = Some(m.id);
                     m.extra.rider = Some(r.id);
-                    seen.push(r.seen(None));
+                    seen.push(r.seen(None, &crate::items::Items::empty()));
                 }
                 if leashed {
                     m.extra.leash = Some(Holder::Mob(3));
@@ -595,6 +595,7 @@ mod tests {
             jump_strength: 0.42,
             attributes: Arc::default(),
             item_stack_limits: Default::default(),
+            attribute_bounds: Default::default(),
             gravity: 0.08,
             safe_fall_distance: 3.0,
             fall_damage_multiplier: 1.0,
@@ -747,7 +748,7 @@ mod tests {
         let Some((mut a, b)) = pair else {
             return;
         };
-        let partner = b.seen(None);
+        let partner = b.seen(None, &crate::items::Items::empty());
         let mut events = Vec::new();
         let mut fixture = crate::health::TestLevel::new(0);
         let ran = with_test_world(&[partner], |w, _| {

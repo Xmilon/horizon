@@ -28,6 +28,8 @@ PROFILE = "release"
 # What rustc writes for a dylib or proc macro on each OS, plus metadata and the MinGW import libraries.
 SUFFIXES = (".rmeta", ".so", ".dll", ".dll.a", ".dylib")
 IDENTITY = "horizon-prebuilt.json"
+# The crate the game's library is built from; its build resolves what mods compile against.
+GAME = "horizon-mod-host"
 LOCK = "Cargo.lock"
 # The launcher's generated `main.rs` comes from the game it links against.
 TEMPLATE = "native_main.rs.template"
@@ -204,7 +206,7 @@ def build(out: Path, server: bool) -> None:
     # Encoded flags take precedence over RUSTFLAGS in Cargo.
     environment = {key: value for key, value in os.environ.items() if key != "CARGO_ENCODED_RUSTFLAGS"}
     messages = run(
-        ["cargo", "rustc", "--locked", "-p", "horizon-mod-host", "--lib", "--crate-type", "dylib",
+        ["cargo", "rustc", "--locked", "-p", GAME, "--lib", "--crate-type", "dylib",
          "--target", host, "--profile", PROFILE, "--message-format", "json-render-diagnostics", *features, *link],
         cwd=staged,
         env={**environment, "RUSTFLAGS": rustflags + " -D warnings", "CARGO_TARGET_DIR": str(target_dir)},
@@ -225,7 +227,7 @@ def build(out: Path, server: bool) -> None:
         "cargo", "metadata", "--locked", "--format-version", "1", "--filter-platform", host,
         *features,
     ], cwd=staged))
-    eligible = facade_crates(deps, runtime_crates(metadata, "horizon-mod-host"))
+    eligible = facade_crates(deps, runtime_crates(metadata, GAME))
     assert_externs(out, eligible)
     native = out / NATIVE
     native.mkdir()
@@ -274,7 +276,7 @@ def build(out: Path, server: bool) -> None:
         "registry_patches": patches,
         "patch_files": {name: digest for name, digest in files.items() if name.startswith("patches/")},
         "registry_lock": (staged / "Cargo.lock").read_text(),
-        "native_links": native_links(metadata, "horizon-mod-host"),
+        "native_links": native_links(metadata, GAME),
         "files": files,
     }
     (out / IDENTITY).write_text(json.dumps(identity, indent=2) + "\n")

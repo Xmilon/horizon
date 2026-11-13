@@ -264,14 +264,17 @@ impl Wire for crate::LoadedMods {
     }
 }
 impl Wire for crate::RegistrationContext {
-    const LAYOUT_SEED: u64 = crate::wire::layout_seed("RegistrationContext.instance_dir.v1");
-    const MIN: usize = <Option<crate::InstanceDirectory> as Wire>::MIN;
+    const LAYOUT_SEED: u64 = crate::wire::layout_seed("RegistrationContext.runtime.v2");
+    const MIN: usize = <Option<crate::InstanceDirectory> as Wire>::MIN
+        + <Option<crate::RuntimeEnvironment> as Wire>::MIN;
     fn put(&self, out: &mut Writer) {
         out.put(&self.instance_dir);
+        out.put(&self.runtime);
     }
     fn take(input: &mut Reader<'_>) -> Result<Self, WireError> {
         let mut context = Self::new();
         context.instance_dir = input.take()?;
+        context.runtime = input.take()?;
         Ok(context)
     }
 }
@@ -279,6 +282,27 @@ impl Wire for crate::RegistrationContext {
 #[cfg(test)]
 mod resource_wire_tests {
     use super::*;
+    #[test]
+    fn registration_runtime_crosses_wire_without_guest_backend() {
+        for dist in [crate::Dist::Client, crate::Dist::DedicatedServer] {
+            for enabled in [false, true] {
+                let mut native = crate::RegistrationContext::new();
+                native.runtime = Some(crate::RuntimeEnvironment::new(
+                    dist,
+                    "26.3".into(),
+                    "nightly-test".into(),
+                    enabled,
+                ));
+                let mut out = Writer::new();
+                out.put(&native);
+                let guest: crate::RegistrationContext = Reader::new(out.bytes()).take().unwrap();
+                assert_eq!(guest.dist(), dist);
+                assert_eq!(guest.game_version(), "26.3");
+                assert_eq!(guest.horizon_version(), "nightly-test");
+                assert_eq!(guest.game_tests_enabled(), enabled);
+            }
+        }
+    }
 
     #[test]
     fn wire_tokens_and_package_inventory() {
@@ -311,8 +335,19 @@ mod resource_wire_tests {
             crate::PackageKind::Content,
             crate::Side::Both,
             vec!["test".into()],
-            vec!["other".into()],
-        );
+            vec![crate::PackageDependency::new(
+                "other".into(),
+                "^1".into(),
+                true,
+            )],
+        )
+        .with_details(crate::PackageDetails {
+            name: "Test".into(),
+            homepage: Some("https://example.org".into()),
+            runtime: Some(crate::PackageRuntime::Wasm),
+            properties: [("tier".into(), crate::PropertyValue::Integer(3))].into(),
+            ..Default::default()
+        });
         let mut out = Writer::new();
         out.put(&package);
         let decoded: crate::PackageInfo = Reader::new(out.bytes()).take().unwrap();
@@ -321,6 +356,16 @@ mod resource_wire_tests {
         assert_eq!(decoded.kind(), crate::PackageKind::Content);
         assert_eq!(decoded.side(), crate::Side::Both);
         assert!(decoded.depends_on("other"));
+        assert_eq!(decoded.dependencies()[0].version(), "^1");
+        assert!(decoded.dependencies()[0].optional());
+        assert_eq!(decoded.name(), "Test");
+        assert_eq!(decoded.homepage(), Some("https://example.org"));
+        assert_eq!(decoded.runtime(), Some(crate::PackageRuntime::Wasm));
+        assert_eq!(
+            decoded.property("tier"),
+            Some(&crate::PropertyValue::Integer(3))
+        );
+        assert_eq!(decoded.property("missing"), None);
         for end in 0..out.bytes().len() {
             assert!(
                 Reader::new(&out.bytes()[..end])

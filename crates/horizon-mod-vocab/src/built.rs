@@ -116,23 +116,14 @@ impl<'a> From<ExplosionStart<'a>> for super::ExplosionStart<'a> {
 }
 // exhaustive: the game builds it with a literal; mods only read it
 // no wire: borrowed game-to-hook adapter; its call fields cross separately.
-pub struct ItemFished<'a> {
+pub struct ItemFished {
     pub hook: u32,
     pub position: [f64; 3],
-    pub drops: &'a [ItemStack],
 }
-impl<'a> From<ItemFished<'a>> for super::ItemFished<'a> {
-    fn from(v: ItemFished<'a>) -> Self {
-        let ItemFished {
-            hook,
-            position,
-            drops,
-        } = v;
-        Self {
-            hook,
-            position,
-            drops,
-        }
+impl From<ItemFished> for super::ItemFished {
+    fn from(v: ItemFished) -> Self {
+        let ItemFished { hook, position } = v;
+        Self { hook, position }
     }
 }
 // exhaustive: the game builds it with a literal; mods only read it
@@ -479,6 +470,64 @@ impl From<PortalShape> for super::PortalShape {
             bottom_left,
             width,
             height,
+        }
+    }
+}
+// exhaustive: the game builds it with a literal; mods only read it
+#[derive(horizon_mod_api_macros::Wire)]
+pub struct EntityRenderState {
+    pub id: u32,
+    pub partial: f32,
+    pub age: f32,
+    pub yaw: f32,
+    pub pitch: f32,
+}
+impl From<EntityRenderState> for super::EntityRenderState {
+    fn from(v: EntityRenderState) -> Self {
+        let EntityRenderState {
+            id,
+            partial,
+            age,
+            yaw,
+            pitch,
+        } = v;
+        Self {
+            id,
+            partial,
+            age,
+            yaw,
+            pitch,
+        }
+    }
+}
+
+// exhaustive: the game builds it with a literal; mods only read it
+// no wire: borrowed game-to-hook adapter; its call fields cross separately.
+pub struct ContainerLootFilled<'a> {
+    pub table: &'a str,
+    pub dimension: &'a str,
+    pub origin: [f64; 3],
+    pub block: Option<[i32; 3]>,
+    pub entity: Option<u32>,
+    pub opener: Option<u128>,
+}
+impl<'a> From<ContainerLootFilled<'a>> for super::ContainerLootFilled<'a> {
+    fn from(v: ContainerLootFilled<'a>) -> Self {
+        let ContainerLootFilled {
+            table,
+            dimension,
+            origin,
+            block,
+            entity,
+            opener,
+        } = v;
+        Self {
+            table,
+            dimension,
+            origin,
+            block,
+            entity,
+            opener,
         }
     }
 }

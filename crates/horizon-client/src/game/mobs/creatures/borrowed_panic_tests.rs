@@ -291,6 +291,7 @@ fn run_output(family: Family, output: Output) {
             "borrowed-panic:hit".into(),
             0,
             horizon_client::brewing::Category::Neutral,
+            None,
         )]);
     });
     eprintln!("BORROWED_ASSERTIONS_DISABLED:{}", !cfg!(debug_assertions));

@@ -72,18 +72,18 @@ def safe(text: str) -> str:
 
 
 def parse(body: str) -> Command | None:
-    """Read the first word, allowing trailing punctuation; only an exact unclaim login selects another person."""
-    line = next((line.strip() for line in body.splitlines() if line.strip()), "")
-    # Agents start every comment with "🤖 Agent:" (CLAUDE.md), so their `/claim` follows it.
-    line = re.sub(r"^🤖\s*Agent:\s*", "", line)
-    words = line.split(maxsplit=1)
-    command = words[0].rstrip(string.punctuation).lower() if words else ""
-    if command not in ("/claim", "/unclaim"):
-        return None
-    verb = command[1:]
-    rest = words[1] if len(words) > 1 else ""
-    who = LOGIN.match(rest) if verb == "unclaim" else None
-    return Command(verb, who.group(1) if who else None)
+    """The first line that starts with a command; its first word may carry trailing punctuation, and only an exact
+    unclaim login selects another person."""
+    for line in body.splitlines():
+        # Agents start every comment with "🤖 Agent:" (CLAUDE.md): their `/claim` follows it, on its line or the next.
+        words = re.sub(r"^\s*🤖\s*Agent:", "", line).split(maxsplit=1)
+        command = words[0].rstrip(string.punctuation).lower() if words else ""
+        if command in ("/claim", "/unclaim"):
+            verb = command[1:]
+            rest = words[1] if len(words) > 1 else ""
+            who = LOGIN.match(rest) if verb == "unclaim" else None
+            return Command(verb, who.group(1) if who else None)
+    return None
 
 
 def is_team(actor: ns.Actor, reviewers: ns.Reviewers, repo: str) -> bool:
@@ -280,6 +280,9 @@ def run(api, cmd: Command, actor: ns.Actor, number: int, reviewers: ns.Reviewers
     held = {h.lower() for h in holders}
     if cmd.verb == "claim":
         if login.lower() in held:
+            # A claim made before the label existed, or by hand, gets it now.
+            if "claimed" not in {str(l.get("name", "")).lower() for l in issue.get("labels") or []}:
+                api.label(number, "claimed", "help wanted")
             raise Refused("You already hold this issue.")
         if holders:
             names = ", ".join(f"@{h}" for h in holders)

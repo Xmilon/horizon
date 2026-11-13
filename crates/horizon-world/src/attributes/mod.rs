@@ -104,6 +104,20 @@ impl Definition {
     pub fn default_value(self) -> f64 {
         self.default
     }
+    /// A ranged attribute's `[min, max]` bounds (`RangedAttribute.minValue`, `maxValue`);
+    /// none for an attribute without them.
+    pub fn bounds(self) -> Option<(f64, f64)> {
+        self.range
+    }
+    /// The definition with its bounds widened to take `[min, max]` in: the
+    /// lower of the two minimums and the higher of the two maximums. The
+    /// default stays; an attribute without bounds stays without them.
+    pub fn widened(self, min: f64, max: f64) -> Self {
+        Self {
+            default: self.default,
+            range: self.range.map(|(low, high)| (low.min(min), high.max(max))),
+        }
+    }
     pub fn sanitize(self, value: f64) -> f64 {
         let Some((min, max)) = self.range else {
             return value;

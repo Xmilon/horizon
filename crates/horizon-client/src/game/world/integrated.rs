@@ -891,7 +891,7 @@ impl Game<'_> {
         if let Ok(dir) = std::env::current_dir() {
             self.native_configs_server_start(&dir.join("saves").join(&launch.folder), false);
         }
-        // MinecraftServer.loadLevel's start: nothing is loaded yet.
+        let prepared = self.prepare_early_game_rules(opening.world?)?;
         self.native_server_about_to_start(false);
         self.native_server_starting(false);
         self.native_lifecycle_open_started();
@@ -899,7 +899,7 @@ impl Game<'_> {
         startup::time("server.wait_rest", || self.join_world_rest())?;
         self.perf.world_opening();
         let open_step = startup::step("server.open_world");
-        self.finish_open_world(opening.world?.finish()?)?;
+        self.finish_open_world(prepared)?;
         drop(open_step);
         if let Some(sync) = opening.sync {
             startup::time("server.sync_adopt", || sync.adopt(&self.pack_files()));
@@ -1392,6 +1392,8 @@ struct Opening {
 pub(super) enum ComponentHarness {
     Dispenser(String),
     Sculk(String),
+    /// The hot-path benchmark (`hot_paths`), which builds its own levels the same way.
+    HotPaths(String),
 }
 
 impl Game<'_> {
@@ -1417,6 +1419,7 @@ impl Game<'_> {
                     match fixture {
                         ComponentHarness::Dispenser(spec) => server.dispense_fixture(&spec),
                         ComponentHarness::Sculk(spec) => server.sculk_fixture(&spec),
+                        ComponentHarness::HotPaths(output) => server.hot_paths(&output),
                     }
                 };
                 run().map_err(|e| e.to_string())

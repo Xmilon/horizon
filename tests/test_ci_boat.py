@@ -425,6 +425,10 @@ class BoatRoutingTests(unittest.TestCase):
         read.assert_not_called()
 
 
+def rust_pin():
+    return (Path(__file__).parents[1] / "tools/ci/rust-version").read_text().strip()
+
+
 class RustupRetryTests(unittest.TestCase):
     def run_script(self, failures):
         script = Path(__file__).parents[1] / "tools/ci/rustup_install.sh"
@@ -435,63 +439,59 @@ class RustupRetryTests(unittest.TestCase):
             (bin_dir / "sleep").write_text("#!/bin/sh\n")
             for name in ("rustup", "sleep"):
                 (bin_dir / name).chmod(0o755)
-            # Not a kept Dyna slot, whatever runs the test: only the requested install is counted.
             env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
-            env.pop("DYNA_CI_BUILD", None)
-            result = subprocess.run(["bash", str(script), "stable", "--profile", "minimal"], capture_output=True, text=True,
+            env.pop("GITHUB_ENV", None)
+            result = subprocess.run(["bash", str(script), "--profile", "minimal"], capture_output=True, text=True,
                                     env=env)
             return result.returncode, count.read_text().splitlines()
 
     @unittest.skipIf(os.name == "nt", "a bash script for Linux runners")
     def test_transient_failures_are_retried_then_bounded(self):
+        pin = rust_pin()
         status, calls = self.run_script(failures=2)
-        installs = [call for call in calls if call.startswith("toolchain install stable")]
+        installs = [call for call in calls if call.startswith("toolchain install")]
         self.assertEqual((status, len(installs)), (0, 3))
-        self.assertEqual(installs[0], "toolchain install stable --profile minimal")
+        self.assertEqual(installs[0], f"toolchain install {pin} --profile minimal")
         status, calls = self.run_script(failures=10)
         self.assertNotEqual(status, 0)
-        self.assertEqual(calls, ["toolchain install stable --profile minimal"] * 4)
+        self.assertEqual(calls, [f"toolchain install {pin} --profile minimal"] * 4)
 
 
-class PinnedToolchainComponentsTests(unittest.TestCase):
-    """The wasm mods' pinned toolchain gets rustfmt and clippy: the mod API generator runs rustfmt under it."""
+class PinnedToolchainTests(unittest.TestCase):
+    """The job runs on the pin, with rustfmt and clippy: the mod API generator runs rustfmt under it."""
 
-    def run_script(self, installed, dyna=False):
+    def run_script(self, installed):
         root = Path(__file__).parents[1]
-        pin = re.search(r'pub const TOOLCHAIN: &str = "(.*)";', (root / "crates/cargo-horizon-mod/src/wasm.rs").read_text())[1]
         with tempfile.TemporaryDirectory() as directory:
             bin_dir = Path(directory)
             calls = bin_dir / "calls"
-            listed = f"{pin}-x86_64-unknown-linux-gnu" if installed is not None else ""
-            components = "\\n".join(f"{c}-x86_64-unknown-linux-gnu" for c in installed or [])
+            job_env = bin_dir / "github_env"
+            components = "\\n".join(f"{c}-x86_64-unknown-linux-gnu" for c in installed)
             (bin_dir / "rustup").write_text(
                 f'#!/bin/sh\necho "$@" >> {calls}\n'
-                f'case "$1 $2" in "toolchain list") printf "stable-x86_64-unknown-linux-gnu\\n{listed}\\n";; '
-                f'"component list") printf "{components}\\n";; esac\n')
+                f'case "$1 $2" in "component list") printf "{components}\\n";; esac\n')
             (bin_dir / "rustup").chmod(0o755)
-            env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}"}
-            env.pop("DYNA_CI_BUILD", None)
-            if dyna:
-                env["DYNA_CI_BUILD"] = directory
-            result = subprocess.run(["bash", "tools/ci/rustup_install.sh", "stable"], cwd=root, capture_output=True,
-                                    text=True, env=env)
+            env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "GITHUB_ENV": str(job_env)}
+            # From another folder: a job may run its steps in a subfolder.
+            result = subprocess.run(["bash", str(root / "tools/ci/rustup_install.sh"), "--profile", "minimal"],
+                                    cwd=directory, capture_output=True, text=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr)
-            return pin, calls.read_text().splitlines()
+            return calls.read_text().splitlines(), job_env.read_text()
+
+    @unittest.skipIf(os.name == "nt", "a bash script for Linux runners")
+    def test_the_pin_becomes_the_jobs_toolchain(self):
+        pin = rust_pin()
+        calls, job_env = self.run_script(installed=["rustfmt", "clippy"])
+        self.assertEqual(calls[:2], [f"toolchain install {pin} --profile minimal", f"default {pin}"])
+        self.assertEqual(job_env, f"RUSTUP_TOOLCHAIN={pin}\n")
 
     @unittest.skipIf(os.name == "nt", "a bash script for Linux runners")
     def test_missing_components_are_added_and_present_ones_cost_nothing(self):
-        pin, calls = self.run_script(installed=["rust-src", "rustfmt"])
+        pin = rust_pin()
+        calls, _ = self.run_script(installed=["rust-src", "rustfmt"])
         self.assertIn(f"component add --toolchain {pin} clippy", calls)
-        pin, calls = self.run_script(installed=["rustfmt", "clippy"])
+        calls, _ = self.run_script(installed=["rustfmt", "clippy"])
         self.assertFalse([call for call in calls if call.startswith("component add")])
-        self.assertEqual([call for call in calls if call.startswith("toolchain install")], ["toolchain install stable"])
-
-    @unittest.skipIf(os.name == "nt", "a bash script for Linux runners")
-    def test_a_kept_slot_installs_the_pin_with_them_and_a_fresh_runner_leaves_it_to_its_user(self):
-        pin, calls = self.run_script(installed=None, dyna=True)
-        self.assertIn(f"toolchain install {pin} --profile minimal --component rustfmt --component clippy", calls)
-        pin, calls = self.run_script(installed=None)
-        self.assertEqual([call for call in calls if call.startswith("toolchain install")], ["toolchain install stable"])
 
 
 class RunnerPackagesTests(unittest.TestCase):
@@ -513,6 +513,7 @@ class RunnerPackagesTests(unittest.TestCase):
         image = ("FROM ${DYNA_CI_BASE}\nRUN apt-get update && apt-get install -y --no-install-recommends \\\n"
                  "    xvfb xauth x11-xkb-utils xkb-data pkg-config libasound2-dev libudev-dev libxkbcommon-x11-dev \\\n"
                  "    libwayland-dev libx11-xcb-dev libfontconfig-dev libvulkan-dev libxcursor1 libxi6 libxrandr2 \\\n"
+                 "    valgrind libc6-dbg gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 \\\n"
                  "    && rm -rf /var/lib/apt/lists/*\n")
         listed = check.LIST.read_text()
         with tempfile.TemporaryDirectory() as directory:
@@ -530,6 +531,6 @@ class RunnerPackagesTests(unittest.TestCase):
             self.assertIsNone(outcome(image, listed))
             for dropped in ("xauth", "x11-xkb-utils", "xkb-data"):
                 self.assertIn(f"lacks: {dropped}", outcome(image, listed.replace(f"\n{dropped}\n", "\n")))
-            self.assertIn("lacks: extra-package", outcome(image.replace("libxrandr2", "libxrandr2 extra-package"), listed))
+            self.assertIn("lacks: extra-package", outcome(image.replace("libxrandr2 ", "libxrandr2 extra-package "), listed))
             self.assertIn("beyond the image: mesa-vulkan-drivers", outcome(image, listed + "mesa-vulkan-drivers\n"))
             self.assertIn("no apt-get install", outcome("FROM base\n", listed))

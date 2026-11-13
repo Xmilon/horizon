@@ -108,6 +108,8 @@ impl JavaKey for PosKey {
 }
 
 struct Resolver {
+    vanilla_parts: bool,
+    part_changed: std::cell::Cell<bool>,
     piston_pos: BlockPos,
     extending: bool,
     start: BlockPos,
@@ -368,29 +370,50 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             .unwrap_or(!has_entity)
     }
     /// `IBlockExtension.isSlimeBlock`: vanilla's slime block, or what a part says.
-    fn is_slime(&self, state: BlockStateId) -> bool {
-        self.level
-            .adjust_is_slime_block(state, self.b.is_block(state, self.b.named.slime_block))
+    fn is_slime(&self, r: &Resolver, state: BlockStateId) -> bool {
+        let vanilla = self.b.is_block(state, self.b.named.slime_block);
+        if r.vanilla_parts {
+            return vanilla;
+        }
+        let adjusted = self.level.adjust_is_slime_block(state, vanilla);
+        if adjusted != vanilla {
+            r.part_changed.set(true);
+        }
+        adjusted
     }
     /// `PistonStructureResolver.isSticky` (`IBlockExtension.isStickyBlock`): vanilla's slime
     /// and honey blocks, or what a part says.
-    fn is_sticky(&self, state: BlockStateId) -> bool {
+    fn is_sticky(&self, r: &Resolver, state: BlockStateId) -> bool {
         let vanilla = self.b.is_block(state, self.b.named.slime_block)
             || self.b.is_block(state, self.b.named.honey_block);
-        self.level.adjust_is_sticky_block(state, vanilla)
+        if r.vanilla_parts {
+            return vanilla;
+        }
+        let adjusted = self.level.adjust_is_sticky_block(state, vanilla);
+        if adjusted != vanilla {
+            r.part_changed.set(true);
+        }
+        adjusted
     }
     /// `IBlockExtension.canStickTo`: slime and honey never hold on to each other, and
     /// otherwise a block sticks to its neighbour when either of them is sticky.
-    fn sticks_to(&self, state: BlockStateId, other: BlockStateId) -> bool {
+    fn sticks_to(&self, r: &Resolver, state: BlockStateId, other: BlockStateId) -> bool {
         let honey = self.b.named.honey_block;
-        let slime_beside_honey = (self.b.is_block(state, honey) && self.is_slime(other))
-            || (self.is_slime(state) && self.b.is_block(other, honey));
-        let vanilla = !slime_beside_honey && (self.is_sticky(state) || self.is_sticky(other));
-        self.level.adjust_can_stick_to(state, other, vanilla)
+        let slime_beside_honey = (self.b.is_block(state, honey) && self.is_slime(r, other))
+            || (self.is_slime(r, state) && self.b.is_block(other, honey));
+        let vanilla = !slime_beside_honey && (self.is_sticky(r, state) || self.is_sticky(r, other));
+        if r.vanilla_parts {
+            return vanilla;
+        }
+        let adjusted = self.level.adjust_can_stick_to(state, other, vanilla);
+        if adjusted != vanilla {
+            r.part_changed.set(true);
+        }
+        adjusted
     }
     /// `PistonStructureResolver.canStickToEachOther`: each side agrees to stick.
-    fn can_stick(&self, first: BlockStateId, second: BlockStateId) -> bool {
-        self.sticks_to(first, second) && self.sticks_to(second, first)
+    fn can_stick(&self, r: &Resolver, first: BlockStateId, second: BlockStateId) -> bool {
+        self.sticks_to(r, first, second) && self.sticks_to(r, second, first)
     }
     /// `PistonStructureResolver.resolve`; None when the structure cannot move.
     fn piston_resolve(
@@ -399,7 +422,32 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         direction: Direction,
         extending: bool,
     ) -> Option<(Vec<BlockPos>, Vec<BlockPos>, Direction)> {
+        self.piston_resolve_stick(piston_pos, direction, extending, false)
+            .ok()
+            .map(|r| (r.to_push, r.to_destroy, r.push_direction))
+    }
+    /// Mark both ends of replayed moves for the next tick's ordinary block updates.
+    fn correct_piston_replay(
+        &mut self,
+        cells: impl Iterator<Item = BlockPos>,
+        direction: Direction,
+    ) {
+        for pos in cells {
+            self.level.send_block_updated(pos);
+            self.level.send_block_updated(rel(pos, direction));
+        }
+    }
+    /// Failure retains whether a part changed an answer, even when its structure cannot move.
+    fn piston_resolve_stick(
+        &self,
+        piston_pos: BlockPos,
+        direction: Direction,
+        extending: bool,
+        vanilla_parts: bool,
+    ) -> Result<Resolver, bool> {
         let mut r = Resolver {
+            vanilla_parts,
+            part_changed: std::cell::Cell::new(false),
             piston_pos,
             extending,
             start: if extending {
@@ -423,24 +471,24 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
                 && self.is_pushable(next, r.start, r.push_direction, true, r.piston_direction)
             {
                 r.to_destroy.push(r.start);
-                return Some((r.to_push, r.to_destroy, r.push_direction));
+                return Ok(r);
             }
-            return None;
+            return Err(r.part_changed.get());
         }
         let start = r.start;
         let push = r.push_direction;
         if !self.add_block_line(&mut r, start, push) {
-            return None;
+            return Err(r.part_changed.get());
         }
         let mut i = 0;
         while i < r.to_push.len() {
             let pos = r.to_push[i];
-            if self.is_sticky(self.state(pos)) && !self.add_branching_blocks(&mut r, pos) {
-                return None;
+            if self.is_sticky(&r, self.state(pos)) && !self.add_branching_blocks(&mut r, pos) {
+                return Err(r.part_changed.get());
             }
             i += 1;
         }
-        Some((r.to_push, r.to_destroy, r.push_direction))
+        Ok(r)
     }
     fn add_block_line(&self, r: &mut Resolver, start: BlockPos, direction: Direction) -> bool {
         let mut next = self.state(start);
@@ -457,12 +505,12 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         if count + r.to_push.len() > 12 {
             return false;
         }
-        while self.is_sticky(next) {
+        while self.is_sticky(r, next) {
             let pos = rel_n(start, r.push_direction.opposite(), count as i32);
             let previous = next;
             next = self.state(pos);
             if self.b.is_air(next)
-                || !self.can_stick(previous, next)
+                || !self.can_stick(r, previous, next)
                 || !self.is_pushable(
                     next,
                     pos,
@@ -492,7 +540,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
                 self.reorder_at_collision(r, added, collision);
                 for j in 0..=collision + added {
                     let block_pos = r.to_push[j];
-                    if self.is_sticky(self.state(block_pos))
+                    if self.is_sticky(r, self.state(block_pos))
                         && !self.add_branching_blocks(r, block_pos)
                     {
                         return false;
@@ -537,7 +585,7 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             if super::query::axis_of(direction) != super::query::axis_of(r.push_direction) {
                 let neighbour = rel(from, direction);
                 let neighbour_state = self.state(neighbour);
-                if self.can_stick(neighbour_state, from_state)
+                if self.can_stick(r, neighbour_state, from_state)
                     && !self.add_block_line(r, neighbour, direction)
                 {
                     return false;
@@ -573,11 +621,38 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
         if !extending && b.is_block(self.state(arm), b.named.piston_head) {
             self.set_block(arm, b.air(), 276);
         }
-        let Some((to_push, to_destroy, push_direction)) =
-            self.piston_resolve(piston_pos, direction, extending)
-        else {
-            return Some(false);
+        let resolved = match self.piston_resolve_stick(piston_pos, direction, extending, false) {
+            Ok(resolved) => resolved,
+            Err(part_changed) => {
+                if part_changed
+                    && !self.level.is_client_side()
+                    && let Ok(replay) =
+                        self.piston_resolve_stick(piston_pos, direction, extending, true)
+                {
+                    self.correct_piston_replay(
+                        replay.to_push.iter().chain(&replay.to_destroy).copied(),
+                        replay.push_direction,
+                    );
+                }
+                return Some(false);
+            }
         };
+        // Only a changed sticky, slime, or adhesion answer pays for a second resolution. Include entire
+        // structures: a refused neighbour may itself pull a line or sticky branch.
+        // These marks join the event's block log, delivered on the next tick.
+        let correct_replay = resolved.part_changed.get() && !self.level.is_client_side();
+        let replay = if correct_replay {
+            self.piston_resolve_stick(piston_pos, direction, extending, true)
+                .ok()
+        } else {
+            None
+        };
+        let Resolver {
+            to_push,
+            to_destroy,
+            push_direction,
+            ..
+        } = resolved;
         if !self.level.allow_piston_move(
             piston_pos,
             push_direction,
@@ -586,6 +661,20 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             &to_destroy,
         ) {
             return None;
+        }
+        if correct_replay {
+            self.correct_piston_replay(
+                to_push
+                    .iter()
+                    .chain(&to_destroy)
+                    .chain(
+                        replay
+                            .iter()
+                            .flat_map(|r| r.to_push.iter().chain(&r.to_destroy)),
+                    )
+                    .copied(),
+                push_direction,
+            );
         }
         let move_direction = if extending {
             direction
@@ -618,6 +707,14 @@ impl<L: LevelAccess + ?Sized> Sim<'_, L> {
             if !fire && self.level.is_client_side() {
                 self.level_event(2001, *pos, state.0 as i32);
             }
+            // NeoForge's onDestroyedByPushReaction: the level hears it before the removal.
+            self.level.on_destroyed_by_push_reaction(
+                self.ticks,
+                *pos,
+                state,
+                push_direction,
+                b.fluid(state),
+            );
             self.set_block(*pos, b.air(), 18);
             self.game_event(*pos, "minecraft:block_destroy");
             to_update.push(state);

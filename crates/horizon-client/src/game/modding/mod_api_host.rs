@@ -153,6 +153,12 @@ impl Game<'_> {
     ) -> Result<(), mod_api::AttachmentError> {
         use mod_api::AttachmentError;
         let id = std::num::NonZeroU32::new(id).ok_or(AttachmentError::MissingHolder)?;
+        if matches!(
+            self.with_resident_slot(&self.dim.key(), id, |slot| slot.is_bound()),
+            super::entity_residency::SlotAccess::Done(true)
+        ) {
+            return Ok(());
+        }
         if !matches!(
             self.server_resident_entity(id.get()),
             horizon_client::join_seq::residency::table::EntityLookup::Found {

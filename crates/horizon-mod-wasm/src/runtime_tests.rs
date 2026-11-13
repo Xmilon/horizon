@@ -4,8 +4,8 @@ use crate::test_log::{CAPTURE, capture_logs};
 
 #[test]
 fn released_queue_empty_fast_path_does_not_wait_for_its_mutex() {
-    let releases = Arc::new(Releases::default());
-    let guard = releases.ids.lock().unwrap();
+    let releases = Arc::new(Releases::<Id>::default());
+    let guard = releases.entries.lock().unwrap();
     let (send, receive) = std::sync::mpsc::channel();
     let worker = {
         let releases = releases.clone();
@@ -69,6 +69,9 @@ impl<F: FnMut() -> i64> mod_api::StructureRandom for Random<F> {
 }
 
 fn guest(layout: u64, body: &str) -> Vec<u8> {
+    guest_with_exports(layout, body, "")
+}
+fn guest_with_exports(layout: u64, body: &str, exports: &str) -> Vec<u8> {
     wat::parse_str(format!(
         r#"(module
       (@custom "dylink.0" "\01\04\00\00\00\00")
@@ -83,7 +86,8 @@ fn guest(layout: u64, body: &str) -> Vec<u8> {
         else local.get $depth i32.const 1 i32.sub call $recurse i32.const 1 i32.add end)
       (global $in_len (mut i32) (i32.const 0))
       (func (export "horizon_in") (param i32) (result i32) local.get 0 global.set $in_len i32.const 512)
-      (func (export "horizon_hook") (param i32) (result i64) (local i32 i32)
+      {exports}
+      (func $hook (export "horizon_hook") (param i32) (result i64) (local i32 i32)
         i32.const 512 local.set 1 global.get $in_len local.set 2 {body})
     )"#
     ))
@@ -94,7 +98,7 @@ fn module(body: &str) -> WasmMod {
     let bytes = guest(*mod_api::wire::LAYOUT, body);
     WasmMod::instantiate(
         &engine,
-        &[],
+        DEFAULT_GROUP_MEMORY_MIB,
         &[Member {
             name: "test",
             module: &bytes,
@@ -341,7 +345,7 @@ fn a_member_cannot_bypass_group_limits_with_private_memories() {
                 .unwrap();
         let refusal = WasmMod::instantiate(
             &engine().unwrap(),
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[Member {
                 name: "private",
                 module: &bytes,
@@ -365,7 +369,7 @@ fn guest_input_pool_stays_flat_for_100k_no_import_calls() {
         .unwrap();
         let module = WasmMod::instantiate(
             &engine().unwrap(),
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[
                 Member {
                     name: "std",
@@ -443,7 +447,7 @@ fn real_members_link_when_built() {
         let engine = engine().unwrap();
         let modules = WasmMod::instantiate(
             &engine,
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[
                 Member {
                     name: "std",
@@ -577,11 +581,19 @@ fn linker_heap_symbols_follow_all_members_static_data() {
 #[test]
 fn boundary_exports_are_per_member_but_other_horizon_symbols_are_not() {
     crate::test_stack::on_guest_stack(|| {
-        let bytes = guest(*mod_api::wire::LAYOUT, "i64.const 0");
+        let bytes = guest_with_exports(
+            *mod_api::wire::LAYOUT,
+            "i64.const 0",
+            r#"
+            (func (export "prepare_can_equip") (result i64) i64.const 2199023255560)
+            (func (export "ask_can_equip") (result i64) i64.const 0)
+            (func (export "release_can_equip") (result i64) i64.const 0)
+        "#,
+        );
         let engine = engine().unwrap();
         let modules = WasmMod::instantiate(
             &engine,
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[
                 Member {
                     name: "first",
@@ -596,13 +608,22 @@ fn boundary_exports_are_per_member_but_other_horizon_symbols_are_not() {
         )
         .unwrap();
         assert_eq!(modules.len(), 2);
+        for i in 0..2 {
+            let owner = modules[i].downgrade();
+            let other = modules[1 - i].downgrade();
+            let token = owner.prepare(&[]).unwrap();
+            assert!(owner.check(token.0, token.1));
+            assert!(!other.check(token.0, token.1));
+            owner.release(token.0, token.1);
+        }
+
         let bytes = wat::parse_str(
         r#"(module (@custom "dylink.0" "\01\04\00\00\00\00") (func (export "horizon_shared")))"#,
     )
     .unwrap();
         let refusal = WasmMod::instantiate(
             &engine,
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[
                 Member {
                     name: "first",
@@ -735,7 +756,7 @@ fn layout_mismatch_is_a_mods_page_refusal() {
         let bytes = guest(*mod_api::wire::LAYOUT ^ 1, "i64.const 0");
         let refusal = WasmMod::instantiate(
             &engine,
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[Member {
                 name: "test",
                 module: &bytes,
@@ -747,7 +768,7 @@ fn layout_mismatch_is_a_mods_page_refusal() {
         assert!(matches!(refusal, Refusal::Layout { .. }));
         assert_eq!(
             refusal.to_string(),
-            "built for another version of the mod API"
+            "built for another version of the mod API (including the prepared can_equip ABI)"
         );
     })
 }
@@ -766,7 +787,7 @@ fn point_record_layout_mismatch_is_refused() {
         .unwrap();
         let refusal = WasmMod::instantiate(
             &engine().unwrap(),
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[Member {
                 name: "points",
                 module: &bytes,
@@ -854,24 +875,35 @@ fn import_reply_retry_survives_a_nested_callback() {
 }
 
 #[test]
-fn another_threads_hook_fails_fast_while_an_import_lends_the_group() {
+fn another_threads_hook_completes_after_an_import_releases_the_group() {
     crate::test_stack::on_guest_stack(|| {
         let id = crate::boundary::import_id("StructureRandom", "next_long").unwrap();
         let module = module(&format!(
-            "i32.const {id} i32.const 0 i32.const 0 i32.const 2048 i32.const 8 call $host drop i64.const 8796093022216"
+            r#"
+            local.get 0 i32.eqz
+            if (result i64)
+                i32.const {id} i32.const 0 i32.const 0 i32.const 2048 i32.const 8 call $host
+                drop i64.const 8796093022216
+            else
+                i64.const 2199023255556
+            end"#
         ));
+        let (started, ready) = std::sync::mpsc::channel();
+        let (send, receive) = std::sync::mpsc::channel();
+        let mut contender = None;
+        let mut early = None;
         let mut random = Random(|| {
             let module = module.clone();
-            let (send, recv) = std::sync::mpsc::channel();
-            let thread = std::thread::spawn(move || {
-                crate::test_stack::on_guest_stack(|| send.send(call(&module)).unwrap())
-            });
-            assert_eq!(
-                recv.recv_timeout(Duration::from_secs(1))
-                    .expect("a Hook must not wait for the importing thread"),
-                None
-            );
-            thread.join().unwrap();
+            let started = started.clone();
+            let send = send.clone();
+            contender = Some(std::thread::spawn(move || {
+                crate::test_stack::on_guest_stack(|| {
+                    started.send(()).unwrap();
+                    send.send(call_at(&module, 1)).unwrap();
+                })
+            }));
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            early = Some(receive.recv_timeout(Duration::from_millis(100)));
             7
         });
         let mut frame = Frame::default();
@@ -880,6 +912,12 @@ fn another_threads_hook_fails_fast_while_an_import_lends_the_group() {
             module.call(CallClass::Load, frame, 0, None, |_| {}, |r| r.take::<i64>()),
             Some(7)
         );
+        contender.unwrap().join().unwrap();
+        assert_eq!(
+            early.unwrap(),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        );
+        assert_eq!(receive.try_recv().unwrap(), Some(42));
         assert!(!module.is_stopped());
     })
 }
@@ -1383,7 +1421,8 @@ fn returned_builtin_proxy_does_not_keep_its_group_alive() {
 fn growth_limits_return_failure_without_stopping_the_group() {
     crate::test_stack::on_guest_stack(|| {
         for body in [
-            "i32.const 4096 memory.grow",
+            // Past the default 1 GiB (16,384 pages) on top of what the guest already has.
+            "i32.const 16384 memory.grow",
             "ref.null func i32.const 1048576 table.grow",
         ] {
             let module = module(&format!(
@@ -1485,15 +1524,49 @@ fn depth_refusal_survives() {
     })
 }
 
-/// Contention while native code holds a loan refuses without stopping the group.
+/// A nested call must avoid a lock cycle while the target group lends its store.
 #[test]
-fn busy_refusal_survives() {
+fn nested_busy_refusal_survives() {
     crate::test_stack::on_guest_stack(|| {
         let module = module("i64.const 2199023255556");
         let guard = module.running.group.lock().unwrap();
         module.running.lending.store(1, Ordering::Relaxed);
+        let loan = Loan {
+            group: 0,
+            lending: Arc::new(AtomicUsize::new(1)),
+            context: Cell::new(std::ptr::null_mut()),
+            previous: LENT.get(),
+        };
+        LENT.set(&loan);
+        // The early nested refusal returns at once; without it the call would wait the full
+        // five seconds for the lock and then give the same refusal.
+        let started = Instant::now();
         assert_eq!(call(&module), None);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(take_refusal().starts_with(&Refusal::Busy.to_string()));
+        // A refusal names the call holding the group, so a busy failure says who it waited on.
+        *module.running.holder.lock().unwrap() = Some(Holder {
+            module: "holder_mod".into(),
+            export: 7,
+            thread: std::thread::current(),
+            since: Instant::now() - Duration::from_secs(3),
+        });
+        assert_eq!(call(&module), None);
+        let refusal = take_refusal();
+        let thread = std::thread::current();
+        let thread = thread
+            .name()
+            .map_or_else(|| format!("{:?}", thread.id()), |name| format!("'{name}'"));
+        assert!(
+            refusal.starts_with(&format!(
+                "{}: held by mod holder_mod export 7 on thread {thread} for 3",
+                Refusal::Busy
+            )),
+            "{refusal}"
+        );
+        assert!(refusal.contains("; this call waited "), "{refusal}");
         assert!(!module.is_stopped());
+        drop(loan);
         module.running.lending.store(0, Ordering::Relaxed);
         drop(guard);
         assert_eq!(call(&module), Some(42));
@@ -1509,7 +1582,7 @@ fn trap_stops_group_not_independent_group() {
         let echo = guest(*mod_api::wire::LAYOUT, "i64.const 2199023255556");
         let members = WasmMod::instantiate(
             &engine,
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[
                 Member {
                     name: "trap",
@@ -1549,7 +1622,7 @@ fn a_refusal_keeps_every_member_of_the_group_answering() {
         let echo = guest(*mod_api::wire::LAYOUT, "i64.const 2199023255556");
         let members = WasmMod::instantiate(
             &engine,
-            &[],
+            DEFAULT_GROUP_MEMORY_MIB,
             &[
                 Member {
                     name: "flaky",
@@ -1822,12 +1895,20 @@ fn generated_client_and_server_hooks_complete_sixty_thousand_frames() {
         let mut host = Host;
         let mut reply = Writer::default();
         reply.put(&Duration::from_secs(60000));
+        reply.put(&0.25f32);
+        reply.put(&0.5f32);
         let client = recursive_hook(&reply);
         let mut render = mod_api::RenderFramePreEvent {
             elapsed: Duration::from_secs(1),
+            world_partial_tick: 0.25,
+            partial_tick: 0.5,
         };
         client.render_frame_pre(&mut host, &mut render);
         assert_eq!(render.elapsed, Duration::from_secs(60000));
+        assert_eq!(
+            (render.world_partial_tick, render.partial_tick),
+            (0.25, 0.5)
+        );
         assert_eq!(call(&client), Some(60000));
 
         let mut reply = Writer::default();
@@ -1906,12 +1987,41 @@ fn subscription_stack_refusal_is_not_cached() {
 #[test]
 fn a_guest_call_that_answers_nothing_names_why() {
     assert_eq!(
-        fault_reason(&wasmtime::Error::new(wasmtime::Trap::Interrupt), 100),
+        fault_reason(
+            &wasmtime::Error::new(wasmtime::Trap::Interrupt),
+            100,
+            &mut Limits::new("a+b".into(), 64)
+        ),
         "epoch deadline: the call ran past its budget of 100 ticks (about 100 ms)"
     );
     assert_eq!(
-        fault_reason(&wasmtime::Error::new(wasmtime::Trap::StackOverflow), 100),
+        fault_reason(
+            &wasmtime::Error::new(wasmtime::Trap::StackOverflow),
+            100,
+            &mut Limits::new("a+b".into(), 64)
+        ),
         "wasm trap: call stack exhausted"
+    );
+    // A trap after a refused memory.grow names the group and its limit, once.
+    let mut limits = Limits::new("a+b".into(), 64);
+    assert!(
+        !wasmtime::ResourceLimiter::memory_growing(&mut limits, 64 << 20, 65 << 20, None).unwrap()
+    );
+    assert_eq!(
+        fault_reason(
+            &wasmtime::Error::new(wasmtime::Trap::UnreachableCodeReached),
+            100,
+            &mut limits
+        ),
+        "wasm trap: wasm `unreachable` instruction executed, after memory.grow to 65 MiB was refused at group a+b's limit of 64 MiB"
+    );
+    assert_eq!(
+        fault_reason(
+            &wasmtime::Error::new(wasmtime::Trap::UnreachableCodeReached),
+            100,
+            &mut limits
+        ),
+        "wasm trap: wasm `unreachable` instruction executed"
     );
     note("its group has stopped after an earlier fault".into());
     assert_eq!(
@@ -1920,4 +2030,266 @@ fn a_guest_call_that_answers_nothing_names_why() {
     );
     // Taken once: a later call that answers nothing without a reason does not reuse it.
     assert_eq!(take_refusal(), "refused");
+}
+
+#[cfg(feature = "test-copy-probe")]
+#[test]
+fn prepared_runtime_writes_payload_once_for_eight_scalar_asks() {
+    crate::test_stack::on_guest_stack(|| {
+        // Protocol-only guest: slice B supplies the owned-stack slot dispatcher.
+        let bytes = guest_with_exports(
+            *mod_api::wire::LAYOUT,
+            "i64.const 0",
+            r#"
+            (func (export "prepare_can_equip") (result i64) i64.const 2199023255560)
+            (func (export "ask_can_equip") (result i64) i64.const 0)
+            (func (export "release_can_equip") (result i64) i64.const 0)
+        "#,
+        );
+        let engine = engine().unwrap();
+        let module = WasmMod::instantiate(
+            &engine,
+            DEFAULT_GROUP_MEMORY_MIB,
+            &[Member {
+                name: "test",
+                module: &bytes,
+            }],
+            None,
+        )
+        .unwrap()
+        .remove(0);
+        let weak = module.downgrade();
+        let other_module = self::module("i64.const 0");
+        let other = other_module.downgrade();
+        for size in [16, 4112] {
+            let bytes = vec![42u8; size];
+            let (token, setup) = crate::copy_probe::measure(|| weak.prepare(&bytes).unwrap());
+            assert_eq!(setup.to_guest_bytes, size + 8);
+            assert_eq!(setup.from_guest_bytes, 8);
+            assert!(weak.check(token.0, token.1));
+            assert!(!weak.check(token.0, token.1 + 1));
+            assert!(!other.check(token.0, token.1));
+            let (_, asks) = crate::copy_probe::measure(|| {
+                for _ in 0..8 {
+                    assert_eq!(
+                        module.call(
+                            CallClass::Hook,
+                            Frame::default(),
+                            0,
+                            None,
+                            |w| {
+                                w.put(&token.0);
+                                w.put(&token.1);
+                            },
+                            |r| r.take::<()>()
+                        ),
+                        Some(())
+                    );
+                }
+            });
+            assert_eq!(asks.to_guest_bytes, 8 * 8);
+            assert_eq!(asks.from_guest_bytes, 0);
+            weak.release(token.0, token.1);
+            assert!(!weak.check(token.0, token.1));
+        }
+    });
+}
+
+/// Grows the group's memory a page at a time until `memory.grow` answers -1, then writes and reads
+/// its last byte: the guest goes on at the limit. Answers the pages it reached.
+fn grow_until_refused(memory_mib: u32) -> i32 {
+    let engine = engine().unwrap();
+    let mut store = Store::new(
+        &engine,
+        State::new(Limits::new("grower".into(), memory_mib)),
+    );
+    store.limiter(|state| &mut state.limits);
+    store.set_epoch_deadline(30_000);
+    let memory = Memory::new(&mut store, wasmtime::MemoryType::new(1, None)).unwrap();
+    let module = wasmtime::Module::new(
+        &engine,
+        wat::parse_str(
+            r#"(module
+            (import "env" "memory" (memory 1))
+            (func (export "grow") (result i32)
+                (local $pages i32)
+                (block $refused
+                    (loop $more
+                        (br_if $refused (i32.eq (memory.grow (i32.const 1)) (i32.const -1)))
+                        (br $more)))
+                (local.set $pages (memory.size))
+                (i32.store8 (i32.sub (i32.mul (local.get $pages) (i32.const 65536)) (i32.const 1)) (i32.const 7))
+                (if (i32.ne (i32.load8_u (i32.sub (i32.mul (local.get $pages) (i32.const 65536)) (i32.const 1))) (i32.const 7))
+                    (then unreachable))
+                (local.get $pages)))"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let instance = wasmtime::Instance::new(&mut store, &module, &[memory.into()]).unwrap();
+    let grow = instance
+        .get_typed_func::<(), i32>(&mut store, "grow")
+        .unwrap();
+    let pages = grow.call(&mut store, ()).unwrap();
+    assert_eq!(
+        store.data().limits.refused_growth,
+        Some(((pages as usize) + 1) << 16)
+    );
+    pages
+}
+
+#[test]
+fn a_group_grows_past_256_mib_to_its_default_limit_and_goes_on_there() {
+    // 1 GiB of 64 KiB pages: four times the old 256 MiB.
+    assert_eq!(grow_until_refused(DEFAULT_GROUP_MEMORY_MIB), 16_384);
+}
+
+#[test]
+fn a_lowered_limit_refuses_growth_inside_the_guest() {
+    assert_eq!(grow_until_refused(64), 1_024);
+}
+
+#[test]
+fn old_unprepared_can_equip_fingerprint_is_refused_at_load() {
+    crate::test_stack::on_guest_stack(|| {
+        let old = mod_api::wire_core_layout();
+        assert_ne!(old, *mod_api::wire::LAYOUT);
+        let bytes = guest(old, "unreachable");
+        let refusal = WasmMod::instantiate(
+            &engine().unwrap(),
+            DEFAULT_GROUP_MEMORY_MIB,
+            &[Member {
+                name: "old_can_equip",
+                module: &bytes,
+            }],
+            None,
+        )
+        .err()
+        .unwrap();
+        assert!(
+            refusal
+                .to_string()
+                .contains("prepared can_equip ABI layout mismatch"),
+            "{refusal}"
+        );
+        assert!(refusal.to_string().contains("old unprepared layout"));
+    });
+}
+
+#[test]
+fn refused_prepared_release_stops_group_before_another_stack_can_be_prepared() {
+    crate::test_stack::on_guest_stack(|| {
+        let refusal = (1024u64 << 32) | u64::from(u32::MAX);
+        let exports = format!(
+            r#"
+            (func (export "prepare_can_equip") (result i64)
+                (memory.copy (i32.const 2048) (i32.const 512) (global.get $in_len))
+                (i32.store (i32.const 4000) (i32.add (i32.load (i32.const 4000)) (i32.const 1)))
+                i64.const 2199023255560)
+            (func (export "ask_can_equip") (result i64)
+                (i32.store (i32.const 4004) (i32.const 1)) i64.const 0)
+            (func (export "release_can_equip") (result i64)
+                (i32.store (i32.const 1024) (i32.const 0)) i64.const {refusal})
+        "#
+        );
+        let bytes = guest_with_exports(*mod_api::wire::LAYOUT, "unreachable", &exports);
+        let module = WasmMod::instantiate(
+            &engine().unwrap(),
+            DEFAULT_GROUP_MEMORY_MIB,
+            &[Member {
+                name: "refusing_release",
+                module: &bytes,
+            }],
+            None,
+        )
+        .unwrap()
+        .remove(0);
+        let owner = module.downgrade();
+        let token = owner.prepare(b"first-stack-payload").unwrap();
+        owner.release(token.0, token.1);
+        assert!(module.is_stopped());
+        assert!(!owner.check(token.0, token.1));
+        assert!(owner.prepare(b"second-stack-payload").is_none());
+        let ask = crate::boundary::export_id("ItemPart", "ask_can_equip").unwrap();
+        assert_eq!(
+            module.call(
+                CallClass::Hook,
+                Frame::default(),
+                ask,
+                None,
+                |_| {},
+                |r| r.take::<()>()
+            ),
+            None
+        );
+        let group = module.running.group.lock().unwrap();
+        let memory = group.memory.data(&group.store);
+        assert_eq!(
+            &memory[2056..2056 + b"first-stack-payload".len()],
+            b"first-stack-payload"
+        );
+        assert_eq!(
+            u32::from_le_bytes(memory[4000..4004].try_into().unwrap()),
+            1
+        );
+        assert_eq!(
+            u32::from_le_bytes(memory[4004..4008].try_into().unwrap()),
+            0
+        );
+    });
+}
+
+#[test]
+fn contended_prepared_release_at_capacity_cleans_up_before_slot_reuse() {
+    crate::test_stack::on_guest_stack(|| {
+        let bytes = guest_with_exports(
+            *mod_api::wire::LAYOUT,
+            "i64.const 2199023255556",
+            r#"
+            (func (export "prepare_can_equip") (result i64)
+                (if (i32.ge_u (i32.load (i32.const 512)) (i32.const 4096))
+                    (then unreachable))
+                i64.const 2199023255560)
+            (func (export "ask_can_equip") (result i64) i64.const 0)
+            (func (export "release_can_equip") (result i64)
+                (i32.store (i32.const 4004) (i32.load (i32.const 516)))
+                i64.const 0)
+            "#,
+        );
+        let module = WasmMod::instantiate(
+            &engine().unwrap(),
+            DEFAULT_GROUP_MEMORY_MIB,
+            &[Member {
+                name: "busy_release",
+                module: &bytes,
+            }],
+            None,
+        )
+        .unwrap()
+        .remove(0);
+        let owner = module.downgrade();
+        let token = owner.prepare(&[]).unwrap();
+        for index in 1..4096 {
+            assert_eq!(owner.prepare(&[]).unwrap().0, index);
+        }
+
+        let guard = module.running.group.lock().unwrap();
+        owner.release(token.0, token.1);
+        assert!(!owner.check(token.0, token.1));
+        assert!(!module.is_stopped());
+        drop(guard);
+
+        assert_eq!(owner.prepare(&[]), None);
+        assert!(!module.is_stopped());
+        assert_eq!(call(&module), Some(42));
+        let reused = owner.prepare(&[]).unwrap();
+        assert_eq!(reused.0, token.0);
+        assert_ne!(reused.1, token.1);
+        let group = module.running.group.lock().unwrap();
+        let memory = group.memory.data(&group.store);
+        assert_eq!(
+            u32::from_le_bytes(memory[4004..4008].try_into().unwrap()),
+            token.1
+        );
+    });
 }

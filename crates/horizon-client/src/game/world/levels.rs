@@ -138,7 +138,7 @@ const IDLE_TICKS: u32 = 300;
 
 /// A level that is not in place: every per-level field of `Game`.
 pub(super) struct Parked {
-    world: World,
+    pub(super) world: World,
     streaming: Streaming,
     locator: Option<Arc<VanillaTerrain>>,
     save: Arc<SaveDir>,
@@ -242,6 +242,17 @@ impl Game<'_> {
         dimension: DimensionKey,
         target: Target,
     ) -> bool {
+        let player = match target {
+            Target::Guest(conn) => Some(conn),
+            Target::Player => self.lan_acting,
+            _ => None,
+        };
+        if player
+            .and_then(|conn| self.command_guest(conn))
+            .is_some_and(|guest| !guest.body_present())
+        {
+            return false;
+        }
         if dimension == self.dim.key() {
             return !self.persist.removals.contains(&target)
                 && !self.persist.destroying_vehicles.contains(&target);
@@ -650,13 +661,17 @@ impl Game<'_> {
             self.level_shapes.get(dim.id()),
             self.level.seed,
             &self.level.enabled_features,
-            self.server_loot.clone(),
+            self.world_biomes
+                .as_ref()
+                .unwrap_or_else(|| self.res.biomes())
+                .clone(),
         )?;
         save.install_profession_snapshot(self.stations().professions.clone());
         let mut world = Game::world_for_mods(self.res.facts().air, self.level.seed);
         world.attachments = save.load_attachments();
         world.shape = self.level_shapes.get(dim.id());
         world.fast_lava = self.dimension_type_of(dim).fast_lava;
+        world.infiniburn = Some(self.resolve_level_infiniburn(self.dimension_type_of(dim)));
         let tickets = ChunkTickets::with_saved_portal(save.load_portal_tickets());
         Ok(Parked {
             world,
@@ -1217,6 +1232,10 @@ impl Game<'_> {
                 }
             }
         }
+        // The levels only `Loaded` areas name: streamed and sent, never ticked.
+        if result.is_ok() {
+            result = self.run_view_passes(&order);
+        }
         if let Some(&first) = order.first()
             && self.dim != first
         {
@@ -1366,6 +1385,8 @@ impl Game<'_> {
                     // A portal ticket keeps its dimension active
                     // (`TicketType.shouldKeepDimensionActive`).
                     || !self.portal_tickets_in(*d).is_empty()
+                    // So does a viewed `Ticking` area (#3716), for its chunks only.
+                    || self.viewed_level(*d) == Some(true)
             })
             .collect();
         if dims.is_empty() {
@@ -1403,7 +1424,9 @@ impl Game<'_> {
     /// Count the parked levels' empty ticks, and save and close the ones
     /// (other than the Overworld) nobody has been in for a while.
     pub(super) fn close_idle_levels(&mut self) -> Result<()> {
-        let occupied = self.levels_to_tick();
+        let mut occupied = self.levels_to_tick();
+        // A level a viewed area names, ticked or not, or one a client still holds chunks of.
+        occupied.extend(Dim::all().into_iter().filter(|d| self.needs_view_pass(*d)));
         // A vehicle waiting there for its rider's arrival in another level.
         let waiting: Vec<Dim> = self
             .levels
@@ -1480,7 +1503,13 @@ impl Game<'_> {
             self.levels.heard_open.remove(i);
             self.native_level_unload(dim.id());
         }
+        if dim == self.dim {
+            self.world.water_tickets.clear();
+        } else if let Some(world) = self.levels.parked_world_mut_of(dim.id()) {
+            world.water_tickets.clear();
+        }
         self.attachment_indexes.remove(&dim);
+        self.passages.retire_level(dim.key());
     }
 
     /// Every level still open closes with the server, however it ends

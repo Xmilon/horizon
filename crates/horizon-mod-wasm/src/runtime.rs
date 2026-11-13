@@ -1,5 +1,6 @@
 //! Sandboxed core-wasm transport. One lock, memory and poison flag per dependency group.
-//! Refusals leave the group running; only faults and native unwinds poison it.
+//! Ordinary refusals leave the group running. Faults, native unwinds and a failed
+//! prepared release poison it, since the guest may still own retained state.
 //! The preallocated call path adds an Arc increment/decrement per call, without
 //! allocating on success. Diagnostic keys are built and checked only on refusal.
 #[cfg(test)]
@@ -34,8 +35,69 @@ pub enum CallClass {
     Callback,
 }
 
+/// A group's linear memory when none of its mods declares one (`wasm_memory_mib`): 1 GiB.
+pub(crate) const DEFAULT_GROUP_MEMORY_MIB: u32 = 1024;
+/// The function table's ceiling: references, a pointer each.
+const TABLE_ELEMENTS: usize = 1 << 20;
+
+/// A group's ceilings. The memory limit is a ceiling, not committed memory: past it, or past what
+/// the system gives, `memory.grow` answers -1 inside the guest and the call goes on.
+pub(crate) struct Limits {
+    /// The group's mods, for the log.
+    group: Arc<str>,
+    memory: usize,
+    /// The size the last refused `memory.grow` asked for, for the reason of a call that then failed.
+    refused_growth: Option<usize>,
+}
+impl Limits {
+    pub(crate) fn new(group: Arc<str>, memory_mib: u32) -> Self {
+        Self {
+            group,
+            memory: usize::try_from(u64::from(memory_mib) << 20).unwrap_or(usize::MAX),
+            refused_growth: None,
+        }
+    }
+}
+impl wasmtime::ResourceLimiter for Limits {
+    fn memory_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        if desired <= self.memory && maximum.is_none_or(|maximum| desired <= maximum) {
+            return Ok(true);
+        }
+        if self.refused_growth.replace(desired).is_none() {
+            log::warn!(
+                "wasm group {}: memory.grow to {} MiB refused at the group's limit of {} MiB",
+                self.group,
+                desired >> 20,
+                self.memory >> 20
+            );
+        }
+        Ok(false)
+    }
+    fn memory_grow_failed(&mut self, error: wasmtime::Error) -> wasmtime::Result<()> {
+        log::warn!(
+            "wasm group {}: the system refused memory.grow below the group's limit of {} MiB: {error:#}",
+            self.group,
+            self.memory >> 20
+        );
+        Ok(())
+    }
+    fn table_growing(
+        &mut self,
+        _current: usize,
+        desired: usize,
+        maximum: Option<usize>,
+    ) -> wasmtime::Result<bool> {
+        Ok(desired <= TABLE_ELEMENTS && maximum.is_none_or(|maximum| desired <= maximum))
+    }
+}
+
 pub(crate) struct State {
-    limits: wasmtime::StoreLimits,
+    limits: Limits,
     cx: Box<Cx>,
     memory: Option<Memory>,
     replies: Vec<Writer>,
@@ -54,14 +116,10 @@ pub(crate) struct State {
 // locked store through a thread-local loan. The module pointer borrows call()'s self
 // under the same scope. Between threads the frame stack is empty and module is null.
 unsafe impl Send for State {}
-impl Default for State {
-    fn default() -> Self {
+impl State {
+    pub(crate) fn new(limits: Limits) -> Self {
         Self {
-            limits: wasmtime::StoreLimitsBuilder::new()
-                .trap_on_grow_failure(false)
-                .memory_size(256 << 20)
-                .table_elements(1 << 20)
-                .build(),
+            limits,
             cx: Box::default(),
             memory: None,
             replies: Vec::new(),
@@ -104,31 +162,77 @@ pub(crate) fn engine() -> wasmtime::Result<Engine> {
     Ok(engine)
 }
 
-#[derive(Default)]
-struct Releases {
+struct Releases<T> {
     pending: AtomicBool,
-    ids: Mutex<Vec<Id>>,
+    entries: Mutex<Vec<T>>,
 }
-impl Releases {
-    fn push(&self, id: Id) {
-        let mut ids = self.ids.lock().unwrap_or_else(|e| e.into_inner());
-        ids.push(id);
+impl<T> Default for Releases<T> {
+    fn default() -> Self {
+        Self {
+            pending: AtomicBool::new(false),
+            entries: Mutex::new(Vec::new()),
+        }
+    }
+}
+impl<T> Releases<T> {
+    fn push(&self, entry: T) {
+        let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
+        entries.push(entry);
         self.pending.store(true, Ordering::Release);
     }
-    fn take(&self) -> Vec<Id> {
-        if !self.pending.swap(false, Ordering::AcqRel) {
+    fn take(&self) -> Vec<T> {
+        // A plain load first: the uncontended call path stays read-only.
+        if !self.pending.load(Ordering::Acquire) || !self.pending.swap(false, Ordering::AcqRel) {
             return Vec::new();
         }
         // A racing push either joins this drain or leaves pending set for the next
         // call. At worst the next call locks an empty queue; no release is lost.
-        std::mem::take(&mut *self.ids.lock().unwrap_or_else(|e| e.into_inner()))
+        std::mem::take(&mut *self.entries.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
+
+struct Busy;
 
 struct Running {
     group: Mutex<Group<State>>,
     poisoned: AtomicBool,
     lending: Arc<AtomicUsize>,
+    /// The last top-level call to take `group`: who a refused caller waited on.
+    holder: Mutex<Option<Holder>>,
+}
+
+/// A top-level call holding a group: its mod, export, thread and when it took the lock.
+struct Holder {
+    module: Arc<str>,
+    export: u32,
+    thread: std::thread::Thread,
+    since: Instant,
+}
+
+impl Running {
+    /// Why a caller that waited `waited` for this group is refused, naming the call holding it.
+    fn busy(&self, waited: Duration) -> String {
+        let holder = self.holder.lock().unwrap_or_else(|e| e.into_inner());
+        match holder.as_ref() {
+            Some(h) => format!(
+                "{}: held by mod {} export {} on thread {} for {} ms; this call waited {} ms",
+                Refusal::Busy,
+                h.module,
+                h.export,
+                h.thread.name().map_or_else(
+                    || format!("{:?}", h.thread.id()),
+                    |name| format!("'{name}'")
+                ),
+                h.since.elapsed().as_millis(),
+                waited.as_millis()
+            ),
+            None => format!(
+                "{}: held outside a guest call; this call waited {} ms",
+                Refusal::Busy,
+                waited.as_millis()
+            ),
+        }
+    }
 }
 thread_local! {
     /// Why this thread's last guest call answered nothing, for the caller's typed error.
@@ -147,8 +251,8 @@ pub(crate) fn take_refusal() -> String {
         .with(|last| last.borrow_mut().take())
         .unwrap_or_else(|| "refused".into())
 }
-fn fault_reason(error: &wasmtime::Error, budget: u64) -> String {
-    match error.downcast_ref::<wasmtime::Trap>() {
+fn fault_reason(error: &wasmtime::Error, budget: u64, limits: &mut Limits) -> String {
+    let reason = match error.downcast_ref::<wasmtime::Trap>() {
         Some(wasmtime::Trap::Interrupt) => {
             format!(
                 "epoch deadline: the call ran past its budget of {budget} ticks (about {budget} ms)"
@@ -156,6 +260,15 @@ fn fault_reason(error: &wasmtime::Error, budget: u64) -> String {
         }
         Some(trap) => format!("{trap}"),
         None => format!("fault: {error:#}"),
+    };
+    match limits.refused_growth.take() {
+        Some(desired) => format!(
+            "{reason}, after memory.grow to {} MiB was refused at group {}'s limit of {} MiB",
+            desired >> 20,
+            limits.group,
+            limits.memory >> 20
+        ),
+        None => reason,
     }
 }
 /// Only faults may leave guest state half-updated. Refusals returned normally.
@@ -163,6 +276,13 @@ fn fault_reason(error: &wasmtime::Error, budget: u64) -> String {
 enum CallError {
     Refused(wasmtime::Error),
     Fault(wasmtime::Error),
+}
+impl CallError {
+    fn into_error(self) -> wasmtime::Error {
+        match self {
+            Self::Refused(error) | Self::Fault(error) => error,
+        }
+    }
 }
 impl std::fmt::Display for CallError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -215,7 +335,10 @@ pub struct WasmMod {
     hook: TypedFunc<u32, u64>,
     pub subscribed: &'static [Option<HookId>],
     pub(crate) listeners: &'static [mod_api::Listener],
-    released: Arc<Releases>,
+    released: Arc<Releases<Id>>,
+    prepared_releases: Arc<Releases<(u32, u32)>>,
+    prepared: Arc<Mutex<crate::prepared::Slots>>,
+    prepared_entries: Arc<std::collections::HashMap<u32, TypedFunc<(), u64>>>,
     subscriptions: Arc<Mutex<std::collections::HashMap<(Id, u32), &'static [Option<HookId>]>>>,
 }
 /// A guest object never owns the store that may itself retain that object.
@@ -227,7 +350,10 @@ pub(crate) struct WeakWasmMod {
     hook: TypedFunc<u32, u64>,
     subscribed: &'static [Option<HookId>],
     pub(crate) listeners: &'static [mod_api::Listener],
-    released: Arc<Releases>,
+    released: Arc<Releases<Id>>,
+    prepared_releases: Arc<Releases<(u32, u32)>>,
+    prepared: Arc<Mutex<crate::prepared::Slots>>,
+    prepared_entries: Arc<std::collections::HashMap<u32, TypedFunc<(), u64>>>,
     subscriptions: Arc<Mutex<std::collections::HashMap<(Id, u32), &'static [Option<HookId>]>>>,
 }
 impl WeakWasmMod {
@@ -236,6 +362,120 @@ impl WeakWasmMod {
         self.running
             .upgrade()
             .is_some_and(|running| running.poisoned.load(Ordering::Relaxed))
+    }
+    pub(crate) fn prepare(&self, bytes: &[u8]) -> Option<(u32, u32)> {
+        if self
+            .running
+            .upgrade()
+            .is_none_or(|running| running.poisoned.load(Ordering::Relaxed))
+        {
+            note("its group has stopped or was unloaded".into());
+            return None;
+        }
+        if self.prepared_entries.len() != 3 {
+            note(
+                "can_equip requires prepare_can_equip, ask_can_equip and release_can_equip exports"
+                    .into(),
+            );
+            return None;
+        }
+        let token = self
+            .prepared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .prepare()?;
+        struct Pending<'a> {
+            module: &'a WeakWasmMod,
+            token: (u32, u32),
+            committed: bool,
+        }
+        impl Drop for Pending<'_> {
+            fn drop(&mut self) {
+                if !self.committed {
+                    self.module.release(self.token.0, self.token.1);
+                }
+            }
+        }
+        let mut pending = Pending {
+            module: self,
+            token,
+            committed: false,
+        };
+        let module = self.upgrade()?;
+        let result = module.try_call(
+            CallClass::Hook,
+            Frame::default(),
+            crate::prepared::PREPARE,
+            None,
+            |w| {
+                w.put(&token.0);
+                w.put(&token.1);
+                w.put_bytes(bytes);
+            },
+            |r| {
+                let echoed: (u32, u32) = r.take()?;
+                if echoed != token {
+                    return Err(WireError::Invalid("prepared token mismatch"));
+                }
+                Ok(())
+            },
+        );
+        match result {
+            Ok(Some(())) => {}
+            Err(Busy) => {
+                // The guest never received the preparation.
+                let mut slots = self.prepared.lock().unwrap_or_else(|e| e.into_inner());
+                slots.release(token.0, token.1);
+                slots.finish_release(token.0);
+                pending.committed = true;
+                return None;
+            }
+            Ok(None) => return None,
+        }
+        pending.committed = true;
+        Some(token)
+    }
+    pub(crate) fn check(&self, slot: u32, generation: u32) -> bool {
+        self.running
+            .upgrade()
+            .is_some_and(|r| !r.poisoned.load(Ordering::Relaxed))
+            && self
+                .prepared
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .check(slot, generation)
+    }
+    pub(crate) fn release(&self, slot: u32, generation: u32) {
+        let released = self
+            .prepared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .release(slot, generation);
+        if !released {
+            return;
+        }
+        let Some(module) = self.upgrade() else {
+            return;
+        };
+        if std::thread::panicking() {
+            module.disable();
+            return;
+        }
+        match module.try_call(
+            CallClass::Hook,
+            Frame::default(),
+            crate::prepared::RELEASE,
+            None,
+            |w| {
+                w.put(&slot);
+                w.put(&generation);
+            },
+            |r| r.take::<()>(),
+        ) {
+            Ok(Some(())) => module.finish_prepared_release(slot),
+            Err(Busy) => self.prepared_releases.push((slot, generation)),
+            Ok(None) => module.disable(),
+        }
     }
     /// Refusals answer unavailable without stopping the group; faults stop all members.
     pub(crate) fn call<R>(
@@ -247,11 +487,15 @@ impl WeakWasmMod {
         args: impl FnOnce(&mut Writer),
         reply: impl FnOnce(&mut Reader<'_>) -> Result<R, WireError>,
     ) -> Option<R> {
+        self.upgrade()?.call(class, frame, id, handler, args, reply)
+    }
+
+    fn upgrade(&self) -> Option<WasmMod> {
         let Some(running) = self.running.upgrade() else {
             note("the module was dropped".into());
             return None;
         };
-        let module = WasmMod {
+        Some(WasmMod {
             id: self.id.clone(),
             running,
             input: self.input.clone(),
@@ -259,9 +503,11 @@ impl WeakWasmMod {
             subscribed: self.subscribed,
             listeners: self.listeners,
             released: self.released.clone(),
+            prepared_releases: self.prepared_releases.clone(),
+            prepared: self.prepared.clone(),
+            prepared_entries: self.prepared_entries.clone(),
             subscriptions: self.subscriptions.clone(),
-        };
-        module.call(class, frame, id, handler, args, reply)
+        })
     }
 }
 pub struct WasmHandler {
@@ -478,6 +724,23 @@ fn host_reply(mut caller: Caller<'_, State>, ptr: u32) -> wasmtime::Result<()> {
 }
 
 impl WasmMod {
+    pub(crate) fn check_prepared_hooks(&self, hooks: &[Option<HookId>]) -> Result<(), String> {
+        for (hook, entries) in crate::boundary::PREPARED_EXPORTS {
+            if !hooks.iter().flatten().any(|id| {
+                crate::boundary::hook_id(hook).is_some_and(|wanted| wanted as usize == *id as usize)
+            }) {
+                continue;
+            }
+            for (name, id) in entries {
+                if !self.prepared_entries.contains_key(id) {
+                    return Err(format!(
+                        "{hook} requires prepared wasm export {name}; no fallback is available"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn downgrade(&self) -> WeakWasmMod {
         WeakWasmMod {
             id: self.id.clone(),
@@ -487,6 +750,9 @@ impl WasmMod {
             subscribed: self.subscribed,
             listeners: self.listeners,
             released: self.released.clone(),
+            prepared_releases: self.prepared_releases.clone(),
+            prepared: self.prepared.clone(),
+            prepared_entries: self.prepared_entries.clone(),
             subscriptions: self.subscriptions.clone(),
         }
     }
@@ -511,12 +777,23 @@ impl WasmMod {
     }
     pub(crate) fn instantiate(
         engine: &Engine,
-        _manifests: &[(&str, &horizon_mod_package::Manifest)],
+        memory_mib: u32,
         members: &[Member<'_>],
         cache: Option<&crate::module_cache::ModuleCache>,
     ) -> Result<Vec<Self>, Refusal> {
         horizon_guest_stack::check_current().map_err(|error| Refusal::Runtime(error.into()))?;
-        let mut store = Store::new(engine, State::default());
+        let group: Vec<_> = members
+            .iter()
+            .filter(|member| member.name != "libstd.so")
+            .map(|member| {
+                member
+                    .name
+                    .trim_start_matches("lib")
+                    .trim_end_matches(".so")
+            })
+            .collect();
+        let limits = Limits::new(group.join("+").into(), memory_mib);
+        let mut store = Store::new(engine, State::new(limits));
         store.limiter(|state| &mut state.limits);
         store.set_epoch_deadline(30_000);
         let mut armed = false;
@@ -535,7 +812,7 @@ impl WasmMod {
                 _ => None,
             }
         })
-        .map_err(|e| Refusal::Runtime(e.to_string()))?;
+        .map_err(Refusal::from_link)?;
         group.store.data_mut().memory = Some(group.memory);
         let mut exports = Vec::new();
         for (name, instance) in group.members.clone() {
@@ -553,6 +830,9 @@ impl WasmMod {
                 .call(&mut group.store, ())
                 .map_err(load)?;
             if layout != *mod_api::wire::LAYOUT {
+                if layout == mod_api::wire_core_layout() {
+                    return Err(Refusal::Runtime("prepared can_equip ABI layout mismatch: guest carries the old unprepared layout; rebuild the wasm mod".into()));
+                }
                 return Err(Refusal::Layout {
                     built: layout,
                     game: *mod_api::wire::LAYOUT,
@@ -580,13 +860,22 @@ impl WasmMod {
             let hook = instance
                 .get_typed_func(&mut group.store, "horizon_hook")
                 .map_err(load)?;
-            exports.push((name, input, hook));
+            let mut prepared_entries = std::collections::HashMap::new();
+            for (_, entries) in crate::boundary::PREPARED_EXPORTS {
+                for (name, id) in entries {
+                    if let Ok(entry) = instance.get_typed_func::<(), u64>(&mut group.store, name) {
+                        prepared_entries.insert(*id, entry);
+                    }
+                }
+            }
+            exports.push((name, input, hook, Arc::new(prepared_entries)));
         }
         let lending = group.store.data().lending.clone();
         let running = Arc::new(Running {
             lending,
             group: Mutex::new(group),
             poisoned: AtomicBool::new(false),
+            holder: Mutex::new(None),
         });
         running
             .group
@@ -597,7 +886,7 @@ impl WasmMod {
             .group = Arc::as_ptr(&running) as usize;
         Ok(exports
             .into_iter()
-            .map(|(name, input, hook)| Self {
+            .map(|(name, input, hook, prepared_entries)| Self {
                 id: name.into(),
                 running: running.clone(),
                 input,
@@ -605,6 +894,9 @@ impl WasmMod {
                 subscribed: &[],
                 listeners: &[],
                 released: Arc::default(),
+                prepared_releases: Arc::default(),
+                prepared: Arc::default(),
+                prepared_entries,
                 subscriptions: Arc::default(),
             })
             .collect())
@@ -619,21 +911,35 @@ impl WasmMod {
         args: impl FnOnce(&mut Writer),
         reply: impl FnOnce(&mut Reader<'_>) -> Result<R, WireError>,
     ) -> Option<R> {
+        self.try_call(class, frame, id, handler, args, reply)
+            .ok()
+            .flatten()
+    }
+
+    fn try_call<R>(
+        &self,
+        class: CallClass,
+        frame: Frame,
+        id: u32,
+        handler: Option<Id>,
+        args: impl FnOnce(&mut Writer),
+        reply: impl FnOnce(&mut Reader<'_>) -> Result<R, WireError>,
+    ) -> Result<Option<R>, Busy> {
         // Dispatch-owned native receivers can unwind before our outer call
         // guards. Their destructors must not reenter the still-lent guest.
         if std::thread::panicking() {
             self.disable();
             note("called while the thread unwinds".into());
-            return None;
+            return Ok(None);
         }
         if let Err(error) = horizon_guest_stack::check_current() {
             log::error!("wasm mod {}: {error}", self.mod_id());
             note(error.into());
-            return None;
+            return Ok(None);
         }
         if self.running.poisoned.load(Ordering::Relaxed) {
             note("its group has stopped after an earlier fault".into());
-            return None;
+            return Ok(None);
         }
         let key = Arc::as_ptr(&self.running) as usize;
         // A synchronous import can call any provider/handler, not just a named
@@ -642,7 +948,7 @@ impl WasmMod {
         let mut locked = None;
         if resumed.is_none() {
             // Start the busy timeout on contention, not on the uncontended hot path.
-            let mut start = None;
+            let mut start: Option<Instant> = None;
             loop {
                 match self.running.group.try_lock() {
                     Ok(group) => {
@@ -655,22 +961,45 @@ impl WasmMod {
                     }
                     Err(_)
                         if class != CallClass::Worker
-                            && (self.running.lending.load(Ordering::Relaxed) != 0
+                            && (id == crate::prepared::RELEASE
+                                // A nested cross-group call can form a lock cycle.
+                                || (!LENT.get().is_null()
+                                    && self.running.lending.load(Ordering::Relaxed) != 0)
                                 || start.get_or_insert_with(Instant::now).elapsed()
                                     >= Duration::from_secs(5)) =>
                     {
-                        log::warn!("wasm mod {}: {}", self.id, Refusal::Busy);
-                        note(Refusal::Busy.to_string());
-                        return None;
+                        if id != crate::prepared::RELEASE {
+                            let why = self
+                                .running
+                                .busy(start.map_or(Duration::ZERO, |start| start.elapsed()));
+                            log::warn!("wasm mod {} export {id}: {why}", self.id);
+                            note(why);
+                        }
+                        return Err(Busy);
                     }
                     Err(_) => std::thread::sleep(Duration::from_millis(1)),
                 }
             }
         }
+        if locked.is_some() {
+            *self
+                .running
+                .holder
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) = Some(Holder {
+                module: self.id.clone(),
+                export: id,
+                thread: std::thread::current(),
+                since: Instant::now(),
+            });
+        }
+        // Deferred releases run only on a top-level call: a resumed nested call is still
+        // inside another export of the guest.
+        let top = resumed.is_none();
         let mut store = match resumed.as_mut() {
             Some(resumed) => resumed.context(),
             None => {
-                let store = &mut locked.as_mut()?.store;
+                let store = &mut locked.as_mut().expect("group locked without a loan").store;
                 let budget = if class == CallClass::Load {
                     30_000
                 } else {
@@ -689,7 +1018,7 @@ impl WasmMod {
                 drop(std::mem::take(&mut store.data_mut().cx.held));
             }
             note("its group has stopped after an earlier fault".into());
-            return None;
+            return Ok(None);
         }
         let budget = store.data().epoch_budget;
         let depth = store.data().depth + 1;
@@ -699,7 +1028,7 @@ impl WasmMod {
                 log::warn!("wasm depth refusal: {path}");
             }
             note(format!("nested past depth 64: {path}"));
-            return None;
+            return Ok(None);
         }
         store.data_mut().depth = depth;
         if store.data().replies.len() <= depth {
@@ -708,7 +1037,7 @@ impl WasmMod {
             store.data_mut().outputs.resize_with(depth + 1, Vec::new);
             store.data_mut().imports.resize_with(depth + 1, Vec::new);
         }
-        store.data_mut().cx.frames.push(frame);
+        store.data_mut().cx.frames.push(Frame::default());
         store.data_mut().path.push((self.id.clone(), id));
         // self remains borrowed until this call returns. FrameScope restores the
         // enclosing module before this borrow ends, including on error or unwind.
@@ -728,6 +1057,28 @@ impl WasmMod {
         // must already see the group stopped.
         let panic_stop = PoisonOnPanic(&self.running.poisoned);
         let result = (|| -> Result<R, CallError> {
+            if top {
+                for (slot, generation) in self.prepared_releases.take() {
+                    w.clear();
+                    w.put(&slot);
+                    w.put(&generation);
+                    self.invoke(&mut store, crate::prepared::RELEASE, &w, &mut output)
+                        .map_err(|error| {
+                            CallError::Fault(
+                                error.into_error().context("deferred prepared release"),
+                            )
+                        })?;
+                    if !output.is_empty() {
+                        return Err(CallError::Fault(
+                            wasmtime::Error::from(WireError::Trailing)
+                                .context("deferred prepared release"),
+                        ));
+                    }
+                    self.finish_prepared_release(slot);
+                }
+            }
+            // Deferred releases have the same empty frame as a direct release.
+            *store.data_mut().cx.frames.last_mut().unwrap() = frame;
             let released = self.released.take();
             if !released.is_empty() {
                 w.clear();
@@ -752,6 +1103,16 @@ impl WasmMod {
         })();
         store.data_mut().inputs[depth] = w;
         store.data_mut().outputs[depth] = output;
+        // A failed guest release may leave retained state in the slot.
+        let result = if id == crate::prepared::RELEASE {
+            result.map_err(|error| CallError::Fault(error.into_error()))
+        } else {
+            result
+        };
+        let fault = match &result {
+            Err(CallError::Fault(e)) => Some(fault_reason(e, budget, &mut store.data_mut().limits)),
+            _ => None,
+        };
         if result.is_err() {
             horizon_mod_runtime::dispatch_failures::record_dispatch_failure();
         }
@@ -771,23 +1132,31 @@ impl WasmMod {
         drop(resources);
         drop(scope);
         match result {
-            Ok(value) => Some(value),
+            Ok(value) => Ok(Some(value)),
             Err(CallError::Refused(e)) => {
                 note(format!("refused: {e:#}"));
-                None
+                Ok(None)
             }
             Err(CallError::Fault(e)) => {
-                note(fault_reason(&e, budget));
+                let reason = fault.unwrap_or_default();
                 if first_failure {
                     log::error!(
-                        "wasm mod {} stopped its group: {class:?}, depth {depth}, active epoch budget {budget}: {e:#}",
+                        "wasm mod {} stopped its group: {class:?}, depth {depth}, active epoch budget {budget}: {reason}: {e:#}",
                         self.id
                     );
                 }
-                None
+                note(reason);
+                Ok(None)
             }
         }
     }
+    fn finish_prepared_release(&self, slot: u32) {
+        self.prepared
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .finish_release(slot);
+    }
+
     fn invoke(
         &self,
         store: &mut StoreContextMut<'_, State>,
@@ -812,7 +1181,11 @@ impl WasmMod {
             .map_err(|e| CallError::Fault(e.into()))?;
         #[cfg(feature = "test-copy-probe")]
         crate::copy_probe::record(true, input.bytes().len());
-        let result = self.hook.call(&mut *store, id).map_err(CallError::Fault)?;
+        let result = if let Some(entry) = self.prepared_entries.get(&id) {
+            entry.call(&mut *store, ()).map_err(CallError::Fault)?
+        } else {
+            self.hook.call(&mut *store, id).map_err(CallError::Fault)?
+        };
         let ptr = (result >> 32) as usize;
         let len = result as u32;
         if len == u32::MAX {

@@ -6,7 +6,7 @@ pub fn module(bytes: &[u8]) -> Result<WasmMod, String> {
     let engine = runtime::engine().map_err(|error| error.to_string())?;
     WasmMod::instantiate(
         &engine,
-        &[],
+        runtime::DEFAULT_GROUP_MEMORY_MIB,
         &[Member {
             name: "fixture",
             module: bytes,
@@ -40,11 +40,7 @@ pub fn cached_answer(
         command
     };
     let (module, source) = cache
-        .load_with_child_command(
-            &engine,
-            bytes,
-            Some((command, std::time::Duration::from_secs(60))),
-        )
+        .load_with_child_command(&engine, bytes, Some((command, cache.budget.limit)))
         .map_err(|e| e.to_string())?;
     let mut store = wasmtime::Store::new(&engine, ());
     store.set_epoch_deadline(u64::MAX / 2);
