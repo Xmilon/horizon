@@ -569,49 +569,6 @@ pub fn icon_button(
     keyboard(track_hover(d.child(glyph), id), t)
 }
 
-/// One tab of a tab strip (`Tabs`, size `md`): 36 px tall, 15 px; the open one white on 12 %,
-/// medium; the others white at 70 %, white under the pointer.
-pub fn tab(
-    id: impl Into<SharedString>,
-    label: impl Into<SharedString>,
-    open: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let id = id.into();
-    let d = div()
-        .id(id.clone())
-        .relative()
-        .flex()
-        .flex_none()
-        .items_center()
-        .gap(px(6.))
-        .h(px(36.))
-        .px(px(14.))
-        .rounded(px(radius::CONTROL))
-        .border_1()
-        .cursor_pointer()
-        .font_family(horizon_theme::glass::FONT)
-        .text_size(px(15.))
-        .line_height(px(20.))
-        // One weight open or not: a name never changes width when its tab is chosen.
-        .font_weight(FontWeight::MEDIUM);
-    let d = if open {
-        d.bg(white(fill::ACTIVE))
-            .border_color(white(edge::STRONG))
-            .text_color(white(ink::FULL))
-    } else {
-        d.border_color(gpui::transparent_black())
-            .text_color(white(ink::BODY))
-            .hover(|s| s.text_color(white(ink::FULL)))
-            .child(hover_edge(&id, radius::CONTROL, fill::HOVER, true))
-    };
-    let label: SharedString = label.into();
-    let d = d.when(!label.is_empty(), |d| {
-        d.child(div().relative().child(label))
-    });
-    keyboard(track_hover(d, id), t)
-}
-
 /// A top-bar page, as the site's nav: a naked tab — no plate, no pill — its label brightening and
 /// a faint fill arriving under the pointer, with the sunrise bar growing under it: a gradient
 /// line, half out on hover and all the way out with a glow on the page it names (`open`).
@@ -1392,6 +1349,88 @@ pub fn sliding_pill(id: &str, active: usize, base: impl Fn() -> Div) -> Option<A
                 .into_any_element()
         }
     })
+}
+
+/// A tab of a [`pill_strip`], `h` tall: one weight open or not (the pill and the ink mark the
+/// open one, so no name changes width), a faint fill under the pointer otherwise.
+pub fn pill_tab(id: impl Into<SharedString>, on: bool, h: f32, t: &Theme) -> Stateful<Div> {
+    let id = id.into();
+    keyboard(
+        track_hover(
+            div()
+                .id(id.clone())
+                .relative()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(7.))
+                .h(px(h))
+                .px(px(12.))
+                .rounded(px(radius::CONTROL))
+                .cursor_pointer()
+                .font_family(horizon_theme::glass::FONT)
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(white(if on { ink::FULL } else { ink::BODY }))
+                .when(!on, |d| {
+                    d.child(hover_edge(&id, radius::CONTROL, 0.05, false))
+                        .hover(|s| s.text_color(white(ink::FULL)))
+                }),
+            id,
+        ),
+        t,
+    )
+}
+
+/// A row of [`pill_tab`]s (`h` tall, `top` below the row's top edge) whose open one, `active`,
+/// sits on a lit pane of glass that slides to the tab chosen. `row` lays the tabs out (its flex
+/// and padding); the strip records where each one is drawn.
+pub fn pill_strip(
+    id: &'static str,
+    active: usize,
+    h: f32,
+    top: f32,
+    row: Div,
+    tabs: impl IntoIterator<Item = Stateful<Div>>,
+) -> Div {
+    let origin = PillOrigin::default();
+    let row = row.relative().child(pill_origin(&origin)).children(
+        tabs.into_iter()
+            .enumerate()
+            .map(|(i, tab)| tab.child(pill_probe(id, i, origin.clone()))),
+    );
+    let accent = look().accent;
+    let pill = sliding_pill(id, active, move || {
+        div()
+            .absolute()
+            .top(px(top))
+            .h(px(h))
+            .rounded(px(radius::CONTROL))
+            .bg(gpui::linear_gradient(
+                180.,
+                gpui::linear_color_stop(white(0.16), 0.),
+                gpui::linear_color_stop(white(0.07), 1.),
+            ))
+            .border_1()
+            .border_color(white(edge::STRONG))
+            .shadow(vec![
+                gpui::BoxShadow {
+                    color: gpui::white().opacity(0.18),
+                    offset: gpui::point(px(0.), px(1.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(0.),
+                    inset: true,
+                },
+                gpui::BoxShadow {
+                    color: color(accent).opacity(0.45),
+                    offset: gpui::point(px(0.), px(6.)),
+                    blur_radius: px(18.),
+                    spread_radius: px(-8.),
+                    inset: false,
+                },
+            ])
+    });
+    // The pill first, so the names are drawn over it.
+    div().relative().children(pill).child(row)
 }
 
 /// A segmented control in the glass look (the site's): white at 4 % round at 12, 3 px around

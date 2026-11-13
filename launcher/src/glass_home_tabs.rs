@@ -28,21 +28,9 @@ impl Launcher {
         // Icons beside the names only where every tab still has the room for both.
         let icons = self.window_width >= crate::glass_home::SIDE_BY_SIDE + 160.;
         let active = tabs.iter().position(|(tab, _)| *tab == open).unwrap_or(0);
-        let origin = ui::PillOrigin::default();
-        let strip = div()
-            .id("home-tabs-strip")
-            .relative()
-            .flex()
-            .items_center()
-            .w_full()
-            .min_w_0()
-            .gap(px(2.))
-            .px(px(8.))
-            .pt(px(8.))
-            .pb(px(4.))
-            .child(crate::glass::measure(self.home_strip.clone()))
-            .child(ui::pill_origin(&origin))
-            .children(tabs.into_iter().enumerate().map(|(i, (tab, count))| {
+        let items: Vec<_> = tabs
+            .into_iter()
+            .map(|(tab, count)| {
                 let (name, icon) = match tab {
                     HomeTab::Overview => (tr("Overview"), "dashboard-square-01"),
                     HomeTab::Mods => (tr("Mods"), "puzzle"),
@@ -54,97 +42,48 @@ impl Launcher {
                     HomeTab::Console => (tr("Log"), "computer-terminal-01"),
                 };
                 let on = tab == open;
-                let id = SharedString::from(format!("home-tab-{tab:?}"));
-                // One weight for every tab: the open one is marked by the pill and its ink, so no
-                // name changes width when it is chosen.
                 let ink_of = white(if on { ink::FULL } else { ink::BODY });
-                keyboard(
-                    track_hover(
+                ui::pill_tab(format!("home-tab-{tab:?}"), on, 38., &t)
+                    // Each grows from its own width, so long names keep their room.
+                    .flex_auto()
+                    .min_w_0()
+                    .px(px(8.))
+                    .text_size(px(14.))
+                    .line_height(px(20.))
+                    .children(icons.then(|| ui::icon(icon, 16., ink_of).relative()))
+                    .child(
                         div()
-                            .id(id.clone())
                             .relative()
-                            .flex()
-                            // Each grows from its own width, so long names keep their room.
-                            .flex_auto()
                             .min_w_0()
-                            .items_center()
-                            .justify_center()
-                            .gap(px(7.))
-                            .h(px(38.))
-                            .px(px(8.))
-                            .rounded(px(radius::CONTROL))
-                            .cursor_pointer()
-                            .font_family(horizon_theme::glass::FONT)
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_size(px(14.))
-                            .line_height(px(20.))
-                            .text_color(ink_of)
-                            .when(!on, |d| {
-                                d.child(ui::hover_edge(&id, radius::CONTROL, 0.05, false))
-                                    .hover(|s| s.text_color(white(ink::FULL)))
-                            })
-                            .child(ui::pill_probe("home-tabs", i, origin.clone()))
-                            .children(icons.then(|| ui::icon(icon, 16., ink_of).relative()))
-                            .child(
-                                div()
-                                    .relative()
-                                    .min_w_0()
-                                    .whitespace_nowrap()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .child(name),
-                            )
-                            .children(count.filter(|n| *n > 0).map(|n| {
-                                div()
-                                    .relative()
-                                    .flex_none()
-                                    .text_color(white(ink::DIM))
-                                    .child(n.to_string())
-                            }))
-                            .when(!icons, |d| d.tooltip(ui::tip(name)))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.home_tab = tab;
-                                cx.notify();
-                            })),
-                        id,
-                    ),
-                    &t,
-                )
-            }));
-        // The open tab's pill: a lit pane of glass that slides to the tab chosen.
-        let accent = self.look.accent;
-        let pill = ui::sliding_pill("home-tabs", active, move || {
-            div()
-                .absolute()
-                .top(px(8.))
-                .h(px(38.))
-                .rounded(px(radius::CONTROL))
-                .bg(gpui::linear_gradient(
-                    180.,
-                    gpui::linear_color_stop(white(0.16), 0.),
-                    gpui::linear_color_stop(white(0.07), 1.),
-                ))
-                .border_1()
-                .border_color(white(ui::edge::STRONG))
-                .shadow(vec![
-                    gpui::BoxShadow {
-                        color: gpui::white().opacity(0.18),
-                        offset: gpui::point(px(0.), px(1.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(0.),
-                        inset: true,
-                    },
-                    gpui::BoxShadow {
-                        color: ui::color(accent).opacity(0.45),
-                        offset: gpui::point(px(0.), px(6.)),
-                        blur_radius: px(18.),
-                        spread_radius: px(-8.),
-                        inset: false,
-                    },
-                ])
-        });
-        // The pill goes first, so the tabs' names are drawn over it.
-        let strip = div().relative().w_full().children(pill).child(strip);
+                            .whitespace_nowrap()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(name),
+                    )
+                    .children(count.filter(|n| *n > 0).map(|n| {
+                        div()
+                            .relative()
+                            .flex_none()
+                            .text_color(white(ink::DIM))
+                            .child(n.to_string())
+                    }))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.home_tab = tab;
+                        cx.notify();
+                    }))
+            })
+            .collect();
+        let row = div()
+            .flex()
+            .items_center()
+            .w_full()
+            .min_w_0()
+            .gap(px(2.))
+            .px(px(8.))
+            .pt(px(8.))
+            .pb(px(4.))
+            .child(crate::glass::measure(self.home_strip.clone()));
+        let strip = ui::pill_strip("home-tabs", active, 38., 8., row, items).w_full();
         let body: Option<AnyElement> = match open {
             HomeTab::Overview => Some(self.glass_overview(rows, cx).into_any_element()),
             HomeTab::Mods => Some(self.glass_instance_mods(cx).into_any_element()),

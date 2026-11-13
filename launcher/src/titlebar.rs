@@ -104,6 +104,52 @@ pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
         .border_color(theme.outline)
         .child(drag);
 
+    // Hypr Neon's night: lit dots (amber, green, red), each glowing in its colour, in place of
+    // the buttons.
+    if theme.dark && theme.edge.is_some() {
+        let dot = |id: &'static str, c: u32| {
+            let c = gpui::Hsla::from(gpui::rgb(c));
+            div()
+                .id(id)
+                .group(id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .w(px(22.))
+                .h_full()
+                .cursor_pointer()
+                .child(
+                    div()
+                        .size(px(12.))
+                        .rounded_full()
+                        .bg(c)
+                        .shadow(vec![gpui::BoxShadow {
+                            color: c.opacity(0.7),
+                            offset: gpui::point(px(0.), px(0.)),
+                            blur_radius: px(8.),
+                            spread_radius: px(0.),
+                            inset: false,
+                        }])
+                        .group_hover(id, |s| s.opacity(0.75)),
+                )
+        };
+        let mut dots = div().flex().flex_none().items_center().h_full().mr(px(8.));
+        if controls.minimize {
+            dots = dots.child(
+                dot("window-minimize", 0xfebc2e).on_click(|_, window, _| window.minimize_window()),
+            );
+        }
+        if controls.maximize {
+            dots = dots.child(
+                dot("window-maximize", 0x28c840).on_click(|_, window, _| window.zoom_window()),
+            );
+        }
+        dots = dots
+            .child(dot("window-close", 0xff5f57).on_click(|_, window, _| window.remove_window()));
+        return Some(bar.child(dots));
+    }
+
     if controls.minimize {
         let color = theme.ink_soft;
         let hover = theme.raised;

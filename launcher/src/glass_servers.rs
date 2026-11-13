@@ -755,23 +755,38 @@ impl Launcher {
         if self.servers.tab == Tab::Overview {
             self.servers.tab = Tab::Players;
         }
-        let strip = div()
-            .flex()
-            .items_center()
-            .gap(px(4.))
-            .children(LOWER_TABS.iter().map(|&(tab, label)| {
-                ui::tab(
+        let active = LOWER_TABS
+            .iter()
+            .position(|&(tab, _)| tab == self.servers.tab)
+            .unwrap_or(0);
+        let items: Vec<_> = LOWER_TABS
+            .iter()
+            .map(|&(tab, label)| {
+                ui::pill_tab(
                     SharedString::from(format!("server-tab-{label}")),
-                    tr(label),
                     self.servers.tab == tab,
+                    36.,
                     &t,
                 )
+                .flex_none()
+                .px(px(14.))
+                .text_size(px(15.))
+                .child(div().relative().child(tr(label)))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.servers.tab = tab;
                     this.servers.confirm_restore = None;
                     cx.notify();
                 }))
-            }));
+            })
+            .collect();
+        let strip = ui::pill_strip(
+            "server-tabs",
+            active,
+            36.,
+            0.,
+            div().flex().items_center().gap(px(4.)),
+            items,
+        );
         let players = !matches!(self.servers.tab, Tab::Settings | Tab::Backups);
         let body = match self.servers.tab {
             Tab::Settings => self.settings_tab(status, cx),
