@@ -404,6 +404,39 @@ mod windows {
         }
     }
 
+    /// Hypr Neon's window buttons: lit dots (amber, green, red), each glowing in its colour.
+    fn dot_button(control: Control) -> Stateful<Div> {
+        let c = match control {
+            Control::Minimize => 0xfebc2e,
+            Control::Maximize => 0x28c840,
+            Control::Close => 0xff5f57,
+        };
+        div()
+            .id(control.name())
+            .group(control.name())
+            .flex()
+            .flex_none()
+            .items_center()
+            .justify_center()
+            .w(px(22.))
+            .h(px(BUTTON_HEIGHT))
+            .window_control_area(control.area())
+            .child(
+                div()
+                    .size(px(12.))
+                    .rounded_full()
+                    .bg(color(c))
+                    .shadow(vec![gpui::BoxShadow {
+                        color: color(c).opacity(0.7),
+                        offset: gpui::point(px(0.), px(0.)),
+                        blur_radius: px(8.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }])
+                    .group_hover(control.name(), |s| s.opacity(0.75)),
+            )
+    }
+
     fn control_button(control: Control, maximized: bool) -> Stateful<Div> {
         let id: SharedString = control.name().into();
         let close = matches!(control, Control::Close);
@@ -453,6 +486,7 @@ mod windows {
     }
 
     pub fn render(theme: &Theme, window: &Window) -> Option<Div> {
+        let dots = theme.dark && theme.edge.is_some();
         let drag = div()
             .id("window-drag")
             .flex()
@@ -494,10 +528,15 @@ mod windows {
                         .items_center()
                         .gap(px(4.))
                         .mr(px(6.))
-                        .children(
-                            [Control::Minimize, Control::Maximize, Control::Close]
-                                .map(|control| control_button(control, window.is_maximized())),
-                        ),
+                        .children([Control::Minimize, Control::Maximize, Control::Close].map(
+                            |control| {
+                                if dots {
+                                    dot_button(control)
+                                } else {
+                                    control_button(control, window.is_maximized())
+                                }
+                            },
+                        )),
                 ),
         )
     }

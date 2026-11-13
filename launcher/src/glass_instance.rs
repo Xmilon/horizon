@@ -180,6 +180,10 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Option<Stateful<Div>> {
         let d = self.instances.dialog.as_ref()?;
+        // Editing an instance is the sheet down the right side; a new one is this dialog.
+        if d.editing.is_some() {
+            return self.instance_sheet(cx);
+        }
         let busy = d.busy;
         let editing = d
             .editing
@@ -701,7 +705,7 @@ impl Launcher {
     }
 
     /// The foot: where the instance lives, Cancel and Create.
-    fn instance_foot(
+    pub(super) fn instance_foot(
         &mut self,
         editing: Option<&Instance>,
         copy: bool,
@@ -806,7 +810,7 @@ impl Launcher {
 
     /// Horizon's versions, the newest first: picking the one the launcher plays lets the
     /// instance follow it; any other is kept, and installed on Create when it isn't yet.
-    fn horizon_versions(&mut self, cx: &mut Context<Self>) -> Div {
+    pub(super) fn horizon_versions(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
         let follows = self.followed_version();
@@ -909,7 +913,7 @@ impl Launcher {
 
     /// The icons: the instance's own mark, the loaders' logos and the prepared files' blocks and
     /// items, then the colours and Choose image….
-    fn icon_choice(
+    pub(super) fn icon_choice(
         &mut self,
         editing: Option<&Instance>,
         kind: NewKind,

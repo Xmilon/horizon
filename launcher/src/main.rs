@@ -30,6 +30,7 @@ mod glass_instance;
 mod glass_instance_java;
 mod glass_palette;
 mod glass_settings;
+mod glass_sheet;
 mod glass_shot_blur;
 mod glass_storage;
 mod glass_toast;
@@ -67,6 +68,7 @@ mod perf;
 mod picture_cache;
 mod plate;
 mod profile_heads;
+mod rain;
 mod scene;
 mod screenshots_page;
 mod scrollbar;
@@ -227,6 +229,8 @@ const LOG_LINES: usize = 2000;
 struct Launcher {
     theme: Theme,
     page: Page,
+    /// The page under the glass Settings dialog: the last one shown before it opened.
+    behind: Page,
     /// How many times the page changed, for the page transition.
     switches: usize,
     content_scroll: Scrollbar,
@@ -318,6 +322,10 @@ struct Launcher {
     account_menu: bool,
     /// The glass sidebar's ⋮ menu (`frame.rs`).
     row_menu: frame::RowMenu,
+    /// The rail's hover: whether the pointer is on it, and since when (it eases open and shut).
+    rail: frame::Rail,
+    /// The instance sheet's open section (`glass_sheet.rs`).
+    sheet_tab: glass_sheet::SheetTab,
     /// The glass look's colours for the player's accent (`horizon_theme::glass`).
     look: horizon_theme::glass::Glass,
     /// Where the mouse went down to close a menu by pressing outside it, so that the
@@ -510,6 +518,8 @@ struct Launcher {
     /// The pixel sunset of the new design (dark appearance): its own view, so a frame of it
     /// alone redraws nothing else.
     scene: gpui::Entity<scene::Scene>,
+    /// Hypr Neon's rain over its black night (`rain.rs`).
+    rain: gpui::Entity<rain::Rain>,
     /// When the sky next asks for a frame, and the timer that will draw it.
     sky_wake: Option<(Instant, gpui::Task<()>)>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
@@ -592,6 +602,7 @@ impl Launcher {
         let mut this = Self {
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
+            behind: Page::Play,
             switches: 0,
             content_scroll: Scrollbar::default(),
             settings_pane: gpui::ScrollHandle::new(),
@@ -654,6 +665,8 @@ impl Launcher {
             language_menu: false,
             account_menu: false,
             row_menu: Default::default(),
+            rail: Default::default(),
+            sheet_tab: Default::default(),
             look: horizon_theme::glass::Glass::default_look(),
             menu_closed_at: None,
             wardrobe: None,
@@ -773,6 +786,7 @@ impl Launcher {
             side_servers: horizon_launcher::servers::list(),
             sky: sky::Sky::default(),
             scene: cx.new(|_| scene::Scene::new()),
+            rain: cx.new(|_| rain::Rain::new()),
             sky_wake: None,
             scale: window.scale_factor(),
         };
@@ -900,7 +914,16 @@ impl Launcher {
         }
         self.load_profile_heads();
         self.wardrobe_reload |= matches!(page, Page::Wardrobe | Page::Shop);
-        if page != self.page {
+        // The glass look's Settings is a dialog over the page: opening or closing it keeps the
+        // page under it as it was (its scroll, no fade).
+        let dialog = self.theme.glass
+            && (page == Page::Settings || (self.page == Page::Settings && page == self.behind));
+        if page != Page::Settings {
+            self.behind = page;
+        }
+        if page != self.page && dialog {
+            self.page = page;
+        } else if page != self.page {
             self.page = page;
             self.switches += 1;
             self.content_scroll = Scrollbar::default();
@@ -2055,7 +2078,10 @@ fn hover_move(
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let start = *START.get_or_init(Instant::now);
     let key = |dir: &str, at: Instant| {
-        ElementId::named_usize(format!("{id}-move-{dir}"), (at - start).as_micros() as usize)
+        ElementId::named_usize(
+            format!("{id}-move-{dir}"),
+            (at - start).as_micros() as usize,
+        )
     };
     let spring = motion::eased(motion::SPRING);
     if let Some((_, at)) = state.on.as_ref().filter(|(h, _)| h == id) {
@@ -3432,8 +3458,9 @@ impl Launcher {
             .flex_col()
             // The glass look's sidebar ⋮ menu holds what the Instance row offers.
             .children((!t.glass).then(|| self.instance_row(1, cx)).flatten())
-            .children(self.export_panel(cx))
-            .children(self.launch_panel(cx))
+            // The glass look keeps these in the instance sheet (`glass_sheet.rs`).
+            .children((!t.glass).then(|| self.export_panel(cx)).flatten())
+            .children((!t.glass).then(|| self.launch_panel(cx)).flatten())
             // The glass look keeps Maximum memory in the instance's Edit dialog.
             .children((!t.glass).then(|| self.memory_row(cx)).flatten());
         rows = match &java {
@@ -5197,6 +5224,10 @@ impl Render for Launcher {
         self.scene
             .update(cx, |scene, cx| scene.set_performance(performance, cx));
         let blur = if performance { 0. } else { blur };
+        // Hypr Neon's night rains, except in performance mode.
+        let rains = self.theme.dark && self.theme.edge.is_some() && !performance;
+        let accent = self.look.accent;
+        self.rain.update(cx, |rain, cx| rain.set(rains, accent, cx));
         self.scene
             .update(cx, |scene, cx| scene.set_look(tint, blur, cx));
         self.scale = window.scale_factor();
@@ -5215,7 +5246,12 @@ impl Render for Launcher {
         self.window_width = f32::from(size.width);
         self.window_long_side = f32::from(size.width).max(f32::from(size.height));
         self.scale_factor = window.scale_factor();
-        let content = match self.page {
+        let shown = if t.glass && self.page == Page::Settings {
+            self.behind
+        } else {
+            self.page
+        };
+        let content = match shown {
             Page::Play => self.play_page(cx),
             Page::Versions => self.versions_page(cx),
             Page::Mods => self.mods_page(cx),
@@ -5268,7 +5304,10 @@ impl Render for Launcher {
         let (topbar, sidebar) = if t.glass {
             (
                 self.glass_topbar(cx),
-                self.glass_sidebar(window, cx).into_any_element(),
+                self.glass_rail(window, cx)
+                    .ml(px(frame::MARGIN))
+                    .mb(px(frame::MARGIN))
+                    .into_any_element(),
             )
         } else {
             (self.topbar(cx), self.sidebar(window, cx).into_any_element())
@@ -5278,6 +5317,49 @@ impl Render for Launcher {
         } else {
             None
         };
+        let page = self
+            .content_scroll
+            .wrap(
+                div()
+                    .id("content")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    // A scrolled page is drawn from its layer, not
+                    // rendered: the Mods page's card asks, once the
+                    // offset has moved, whether it must follow.
+                    .on_scroll(cx.listener(|this, _: &gpui::ScrollEvent, window, cx| {
+                        if this.page != Page::Mods {
+                            return;
+                        }
+                        cx.on_next_frame(window, |this, _, cx| {
+                            if this.mods_sticky.moved(&this.content_scroll.handle) {
+                                cx.notify();
+                            }
+                        });
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .w_full()
+                            .min_w_0()
+                            .px(px(theme::PAGE_GUTTER))
+                            // The glass look's page heads hold their
+                            // own 40 px above the title.
+                            .pt(px(if self.page == Page::Play || t.glass {
+                                0.
+                            } else {
+                                28.
+                            }))
+                            .pb(px(48.))
+                            .child(content),
+                    ),
+                &t,
+            )
+            .flex_1()
+            .min_h_0()
+            .when(t.glass, |d| d.mt(px(crate::glass::CONTENT_INSET)));
         let mut root = div()
             .id("root")
             .track_focus(&self.root_focus)
@@ -5302,6 +5384,7 @@ impl Render for Launcher {
                     "escape" if this.native_log_escape() => {}
                     "escape" if this.servers_escape() => {}
                     "escape" if this.instance_escape() => {}
+                    "escape" if this.settings_escape() => {}
                     "escape" if this.screenshot_escape() => {}
                     "left" if this.screenshot_step(false) => {}
                     "right" if this.screenshot_step(true) => {}
@@ -5329,6 +5412,7 @@ impl Render for Launcher {
                 let size = window.viewport_size();
                 this.scene
                     .update(cx, |scene, cx| scene.point(ev.position, size, cx));
+                this.rain.update(cx, |rain, cx| rain.poke(cx));
             }))
             .relative()
             .flex()
@@ -5337,7 +5421,24 @@ impl Render for Launcher {
             .font_family(theme::FONT)
             .text_color(t.ink)
             .overflow_hidden()
-            .child(
+            .child(if t.glass {
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .size_full()
+                    .opacity(ui)
+                    .top(px(theme::RISE * (1. - ui)))
+                    .child(topbar)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_h_0()
+                            .child(sidebar)
+                            .child(div().flex().flex_col().flex_1().min_w_0().child(page)),
+                    )
+            } else {
                 div()
                     .relative()
                     .flex()
@@ -5352,63 +5453,9 @@ impl Render for Launcher {
                             .flex_1()
                             .min_w_0()
                             .child(topbar)
-                            .child(
-                                self.content_scroll
-                                    .wrap(
-                                        div()
-                                            .id("content")
-                                            .relative()
-                                            .flex_1()
-                                            .min_h_0()
-                                            .overflow_y_scroll()
-                                            // A scrolled page is drawn from its layer, not
-                                            // rendered: the Mods page's card asks, once the
-                                            // offset has moved, whether it must follow.
-                                            .on_scroll(cx.listener(
-                                                |this, _: &gpui::ScrollEvent, window, cx| {
-                                                    if this.page != Page::Mods {
-                                                        return;
-                                                    }
-                                                    cx.on_next_frame(window, |this, _, cx| {
-                                                        if this
-                                                            .mods_sticky
-                                                            .moved(&this.content_scroll.handle)
-                                                        {
-                                                            cx.notify();
-                                                        }
-                                                    });
-                                                },
-                                            ))
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .w_full()
-                                                    .min_w_0()
-                                                    .px(px(theme::PAGE_GUTTER))
-                                                    // The glass look's page heads hold their
-                                                    // own 40 px above the title.
-                                                    .pt(px(if self.page == Page::Play || t.glass {
-                                                        0.
-                                                    } else {
-                                                        28.
-                                                    }))
-                                                    .pb(px(48.))
-                                                    // The glass Settings page scrolls its own
-                                                    // pane under a still title.
-                                                    .when(
-                                                        t.glass && self.page == Page::Settings,
-                                                        |d| d.h_full().pb(px(14.)),
-                                                    )
-                                                    .child(content),
-                                            ),
-                                        &t,
-                                    )
-                                    .flex_1()
-                                    .min_h_0()
-                                    .when(t.glass, |d| d.mt(px(crate::glass::CONTENT_INSET))),
-                            ),
-                    ),
-            );
+                            .child(page),
+                    )
+            });
         root = root.children(row_menu);
         if self.page == Page::Servers {
             if let Some(dialog) = self.create_dialog(cx) {
@@ -5419,6 +5466,9 @@ impl Render for Launcher {
         root = root.children(self.import_note(cx));
         if let Some(dialog) = self.instance_dialog(cx) {
             root = root.child(dialog);
+        }
+        if t.glass && self.page == Page::Settings {
+            root = root.child(self.settings_dialog(cx));
         }
         if let Some(panel) = self.native_log_panel(cx) {
             root = root.child(panel);
@@ -5504,6 +5554,7 @@ impl Render for Launcher {
             .size_full()
             .bg(t.side)
             .child(sky)
+            .when(rains, |d| d.child(self.rain.clone()))
             // The sunset is Home's scenery; elsewhere it is dimmed behind the work.
             .when(sunset && self.page != Page::Play, |d| {
                 d.child(

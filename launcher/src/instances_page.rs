@@ -275,6 +275,16 @@ impl Launcher {
     }
 
     /// Opens the dialog for a new instance, or for changing `editing`.
+    /// The instance sheet for `instance`, open on `tab`. It picks the instance, since Launch and
+    /// Storage act on the one picked.
+    pub(super) fn open_instance_sheet(&mut self, instance: Instance, tab: glass_sheet::SheetTab) {
+        if matches!(instance.kind, InstanceKind::Default | InstanceKind::Own) {
+            self.select_instance(&instance);
+        }
+        self.sheet_tab = tab;
+        self.open_instance_dialog(Some(instance));
+    }
+
     pub(super) fn open_instance_dialog(&mut self, editing: Option<Instance>) {
         let editing_one = editing.is_some();
         let (name, group) = editing

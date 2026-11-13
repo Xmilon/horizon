@@ -76,10 +76,12 @@ pub(super) enum Field {
     AccentHex,
     /// The Shop's gift recipient (`wardrobe_page/shop/basket.rs`).
     ShopGift,
+    /// The Wardrobe's search through what the player owns (`wardrobe_page.rs`).
+    WardrobeSearch,
 }
 
 impl Field {
-    const ALL: [Field; 24] = [
+    const ALL: [Field; 25] = [
         Field::Name,
         Field::Seed,
         Field::Players,
@@ -104,6 +106,7 @@ impl Field {
         Field::DeleteServer,
         Field::AccentHex,
         Field::ShopGift,
+        Field::WardrobeSearch,
     ];
 }
 
@@ -1113,6 +1116,7 @@ impl Launcher {
                         f,
                         Field::InstanceModsFilter
                             | Field::ConsoleSearch
+                            | Field::WardrobeSearch
                             | Field::Motd
                             | Field::Port
                             | Field::Token
@@ -1169,6 +1173,7 @@ impl Launcher {
                             f,
                             Field::InstanceModsFilter
                                 | Field::ConsoleSearch
+                                | Field::WardrobeSearch
                                 | Field::AccentHex
                                 | Field::Motd
                                 | Field::Port
@@ -1302,6 +1307,7 @@ impl Launcher {
             | Field::InstanceVersion
             | Field::InstanceModsFilter
             | Field::ConsoleSearch
+            | Field::WardrobeSearch
             | Field::DeleteServer
             | Field::AccentHex => {}
             Field::PreLaunch | Field::Wrapper | Field::LaunchEnv | Field::PostExit => {

@@ -355,6 +355,87 @@ impl Launcher {
             .child(content)
     }
 
+    /// Escape closes the Settings dialog, back to the page under it.
+    pub(super) fn settings_escape(&mut self) -> bool {
+        if self.theme.glass && self.page == Page::Settings {
+            self.go(self.behind);
+            return true;
+        }
+        false
+    }
+
+    /// Settings as a dialog over the page the player was on (the glass look): the list and
+    /// pane of [`Self::glass_settings`] on a plate, closed by its ✕, a press outside or Escape.
+    pub(super) fn settings_dialog(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        let t = self.theme;
+        let body = self.settings_page(cx);
+        let close = ui::icon_button(
+            "settings-close",
+            "cancel-01",
+            36.,
+            18.,
+            radius::CONTROL,
+            false,
+            &t,
+        )
+        .tooltip(ui::tip(tr("Close")))
+        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            this.go(this.behind);
+            cx.notify();
+        }));
+        let card = ui::dialog_plate(radius::MODAL)
+            .id("settings-card")
+            .occlude()
+            .relative()
+            .flex()
+            .flex_col()
+            .w_full()
+            .max_w(px(1040.))
+            .h_full()
+            .max_h(px(720.))
+            .px(px(20.))
+            .pb(px(16.))
+            .child(
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(body),
+            )
+            .child(div().absolute().top(px(16.)).right(px(16.)).child(close));
+        div()
+            .id("settings-dialog")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p(px(24.))
+            .occlude()
+            .on_scroll(|_, _, cx| cx.stop_propagation())
+            .child(ui::scrim_backdrop())
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .bg(ui::scrim())
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                            this.go(this.behind);
+                            cx.notify();
+                        }),
+                    ),
+            )
+            .child(card)
+    }
+
     /// The section the list marks, from where the pane's sections are now ([`spy`]). A section's
     /// bounds are where layout put it, before the scroll (`ScrollHandle` keeps the offset apart):
     /// the scroll is taken off them here. Reading them as they were left the list on the first

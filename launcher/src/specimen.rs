@@ -47,12 +47,10 @@ pub fn render(t: &Theme) -> gpui::Div {
                 .p(px(16.))
                 .gap(px(8.))
                 .child(ui::text(16., gpui::FontWeight::SEMIBOLD, 1.).child("Lifting card"))
-                .child(
-                    ui::text(13., gpui::FontWeight::NORMAL, 0.6).child(
-                        "Rises 3 px on the spring while the pointer is on it; its outline warms \
+                .child(ui::text(13., gpui::FontWeight::NORMAL, 0.6).child(
+                    "Rises 3 px on the spring while the pointer is on it; its outline warms \
                          to the accent and a glow opens under it.",
-                    ),
-                ),
+                )),
         ))
         .child(ui::lift(
             &"spec-card-b".into(),
@@ -88,19 +86,21 @@ pub fn render(t: &Theme) -> gpui::Div {
             crate::Kind::Ghost,
             t,
         ));
-    let nav = div().flex().items_center().gap(px(2.)).child(
-        ui::nav_tab("spec-nav-open", "Open page", true, t),
-    );
-    let nav2 = div().flex().items_center().gap(px(2.)).child(
-        ui::nav_tab("spec-nav-shut", "Another page", false, t),
-    );
+    let nav = div().flex().items_center().gap(px(2.)).child(ui::nav_tab(
+        "spec-nav-open",
+        "Open page",
+        true,
+        t,
+    ));
+    let nav2 = div().flex().items_center().gap(px(2.)).child(ui::nav_tab(
+        "spec-nav-shut",
+        "Another page",
+        false,
+        t,
+    ));
     let segments = crate::segments(
         "spec-seg",
-        &[
-            (Seg::One, "One"),
-            (Seg::Two, "Two"),
-            (Seg::Three, "Three"),
-        ],
+        &[(Seg::One, "One"), (Seg::Two, "Two"), (Seg::Three, "Three")],
         seg,
         t,
         pick,
@@ -116,19 +116,14 @@ pub fn render(t: &Theme) -> gpui::Div {
         .items_start()
         .gap(px(28.))
         .p(px(40.))
-        .child(
-            ui::text(24., gpui::FontWeight::SEMIBOLD, 1.)
-                .child("Motion specimen"),
-        )
+        .child(ui::text(24., gpui::FontWeight::SEMIBOLD, 1.).child("Motion specimen"))
         .child(cards)
         .child(buttons)
         .child(nav)
         .child(nav2)
         .child(segments)
-        .child(
-            ui::text(13., gpui::FontWeight::NORMAL, 0.5).child(
-                "Hover each part; click the segmented control to slide its pill. Reduced motion \
+        .child(ui::text(13., gpui::FontWeight::NORMAL, 0.5).child(
+            "Hover each part; click the segmented control to slide its pill. Reduced motion \
                  draws everything where it lands.",
-            ),
-        )
+        ))
 }

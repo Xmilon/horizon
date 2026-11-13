@@ -6,11 +6,11 @@ use gpui::{
     canvas, div, prelude::*, px, rgb, rgba, svg, AnimationExt, AnyElement, App, ClickEvent, Div,
     ElementId, FontWeight, Hsla, Pixels, SharedString, Stateful, Svg, TextRun, Window,
 };
+use horizon_theme::glass::{fill, ink, radius, Glass};
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use horizon_theme::glass::{fill, ink, radius, Glass};
-use std::cell::Cell;
 
 thread_local! {
     /// Whether this frame's pages draw the glass look (the dark appearance).
@@ -338,8 +338,7 @@ pub fn lift(id: &SharedString, d: Stateful<Div>) -> AnyElement {
     let warm = color(look().accent).opacity(0.65);
     crate::hover_move(
         id,
-        d.border_1()
-            .active(|s| s.top(px(crate::motion::PRESS))),
+        d.border_1().active(|s| s.top(px(crate::motion::PRESS))),
         move |d, t| {
             d.top(px(-crate::motion::LIFT * t))
                 .border_color(towards(rest, warm, t))
@@ -593,11 +592,12 @@ pub fn tab(
         .cursor_pointer()
         .font_family(horizon_theme::glass::FONT)
         .text_size(px(15.))
-        .line_height(px(20.));
+        .line_height(px(20.))
+        // One weight open or not: a name never changes width when its tab is chosen.
+        .font_weight(FontWeight::MEDIUM);
     let d = if open {
         d.bg(white(fill::ACTIVE))
             .border_color(white(edge::STRONG))
-            .font_weight(FontWeight::MEDIUM)
             .text_color(white(ink::FULL))
     } else {
         d.border_color(gpui::transparent_black())
@@ -696,28 +696,6 @@ pub fn nav_tab(
         t,
     )
 }
-/// A tab with an icon and a count (`Tabs`, size `md`): as [`tab`], the icon 16 px before the
-/// label, the count after it in white at 45 %.
-pub fn count_tab(
-    id: impl Into<SharedString>,
-    icon_name: Option<&'static str>,
-    label: impl Into<SharedString>,
-    count: Option<usize>,
-    open: bool,
-    t: &Theme,
-) -> Stateful<Div> {
-    let colour = white(if open { ink::FULL } else { ink::BODY });
-    tab(id, "", open, t)
-        .children(icon_name.map(|n| icon(n, 16., colour).relative()))
-        .child(div().relative().child(label.into()))
-        .children(count.map(|n| {
-            div()
-                .relative()
-                .text_color(white(ink::DIM))
-                .child(n.to_string())
-        }))
-}
-
 const MENU_FONT_SIZE: f32 = 14.;
 const MENU_ICON_SIZE: f32 = 17.;
 const MENU_ROW_GAP: f32 = 12.;
@@ -1240,8 +1218,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
         Kind::Primary => {
             let id2 = id.clone();
             let accent2 = self::accent2();
-            let base = d
-                .overflow_hidden()
+            d.overflow_hidden()
                 .bg(gpui::linear_gradient(
                     135.,
                     gpui::linear_color_stop(color(look.accent), 0.),
@@ -1269,34 +1246,32 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
                     },
                 ])
                 .hover(move |s| {
-                    s.border_color(white(0.34))
-                        .shadow(vec![
-                            gpui::BoxShadow {
-                                color: gpui::white().opacity(0.28),
-                                offset: gpui::point(px(0.), px(1.)),
-                                blur_radius: px(0.),
-                                spread_radius: px(0.),
-                                inset: true,
-                            },
-                            gpui::BoxShadow {
-                                color: color(look.accent).opacity(0.95),
-                                offset: gpui::point(px(0.), px(12.)),
-                                blur_radius: px(34.),
-                                spread_radius: px(-8.),
-                                inset: false,
-                            },
-                            gpui::BoxShadow {
-                                color: color(look.accent).opacity(0.5),
-                                offset: gpui::point(px(0.), px(0.)),
-                                blur_radius: px(0.),
-                                spread_radius: px(1.),
-                                inset: false,
-                            },
-                        ])
+                    s.border_color(white(0.34)).shadow(vec![
+                        gpui::BoxShadow {
+                            color: gpui::white().opacity(0.28),
+                            offset: gpui::point(px(0.), px(1.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(0.),
+                            inset: true,
+                        },
+                        gpui::BoxShadow {
+                            color: color(look.accent).opacity(0.95),
+                            offset: gpui::point(px(0.), px(12.)),
+                            blur_radius: px(34.),
+                            spread_radius: px(-8.),
+                            inset: false,
+                        },
+                        gpui::BoxShadow {
+                            color: color(look.accent).opacity(0.5),
+                            offset: gpui::point(px(0.), px(0.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(1.),
+                            inset: false,
+                        },
+                    ])
                 })
                 .active(|s| s.opacity(0.92).shadow(Vec::new()))
-                .child(sheen(&id2));
-            base
+                .child(sheen(&id2))
         }
         Kind::Secondary => d
             .bg(white(fill::BUTTON))
@@ -1314,13 +1289,15 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
     keyboard(track_hover(d.child(div().relative().child(label)), id), t)
 }
 
+/// A pill's resting place (left, width) and the slide it plays: when it began, and from where.
+type PillState = ((f32, f32), Option<(std::time::Instant, (f32, f32))>);
+
 thread_local! {
     /// Where each segmented control's options were last drawn, and its pill: the option's place
     /// and width from the control's left edge; where the pill rests, and the slide it is playing
     /// (when it started, and where it came from) while one runs.
     static SEG_BOUNDS: RefCell<HashMap<String, Vec<(f32, f32)>>> = RefCell::new(HashMap::new());
-    static SEG_PILL: RefCell<HashMap<String, ((f32, f32), Option<(std::time::Instant, (f32, f32))>)>> =
-        RefCell::new(HashMap::new());
+    static SEG_PILL: RefCell<HashMap<String, PillState>> = RefCell::new(HashMap::new());
 }
 
 /// The pill's slide between a segmented control's options (the site's, a hair short of the
@@ -1330,6 +1307,92 @@ const SEG_SLIDE: horizon_theme::Motion = horizon_theme::Motion {
     ms: 280,
     curve: [0.22, 0.9, 0.3, 1.12],
 };
+
+/// Where a row of options with a sliding pill starts: its options' places are kept from it.
+pub type PillOrigin = Rc<Cell<Option<gpui::Point<Pixels>>>>;
+
+/// Records the row's origin (an absolute layer filling the row).
+pub fn pill_origin(origin: &PillOrigin) -> impl IntoElement {
+    let origin = origin.clone();
+    canvas(
+        move |bounds, _, _| origin.set(Some(bounds.origin)),
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+/// Records option `i`'s place and width in row `id` (an absolute layer filling the option).
+pub fn pill_probe(id: impl Into<String>, i: usize, origin: PillOrigin) -> impl IntoElement {
+    let key = id.into();
+    canvas(
+        move |bounds, _, _| {
+            if let Some(o) = origin.get() {
+                let left = f32::from(bounds.origin.x - o.x);
+                let width = f32::from(bounds.size.width);
+                SEG_BOUNDS.with_borrow_mut(|all| {
+                    let row = all.entry(key.clone()).or_default();
+                    if row.len() <= i {
+                        row.resize(i + 1, (0., 0.));
+                    }
+                    row[i] = (left, width);
+                });
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
+/// The pill of row `id`, drawn by `base` (absolute, its height set) at option `active`'s
+/// recorded place, sliding there on [`SEG_SLIDE`] when it changes. None until the row has been
+/// drawn once.
+pub fn sliding_pill(id: &str, active: usize, base: impl Fn() -> Div) -> Option<AnyElement> {
+    let at = SEG_BOUNDS.with_borrow(|all| {
+        all.get(id)
+            .and_then(|row| row.get(active).copied())
+            .filter(|&(_, w)| w > 0.)
+    })?;
+    // A new place starts a slide; while one runs the pill keeps being built on its animation
+    // (a rebuild that drops it would snap it to the end), and once it is done the pill rests.
+    // As `motion::knob` does for a switch.
+    let running = SEG_PILL.with_borrow_mut(|pills| {
+        let entry = pills.entry(id.to_string()).or_insert((at, None));
+        if entry.0 != at {
+            entry.1 = Some((std::time::Instant::now(), entry.0));
+            entry.0 = at;
+        }
+        match entry.1 {
+            Some((since, from)) if since.elapsed() < SEG_SLIDE.duration() => Some((since, from)),
+            _ => {
+                entry.1 = None;
+                None
+            }
+        }
+    });
+    Some(match running {
+        None => base().left(px(at.0)).w(px(at.1)).into_any_element(),
+        Some((since, from)) => {
+            static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+            let start = *START.get_or_init(std::time::Instant::now);
+            let key = ElementId::named_usize(
+                format!("{id}-pill"),
+                since.saturating_duration_since(start).as_micros() as usize,
+            );
+            base()
+                .with_animation(key, crate::motion::eased(SEG_SLIDE), move |d, p| {
+                    d.left(px(from.0 + (at.0 - from.0) * p))
+                        .w(px(from.1 + (at.1 - from.1) * p))
+                })
+                .into_any_element()
+        }
+    })
+}
 
 /// A segmented control in the glass look (the site's): white at 4 % round at 12, 3 px around
 /// 32 px options round at 9; the chosen one's place is held by a pill in the accent's tint that
@@ -1341,7 +1404,7 @@ pub fn segments<T: Copy + PartialEq + 'static>(
     t: &Theme,
     on_pick: impl Fn(T, &mut Window, &mut App) + Clone + 'static,
 ) -> Stateful<Div> {
-    let origin: Rc<Cell<Option<gpui::Point<Pixels>>>> = Rc::new(Cell::new(None));
+    let origin = PillOrigin::default();
     let mut seg = div()
         .id(id)
         .relative()
@@ -1353,17 +1416,7 @@ pub fn segments<T: Copy + PartialEq + 'static>(
         .bg(white(0.04))
         .border_1()
         .border_color(white(edge::REST))
-        .child({
-            let origin = origin.clone();
-            canvas(
-                move |bounds, _, _| origin.set(Some(bounds.origin)),
-                |_, _, _, _| {},
-            )
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-        });
+        .child(pill_origin(&origin));
     for (i, &(value, label)) in options.iter().enumerate() {
         let active = current == value;
         let pick = on_pick.clone();
@@ -1387,43 +1440,15 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .text_color(white(if active { ink::FULL } else { ink::MUTED }))
             .when(!active, |d| d.hover(|s| s.text_color(white(ink::FULL))))
             .child(crate::tr(label))
-            .child(
-                canvas(
-                    move |bounds, _, _| {
-                        if let Some(o) = origin.get() {
-                            let left = f32::from(bounds.origin.x - o.x);
-                            let width = f32::from(bounds.size.width);
-                            SEG_BOUNDS.with_borrow_mut(|all| {
-                                let row = all.entry(key.clone()).or_default();
-                                if row.len() <= i {
-                                    row.resize(i + 1, (0., 0.));
-                                }
-                                row[i] = (left, width);
-                            });
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full(),
-            )
+            .child(pill_probe(key, i, origin))
             .on_click(move |_: &ClickEvent, window, cx| pick(value, window, cx));
         seg = seg.child(keyboard(d, t));
     }
-    // The pill, over the options: at the chosen one's recorded place, sliding there when the
-    // choice changed (the options are painted before it, so the place is this frame's).
     let active = options
         .iter()
         .position(|&(value, _)| value == current)
         .unwrap_or(0);
-    let pill_at = SEG_BOUNDS.with_borrow(|all| {
-        all.get(id)
-            .and_then(|row| row.get(active).copied())
-            .filter(|&(w, _)| w > 0.)
-    });
-    let base = || {
+    let pill = sliding_pill(id, active, || {
         div()
             .absolute()
             .top(px(3.))
@@ -1439,56 +1464,7 @@ pub fn segments<T: Copy + PartialEq + 'static>(
                 spread_radius: px(-6.),
                 inset: false,
             }])
-    };
-    let pill = match pill_at {
-        None => None,
-        Some(at) => {
-            // A new place starts a slide; while one runs the pill keeps being built on its
-            // animation (a rebuild that drops it would snap it to the end), and once it is
-            // done the pill rests. As `motion::knob` does for a switch.
-            let running = SEG_PILL.with_borrow_mut(|pills| {
-                let entry = pills
-                    .entry(id.to_string())
-                    .or_insert(((0., 0.), None));
-                if entry.0 != at {
-                    entry.1 = Some((std::time::Instant::now(), entry.0));
-                    entry.0 = at;
-                }
-                match entry.1 {
-                    Some((since, from))
-                        if std::time::Instant::now().duration_since(since)
-                            < SEG_SLIDE.duration() =>
-                    {
-                        Some((since, from))
-                    }
-                    _ => {
-                        entry.1 = None;
-                        None
-                    }
-                }
-            });
-            match running {
-                None => Some(base().left(px(at.0)).w(px(at.1)).into_any_element()),
-                Some((since, from)) => {
-                    static START: std::sync::OnceLock<std::time::Instant> =
-                        std::sync::OnceLock::new();
-                    let start = *START.get_or_init(std::time::Instant::now);
-                    let key = ElementId::named_usize(
-                        format!("{id}-pill"),
-                        since.saturating_duration_since(start).as_micros() as usize,
-                    );
-                    Some(
-                        base()
-                            .with_animation(key, crate::motion::eased(SEG_SLIDE), move |d, p| {
-                                d.left(px(from.0 + (at.0 - from.0) * p))
-                                    .w(px(from.1 + (at.1 - from.1) * p))
-                            })
-                            .into_any_element(),
-                    )
-                }
-            }
-        }
-    };
+    });
     seg.children(pill)
 }
 

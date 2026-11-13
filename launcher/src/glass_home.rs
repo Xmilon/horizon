@@ -20,10 +20,6 @@ pub(super) const TOP_BAR_WIDE: f32 = 1380.;
 pub(super) const SIDE_BY_SIDE: f32 = 1200.;
 /// Under this window width the top bar's tabs tighten and Settings' sections go above the page.
 pub(super) const COMPACT: f32 = 1180.;
-/// Under this window width Home's tabs tighten further.
-pub(super) const NARROW: f32 = 960.;
-/// Under this window width Home's tabs are as tight as they go.
-pub(super) const NARROWEST: f32 = 750.;
 
 /// Height above the Version menu's rows that the window gives to the page's head: the top bar,
 /// the tabs, the title and the button the menu hangs from (taken a little high, so the menu
@@ -90,6 +86,18 @@ impl Launcher {
                 cx.notify();
             },
         ));
+        // Instance settings: the sheet down the right side.
+        let settings = |this: &mut Self, cx: &mut Context<Self>| {
+            let instance = this.selected_instance().cloned()?;
+            Some(
+                ui::big_icon("home-settings", "sliders-horizontal", &this.theme)
+                    .tooltip(ui::tip(tr("Instance settings")))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::General);
+                        cx.notify();
+                    })),
+            )
+        };
         let actions = if wide {
             div()
                 .mt(px(32.))
@@ -102,6 +110,7 @@ impl Launcher {
                 .children(java.is_none().then(|| self.glass_picker(cx)))
                 .children(Some(mods))
                 .children(self.folder_group(java.is_none(), cx))
+                .children(settings(self, cx))
                 .child(div().flex_1().min_w(px(22.)))
                 .child(self.glass_join_friend(tag, true, cx))
         } else {
@@ -117,7 +126,8 @@ impl Launcher {
                         .gap(px(10.))
                         .child(self.play_group(tag, prepared || java.is_some(), cx))
                         .children(java.is_none().then(|| self.glass_picker(cx)))
-                        .children(self.folder_group(java.is_none(), cx)),
+                        .children(self.folder_group(java.is_none(), cx))
+                        .children(settings(self, cx)),
                 )
                 .child(self.glass_join_friend(tag, false, cx))
         };
@@ -246,7 +256,7 @@ impl Launcher {
                     .cursor_pointer()
                     .hover(|s| s.opacity(0.85))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.open_instance_dialog(Some(edit.clone()));
+                        this.open_instance_sheet(edit.clone(), glass_sheet::SheetTab::General);
                         cx.notify();
                     }))
                     .child(self.glass_instance_icon(&instance, 56.)),
@@ -554,30 +564,29 @@ impl Launcher {
             .group("play-glyph")
             .when(primary, |d| {
                 d.hover(move |s| {
-                    s.border_color(white(0.34))
-                        .shadow(vec![
-                            gpui::BoxShadow {
-                                color: white(0.28),
-                                offset: gpui::point(px(0.), px(1.)),
-                                blur_radius: px(0.),
-                                spread_radius: px(0.),
-                                inset: true,
-                            },
-                            gpui::BoxShadow {
-                                color: accent.opacity(0.95),
-                                offset: gpui::point(px(0.), px(12.)),
-                                blur_radius: px(34.),
-                                spread_radius: px(-8.),
-                                inset: false,
-                            },
-                            gpui::BoxShadow {
-                                color: soft.opacity(0.5),
-                                offset: gpui::point(px(0.), px(0.)),
-                                blur_radius: px(0.),
-                                spread_radius: px(1.),
-                                inset: false,
-                            },
-                        ])
+                    s.border_color(white(0.34)).shadow(vec![
+                        gpui::BoxShadow {
+                            color: white(0.28),
+                            offset: gpui::point(px(0.), px(1.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(0.),
+                            inset: true,
+                        },
+                        gpui::BoxShadow {
+                            color: accent.opacity(0.95),
+                            offset: gpui::point(px(0.), px(12.)),
+                            blur_radius: px(34.),
+                            spread_radius: px(-8.),
+                            inset: false,
+                        },
+                        gpui::BoxShadow {
+                            color: soft.opacity(0.5),
+                            offset: gpui::point(px(0.), px(0.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(1.),
+                            inset: false,
+                        },
+                    ])
                 })
                 .active(|s| s.opacity(0.92).shadow(Vec::new()))
             });
@@ -979,7 +988,7 @@ impl Launcher {
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.home_menu = HomeMenu::None;
-                    this.open_instance_dialog(Some(edit.clone()));
+                    this.open_instance_sheet(edit.clone(), glass_sheet::SheetTab::General);
                     cx.notify();
                 })),
             );

@@ -130,6 +130,11 @@ impl Viewer {
         true
     }
 
+    /// Turns the player as a drag of `dx` px would (the page's turn buttons).
+    pub(super) fn turn(&mut self, dx: f32, cx: &mut Context<Self>) {
+        self.move_camera(self.stage.camera().dragged(dx, 0.), cx);
+    }
+
     fn drag_to(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
         let Some(from) = self.drag.replace(at) else {
             return;
