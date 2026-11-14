@@ -310,7 +310,7 @@ impl Launcher {
                             },
                         )),
                     ),
-                )
+                );
             }
             Load::Ready(r) if r.is_empty() => {
                 return page.child(centered(tr("No releases yet."), &t));
