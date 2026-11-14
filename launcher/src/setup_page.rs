@@ -453,6 +453,7 @@ impl Render for Setup {
         let sky = if t.dark {
             self.scene.clone().into_any_element()
         } else {
+            crate::sky::frost(&t.night, (viewport.width.into(), viewport.height.into()));
             let (sky, next) = self.sky.render(
                 &t.night,
                 (viewport.width.into(), viewport.height.into()),

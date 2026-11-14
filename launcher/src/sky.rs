@@ -348,11 +348,6 @@ impl Sky {
         };
         self.clock.set(run, now);
         let t = self.clock.at(now).as_secs_f32();
-        // A painted theme's plates frost this sky: its blurred copy, made once per size and blur.
-        crate::glass::frost_sky(n, (w, h), || {
-            let (texels, cols, rows) = still_texels(n, w, h);
-            (texels, cols, rows, TEXEL)
-        });
         let layers = self.layers(n.art, scale);
         let snap = |v: f32| (v * scale).round() / scale;
         let art = &n.art;
@@ -1028,6 +1023,81 @@ fn sun(art: &SkyArt) -> Vec<[u8; 4]> {
         }
     }
     out
+}
+
+/// A painted theme's plates frost its sky: its blurred copy, made once per size and blur.
+/// Called by the window before its plates are built, as the sky itself is drawn in its own view.
+pub fn frost(n: &Night, (w, h): (f32, f32)) {
+    crate::glass::frost_sky(n, (w, h), || {
+        let (texels, cols, rows) = still_texels(n, w, h);
+        (texels, cols, rows, TEXEL)
+    });
+}
+
+/// The painted sky as a view of its own: its drift wakes only this view, so a sky frame draws
+/// the sky again and the rest of the window from its last frame (GPUI Fast retains views).
+pub struct SkyView {
+    sky: Sky,
+    shown: Option<(Night, (f32, f32), f32)>,
+    wake: Option<(Instant, gpui::Task<()>)>,
+    _activation: gpui::Subscription,
+}
+
+impl SkyView {
+    pub fn new(window: &mut gpui::Window, cx: &mut gpui::Context<Self>) -> Self {
+        Self {
+            sky: Sky::default(),
+            shown: None,
+            wake: None,
+            // Back in front, a sky held while the window was behind others drifts again.
+            _activation: cx.observe_window_activation(window, |_, _, cx| cx.notify()),
+        }
+    }
+
+    /// The sky to draw for `n` in a window of `size` logical pixels at `scale`.
+    pub fn set(&mut self, n: Night, size: (f32, f32), scale: f32, cx: &mut gpui::Context<Self>) {
+        let next = Some((n, size, scale));
+        if self.shown != next {
+            self.shown = next;
+            cx.notify();
+        }
+    }
+
+    /// Draws the sky again in `after`, when it next changes, unless a frame comes sooner.
+    fn wake(&mut self, after: Duration, cx: &mut gpui::Context<Self>) {
+        let at = Instant::now() + after;
+        if self.wake.as_ref().is_some_and(|(when, _)| *when <= at) {
+            return;
+        }
+        let timer = cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(after).await;
+            let _ = this.update(cx, |this, cx| {
+                this.wake = None;
+                cx.notify();
+            });
+        });
+        self.wake = Some((at, timer));
+    }
+}
+
+impl gpui::Render for SkyView {
+    fn render(
+        &mut self,
+        window: &mut gpui::Window,
+        cx: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        self.sky.free_replaced(window);
+        let Some((n, size, scale)) = self.shown else {
+            return div();
+        };
+        let (sky, next) = self
+            .sky
+            .render(&n, size, scale, window.is_window_active(), Instant::now());
+        if let Some(next) = next {
+            self.wake(next, cx);
+        }
+        sky
+    }
 }
 
 #[cfg(test)]

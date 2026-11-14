@@ -79,6 +79,7 @@ mod setup_page;
 mod shell;
 mod shortcut_page;
 mod sky;
+mod window_root;
 mod specimen;
 mod sticky;
 mod switch_page;
@@ -548,14 +549,16 @@ struct Launcher {
     /// The player's servers, for the sidebar until the Servers page has read them.
     side_servers: Vec<horizon_launcher::servers::Entry>,
     /// The pixel art made for this window (`art.rs`), and pictures downloaded by URL.
-    sky: sky::Sky,
+    sky: gpui::Entity<sky::SkyView>,
     /// The pixel sunset of the new design (dark appearance): its own view, so a frame of it
     /// alone redraws nothing else.
     scene: gpui::Entity<scene::Scene>,
     /// Hypr Neon's rain over its black night (`rain.rs`).
     rain: gpui::Entity<rain::Rain>,
-    /// When the sky next asks for a frame, and the timer that will draw it.
-    sky_wake: Option<(Instant, gpui::Task<()>)>,
+    /// What is behind the launcher, drawn as its sibling (`window_root.rs`).
+    backdrop: gpui::Entity<window_root::Backdrop>,
+    /// What the views behind the launcher were last handed.
+    pushed: Option<Pushed>,
     /// The window's scale, as of its last frame, for art drawn outside `render`'s reach.
     scale: f32,
 }
@@ -633,6 +636,11 @@ impl Launcher {
         // Pin the window's chrome (macOS title bar) to the choice before the theme reads
         // `window.appearance()`, so both draw the same look.
         titlebar::apply_appearance(window, settings.appearance);
+        let scene = cx.new(|_| scene::Scene::new());
+        let sky = cx.new(|cx| sky::SkyView::new(window, cx));
+        let rain = cx.new(|_| rain::Rain::new());
+        let backdrop =
+            cx.new(|_| window_root::Backdrop::new(scene.clone(), sky.clone(), rain.clone()));
         let mut this = Self {
             theme: crate::theme::from_settings(&settings, window.appearance()),
             page: Page::from_env(),
@@ -829,10 +837,11 @@ impl Launcher {
             aside: while_playing::Aside::new(window.window_handle()),
             shortcuts: Default::default(),
             side_servers: horizon_launcher::servers::list(),
-            sky: sky::Sky::default(),
-            scene: cx.new(|_| scene::Scene::new()),
-            rain: cx.new(|_| rain::Rain::new()),
-            sky_wake: None,
+            sky,
+            scene,
+            rain,
+            backdrop,
+            pushed: None,
             scale: window.scale_factor(),
         };
         if this.location_error.is_some() || this.location_note.is_some() {
@@ -5315,15 +5324,10 @@ impl Render for Launcher {
         // Reduced motion (the player's or the system's) holds GPUI's own animations too.
         sky::set_preference(self.settings.reduce_motion);
         cx.set_reduce_motion(motion::still());
-        self.scene
-            .update(cx, |scene, cx| scene.set_performance(performance, cx));
         let blur = if performance { 0. } else { blur };
         // Hypr Neon's night rains, except in performance mode.
         let rains = self.theme.dark && self.theme.edge.is_some() && !performance;
         let accent = self.look.accent;
-        self.rain.update(cx, |rain, cx| rain.set(rains, accent, cx));
-        self.scene
-            .update(cx, |scene, cx| scene.set_look(tint, blur, cx));
         self.scale = window.scale_factor();
         self.perf.frame();
         if self.bench.as_ref().is_some_and(perf::Bench::scrolling) {
@@ -5354,7 +5358,6 @@ impl Render for Launcher {
             Page::Shop => self.shop_page(cx),
             Page::Settings => self.settings_page(cx),
         };
-        self.sky.free_replaced(window);
         self.pictures.free_retired(window);
         self.wardrobe_marks.free_replaced(window);
         self.shop.free_replaced(window);
@@ -5379,21 +5382,41 @@ impl Render for Launcher {
         // the blocky looks keep the baked sky. The sky is tiles that don't depend on the
         // window's size, so a resize costs no rebake.
         glass::begin_build(window);
-        let sky = if sunset {
-            self.scene.clone().into_any_element()
-        } else {
-            let (sky, next) = self.sky.render(
-                &t.night,
-                (size.width.into(), size.height.into()),
-                window.scale_factor(),
-                window.is_window_active(),
-                Instant::now(),
-            );
-            if let Some(next) = next {
-                self.wake_sky(next, cx);
-            }
-            sky.into_any_element()
+        let painted = (!sunset).then(|| {
+            let (night, size) = (t.night, (size.width.into(), size.height.into()));
+            sky::frost(&night, size);
+            (night, size, window.scale_factor())
+        });
+        // What is behind the launcher, handed to its views only when it changed: reading them
+        // on every frame would make each sky frame draw the launcher again too.
+        let pushed = Pushed {
+            performance,
+            tint,
+            blur,
+            rains,
+            accent,
+            painted,
+            back: window_root::Back {
+                side: t.side,
+                sunset,
+                rains,
+                // The sunset is Home's scenery; elsewhere it is dimmed behind the work.
+                dim: sunset && self.page != Page::Play,
+            },
         };
+        if self.pushed != Some(pushed) {
+            self.pushed = Some(pushed);
+            self.scene.update(cx, |scene, cx| {
+                scene.set_performance(performance, cx);
+                scene.set_look(tint, blur, cx);
+            });
+            self.rain.update(cx, |rain, cx| rain.set(rains, accent, cx));
+            if let Some((night, size, scale)) = painted {
+                self.sky
+                    .update(cx, |sky, cx| sky.set(night, size, scale, cx));
+            }
+            self.backdrop.update(cx, |b, cx| b.set(pushed.back, cx));
+        }
         // Dark: the glass frame over the scene; Light keeps the night one over the dawn.
         let (topbar, sidebar) = if t.glass {
             (
@@ -5649,25 +5672,23 @@ impl Render for Launcher {
             .flex_col()
             .relative()
             .size_full()
-            .bg(t.side)
-            .child(sky)
-            .when(rains, |d| d.child(self.rain.clone()))
-            // The sunset is Home's scenery; elsewhere it is dimmed behind the work.
-            .when(sunset && self.page != Page::Play, |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .bg(gpui::black().opacity(0.38)),
-                )
-            })
             .children(titlebar::render(&t, window))
             .children(self.settings_save_notice(cx))
             .child(root.flex_1().min_h_0())
             .children(titlebar::resize_handles(window))
     }
+}
+
+/// What the launcher's frame hands the views behind it (the scene, the rain, the painted sky).
+#[derive(Clone, Copy, PartialEq)]
+struct Pushed {
+    performance: bool,
+    tint: Option<u32>,
+    blur: f32,
+    rains: bool,
+    accent: u32,
+    painted: Option<(horizon_theme::night::Night, (f32, f32), f32)>,
+    back: window_root::Back,
 }
 
 impl Launcher {
@@ -5708,22 +5729,6 @@ impl Launcher {
         }
         handle.set_offset(offset);
         window.request_animation_frame();
-    }
-
-    /// Draws the window again in `after`, when the sky next changes, unless a frame comes sooner.
-    fn wake_sky(&mut self, after: Duration, cx: &mut Context<Self>) {
-        let at = Instant::now() + after;
-        if self.sky_wake.as_ref().is_some_and(|(when, _)| *when <= at) {
-            return;
-        }
-        let timer = cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(after).await;
-            let _ = this.update(cx, |this, cx| {
-                this.sky_wake = None;
-                cx.notify();
-            });
-        });
-        self.sky_wake = Some((at, timer));
     }
 
     fn skip_opening(&mut self) {
@@ -5890,7 +5895,7 @@ fn main() {
                     },
                     ..Default::default()
                 },
-                |window, cx| cx.new(|cx| Launcher::new(window, cx)),
+                |window, cx| cx.new(|cx| window_root::Shell::new(window, cx)),
             )
             .expect("window");
             cx.on_window_closed(|cx, _| shut_down(cx)).detach();
