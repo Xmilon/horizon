@@ -34,9 +34,9 @@ impl Launcher {
                     .flex()
                     .gap(px(4.))
                     .child(trf("No mods in {name} yet.", &[("name", &name)]))
-                    .child(ui::link("instance-mods-find", tr("Find mods")).on_click(find_mods(cx)))
-                    .children(self.dev_entry(cx)),
-            );
+                    .child(ui::link("instance-mods-find", tr("Find mods")).on_click(find_mods(cx))),
+            )
+            .children(self.dev_entry(cx).map(|entry| entry.px(px(12.)).mt(px(-28.))));
         }
         let note = match count {
             1 => trf("1 mod in {name}", &[("name", &name)]),

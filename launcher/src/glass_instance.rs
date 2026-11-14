@@ -5,7 +5,7 @@
 //! appearance only: the light look keeps `instance_dialog`.
 use super::*;
 use crate::glass_ui::{self as ui, white};
-use horizon_launcher::instances::{self, Icon, Instance};
+use horizon_launcher::instances::{self, Channel, Icon, Instance};
 use horizon_launcher::loaders::Kind as Loader;
 use horizon_theme::glass::{fill, ink, radius};
 use new_instance::{NewKind, VersionList};
@@ -255,16 +255,35 @@ impl Launcher {
 
     /// The Horizon version an instance plays: the one it keeps, else the one it follows.
     pub(super) fn draft_horizon(&self) -> Option<String> {
-        let pin = self.instances.dialog.as_ref()?.pin.clone();
-        pin.or_else(|| self.followed_version())
+        let d = self.instances.dialog.as_ref()?;
+        d.pin.clone().or_else(|| self.followed_version(d.channel))
     }
 
-    /// The version an instance that keeps none plays: the launcher's, or with none installed
-    /// yet, the newest Nightly, which Create installs.
-    fn followed_version(&self) -> Option<String> {
-        self.launcher_version()
-            .cloned()
-            .or_else(|| self.horizon_choices().into_iter().next())
+    /// The version an instance that keeps none plays: on Stable the newest stable build (Create
+    /// installs it), on Nightly the launcher's, or with none installed yet, the newest Nightly.
+    fn followed_version(&self, channel: Channel) -> Option<String> {
+        let nightly = || {
+            self.launcher_version()
+                .cloned()
+                .or_else(|| self.horizon_choices().into_iter().next())
+        };
+        match channel {
+            Channel::Stable => self
+                .stable_builds()
+                .into_iter()
+                .next()
+                .map(|b| b.tag)
+                .or_else(nightly),
+            Channel::Nightly => nightly(),
+        }
+    }
+
+    /// The Stable channel's builds, newest first (none until the release list is here).
+    pub(super) fn stable_builds(&self) -> Vec<StableBuild> {
+        match &self.releases {
+            Load::Ready(r) => stable_builds(r),
+            _ => Vec::new(),
+        }
     }
 
     /// The Horizon versions the dialog offers (the mockup's `data.nightlies`): see
@@ -550,6 +569,55 @@ impl Launcher {
             .child(div().flex_1().min_h(px(32.)))
             .children(import)
     }
+}
+
+/// A build on the Stable channel; `week` is the Monday of its week when it stands for one.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct StableBuild {
+    pub(super) tag: String,
+    pub(super) week: Option<String>,
+}
+
+/// The Stable channel's builds, newest first: the real (non-Nightly, non-pre-release) releases
+/// when any exist; until then the newest Nightly of each Monday to Sunday week. `releases` is
+/// newest first, as GitHub lists them.
+pub(super) fn stable_builds(releases: &[Release]) -> Vec<StableBuild> {
+    let real: Vec<_> = releases
+        .iter()
+        .filter(|r| {
+            r.nightly.is_none()
+                && r.asset.is_some()
+                && !r.prerelease
+                && horizon_launcher::backend::launcher_version(&r.tag).is_none()
+        })
+        .map(|r| StableBuild { tag: r.tag.clone(), week: None })
+        .collect();
+    if !real.is_empty() {
+        return real;
+    }
+    use chrono::Datelike;
+    // (monday, date, tag): the newest date of a week wins; the first listed on a tie.
+    let mut weeks: Vec<(String, String, String)> = Vec::new();
+    for r in releases.iter().filter(|r| r.nightly.is_some() && r.asset.is_some()) {
+        let Some(date) = horizon_launcher::nightly::date_of(&r.tag) else {
+            continue;
+        };
+        let Ok(day) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
+            continue;
+        };
+        let monday = (day - chrono::Duration::days(day.weekday().num_days_from_monday() as i64))
+            .to_string();
+        match weeks.iter_mut().find(|w| w.0 == monday) {
+            Some(w) if w.1.as_str() < date => *w = (monday, date.into(), r.tag.clone()),
+            Some(_) => {}
+            None => weeks.push((monday, date.into(), r.tag.clone())),
+        }
+    }
+    weeks.sort_by(|a, b| b.0.cmp(&a.0));
+    weeks
+        .into_iter()
+        .map(|(monday, _, tag)| StableBuild { tag, week: Some(monday) })
+        .collect()
 }
 
 /// Every Nightly published with a build for this platform, newest first, then the installed
@@ -962,89 +1030,166 @@ impl Launcher {
             .child(buttons.flex_none())
     }
 
-    /// Horizon's versions, the newest first: picking the one the launcher plays lets the
-    /// instance follow it; any other is kept, and installed on Create when it isn't yet.
+    /// Horizon's version: the channel (Stable or Nightly), then a dropdown of its builds, newest
+    /// first, under "Latest" (which follows each new one). Any other pick is kept, and installed
+    /// on Create when it isn't yet.
     pub(super) fn horizon_versions(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let soft = self.look.accent_soft;
-        let follows = self.followed_version();
-        let chosen = self.draft_horizon();
-        let older = self.show_older_versions;
-        let choices = self.horizon_choices();
-        let hidden = choices.len().saturating_sub(1);
-        let rows: Vec<_> = choices
+        let Some(d) = self.instances.dialog.as_ref() else {
+            return div();
+        };
+        let (channel, pin) = (d.channel, d.pin.clone());
+        let open = self.version_menu;
+        let stable = self.stable_builds();
+        let all = self.horizon_choices();
+        let nightly = |tag: &String| horizon_launcher::nightly::date_of(tag).is_some();
+        let builds: Vec<String> = match channel {
+            Channel::Stable => stable.iter().map(|b| b.tag.clone()).collect(),
+            Channel::Nightly => all.iter().filter(|t| nightly(t)).cloned().collect(),
+        };
+        // Developer and imported builds, and a kept one this channel doesn't list.
+        let mut others: Vec<String> = all
             .into_iter()
-            .enumerate()
-            // Most players want the latest and nothing else: older builds wait behind the toggle,
-            // except the one this instance keeps.
-            .filter(|(i, tag)| *i == 0 || older || chosen.as_ref() == Some(tag))
-            .map(|(i, tag)| {
-                let latest = follows.as_ref() == Some(&tag);
-                let newest = i == 0;
-                let on = chosen.as_ref() == Some(&tag);
-                let (title, note) = if newest {
-                    (
-                        tr("Latest version").to_string(),
-                        trf(
-                            "{version}, moves to each new one",
-                            &[("version", &version_label(&tag))],
-                        ),
-                    )
-                } else {
-                    (
-                        version_label(&tag),
-                        version_commit(&tag).unwrap_or_default().to_string(),
-                    )
-                };
-                let pick = tag.clone();
-                list_choice(format!("horizon-version-{tag}"), on, &t)
-                    .py(px(12.))
-                    .child(choice_text(title, note).flex_1())
-                    .child(tick(on, soft))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if let Some(d) = &mut this.instances.dialog {
-                            d.pin = (!latest).then(|| pick.clone());
-                        }
-                        cx.notify();
-                    }))
-            })
+            .filter(|t| !nightly(t) && !builds.contains(t))
             .collect();
-        let list = if rows.is_empty() {
+        if let Some(p) = pin.as_ref().filter(|p| !builds.contains(p) && !others.contains(p)) {
+            others.push(p.clone());
+        }
+        let name = |tag: &str| match stable
+            .iter()
+            .find(|b| b.tag == tag && channel == Channel::Stable)
+            .and_then(|b| b.week.as_deref())
+        {
+            Some(week) => trf(
+                "Week of {date}",
+                &[("date", &glass_versions::published(week, ""))],
+            ),
+            None => version_label(tag),
+        };
+        let this = cx.entity().downgrade();
+        let segs = ui::segments(
+            "instance-channel",
+            &[(Channel::Stable, "Stable"), (Channel::Nightly, "Nightly")],
+            channel,
+            &t,
+            move |pick, _, cx| {
+                let _ = this.update(cx, |this, cx| {
+                    if let Some(d) = this.instances.dialog.as_mut().filter(|d| d.channel != pick) {
+                        // A kept build of the other channel would be odd: follow its latest.
+                        d.channel = pick;
+                        d.pin = None;
+                    }
+                    this.version_menu = false;
+                    cx.notify();
+                });
+            },
+        );
+        let note = ui::text(13., FontWeight::NORMAL, ink::QUIET).child(match channel {
+            Channel::Stable => tr("One build a week, fewer surprises"),
+            Channel::Nightly => tr("Every day's build: newest, may break"),
+        });
+        let current = match &pin {
+            None => tr("Latest").to_string(),
+            Some(p) => name(p),
+        };
+        let button = keyboard(
+            div()
+                .id("horizon-version-menu")
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap(px(12.))
+                .h(px(44.))
+                .px(px(14.))
+                .rounded(px(radius::CONTROL))
+                .border_1()
+                .border_color(white(ui::edge::REST))
+                .bg(white(if open { fill::ACTIVE } else { 0.06 }))
+                .cursor_pointer()
+                .hover(|s| s.bg(white(fill::HOVER)))
+                .child(
+                    ui::text(14., FontWeight::MEDIUM, ink::FULL)
+                        .min_w_0()
+                        .truncate()
+                        .child(trf("Game version: {label}", &[("label", &current)])),
+                )
+                .child(ui::icon("arrow-down-01", 16., white(ink::NOTE)))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.version_menu = !this.version_menu;
+                    cx.notify();
+                })),
+            &t,
+        );
+        let row = |id: String, on: bool, title: String, note: String, pick: Option<String>| {
+            list_choice(id, on, &t)
+                .py(px(10.))
+                .child(choice_text(title, note).flex_1())
+                .child(tick(on, soft))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(d) = &mut this.instances.dialog {
+                        d.pin = pick.clone();
+                    }
+                    this.version_menu = false;
+                    cx.notify();
+                }))
+        };
+        let mut rows = vec![row(
+            "horizon-version-latest".into(),
+            pin.is_none(),
+            tr("Latest").into(),
+            tr("Moves to each new one").into(),
+            None,
+        )];
+        for tag in &builds {
+            rows.push(row(
+                format!("horizon-version-{tag}"),
+                pin.as_ref() == Some(tag),
+                name(tag),
+                version_commit(tag).unwrap_or_default().to_string(),
+                Some(tag.clone()),
+            ));
+        }
+        let mut list = list_box("horizon-versions", 260.).children(rows);
+        if !others.is_empty() {
+            list = list.child(
+                ui::text(12., FontWeight::MEDIUM, ink::QUIET)
+                    .px(px(16.))
+                    .pt(px(10.))
+                    .pb(px(4.))
+                    .child(tr("Other builds")),
+            );
+            for tag in &others {
+                list = list.child(row(
+                    format!("horizon-version-{tag}"),
+                    pin.as_ref() == Some(tag),
+                    version_label(tag),
+                    String::new(),
+                    Some(tag.clone()),
+                ));
+            }
+        }
+        if builds.is_empty() && others.is_empty() {
             let empty = match &self.releases {
                 Load::Loading => tr("Loading releases…"),
                 _ => tr("No version installed"),
             };
-            list_box("horizon-versions", 200.).child(
-                ui::text(14., FontWeight::NORMAL, ink::QUIET)
+            list = list.child(
+                ui::text(13., FontWeight::NORMAL, ink::QUIET)
                     .px(px(16.))
-                    .py(px(24.))
+                    .py(px(10.))
                     .child(empty),
-            )
-        } else {
-            list_box("horizon-versions", 200.).children(rows)
-        };
-        let toggle = (hidden > 0).then(|| {
-            ui::text(13., FontWeight::MEDIUM, ink::FULL)
-                .id("horizon-versions-older")
-                .mt(px(10.))
-                .cursor_pointer()
-                .text_color(ui::color(soft))
-                .hover(|s| s.underline())
-                .child(if older {
-                    tr("Hide older versions").to_string()
-                } else {
-                    trf(
-                        "Show older versions ({count})",
-                        &[("count", &hidden.to_string())],
-                    )
-                })
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.show_older_versions = !this.show_older_versions;
-                    cx.notify();
-                }))
-        });
-        let list = div().flex().flex_col().child(list).children(toggle);
-        section(tr("Version").into(), None, list)
+            );
+        }
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(8.))
+            .child(div().flex().child(segs))
+            .child(note)
+            .child(div().mt(px(6.)).child(button))
+            .children(open.then_some(list));
+        section(tr("Version").into(), None, body)
     }
 
     /// Empty, or a copy of the selected instance.
@@ -1280,6 +1425,36 @@ mod tests {
             prerelease: false,
             nightly: nightly.then(|| "nightly".into()),
         }
+    }
+
+    #[test]
+    fn stable_is_a_build_a_week_until_real_releases_exist() {
+        // 2026-11-09 is a Monday, 2026-11-08 the Sunday before it.
+        let mut releases = vec![
+            release("nightly-2026-11-13-aaaaaaa", true, true),
+            release("nightly-2026-11-12-bbbbbbb", true, true),
+            release("nightly-2026-11-10-ccccccc", true, true),
+            release("nightly-2026-11-08-ddddddd", true, true),
+            release("nightly-2026-11-03-eeeeeee", true, true),
+            // No build for this platform: not a candidate.
+            release("nightly-2026-11-14-fffffff", true, false),
+        ];
+        let weekly = |tag: &str, week: &str| StableBuild {
+            tag: tag.into(),
+            week: Some(week.into()),
+        };
+        assert_eq!(
+            stable_builds(&releases),
+            [
+                weekly("nightly-2026-11-13-aaaaaaa", "2026-11-09"),
+                weekly("nightly-2026-11-08-ddddddd", "2026-11-02"),
+            ]
+        );
+        releases.insert(0, release("v0.3.0", false, true));
+        assert_eq!(
+            stable_builds(&releases),
+            [StableBuild { tag: "v0.3.0".into(), week: None }]
+        );
     }
 
     #[test]

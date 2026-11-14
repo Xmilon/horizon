@@ -57,6 +57,8 @@ pub(super) struct InstanceDialog {
     pub(super) java: new_instance::JavaChoice,
     /// The Horizon version it keeps (`Instance::version`); None follows the launcher's.
     pub(super) pin: Option<String>,
+    /// The builds "latest" follows (`Instance::channel`); a new instance starts on Stable.
+    pub(super) channel: instances::Channel,
     /// The loader logo `picture` was made from, when it was one.
     pub(super) logo: Option<&'static str>,
 }
@@ -105,7 +107,16 @@ impl Launcher {
     pub(super) fn version_of(&self, instance: &Instance) -> Option<&String> {
         match &instance.version {
             Some(own) => self.installed.iter().find(|t| *t == own),
-            None => self.launcher_version(),
+            // Latest of its channel: the newest installed Stable build, or the launcher's
+            // version (which follows the newest Nightly; also what is left offline).
+            None => match instance.channel {
+                instances::Channel::Stable => self
+                    .stable_builds()
+                    .iter()
+                    .find_map(|b| self.installed.iter().find(|t| **t == b.tag))
+                    .or_else(|| self.launcher_version()),
+                instances::Channel::Nightly => self.launcher_version(),
+            },
         }
     }
 
@@ -286,6 +297,7 @@ impl Launcher {
     }
 
     pub(super) fn open_instance_dialog(&mut self, editing: Option<Instance>) {
+        self.version_menu = false;
         let editing_one = editing.is_some();
         let (name, group) = editing
             .as_ref()
@@ -321,6 +333,9 @@ impl Launcher {
         self.instances.dialog = Some(InstanceDialog {
             icon: editing.as_ref().and_then(|i| i.icon.clone()),
             pin: editing.as_ref().and_then(|i| i.version.clone()),
+            channel: editing
+                .as_ref()
+                .map_or(instances::Channel::Stable, |i| i.channel),
             logo: None,
             picture: None,
             editing: editing.map(|i| i.id),
@@ -389,7 +404,7 @@ impl Launcher {
             return;
         };
         let icon = d.icon.clone();
-        let pin = d.pin.clone();
+        let (pin, channel) = (d.pin.clone(), d.channel);
         let picture = d
             .picture
             .as_ref()
@@ -450,6 +465,7 @@ impl Launcher {
                 }
                 if plays_horizon {
                     m.version = pin;
+                    m.channel = Some(channel);
                 }
             })?;
             if let Some(png) = picture {

@@ -115,7 +115,7 @@ impl Launcher {
                 None => java.minecraft.clone(),
             },
             // An instance that keeps no version of its own plays the latest.
-            None if instance.version.is_none() && self.launcher_version().is_some() => {
+            None if instance.version.is_none() && self.version_of(instance).is_some() => {
                 tr("Latest version").to_string()
             }
             None => self.version_of(instance).map_or_else(

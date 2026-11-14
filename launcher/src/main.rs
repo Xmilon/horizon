@@ -251,14 +251,14 @@ struct Launcher {
     settings_query: line_edit::LineEdit,
     settings_query_focus: FocusHandle,
     settings_query_focused: bool,
-    /// The glass Home's patch log scroll, for its wheel to chain to the page.
-    patch_scroll: Scrollbar,
+    /// The tags whose "What's new" the glass Versions page shows open; None is the newest's.
+    whats_new_open: Option<std::collections::HashSet<String>>,
     /// The section the glass Settings list marked when last drawn (`glass_settings`).
     settings_marked: usize,
     /// About's credit picture was asked for, and what came back.
     credit_asked: bool,
-    /// The version lists show every older build, not only the latest (Show older versions).
-    show_older_versions: bool,
+    /// The Game version dropdown of the instance dialog and sheet is open.
+    version_menu: bool,
     /// Play pressed while the instance's native mods needed a build: the game starts once it
     /// is built (Build and play).
     play_after_build: bool,
@@ -643,10 +643,10 @@ impl Launcher {
             settings_query: line_edit::LineEdit::new(String::new(), 80, 40),
             settings_query_focus: cx.focus_handle(),
             settings_query_focused: false,
-            patch_scroll: Scrollbar::default(),
+            whats_new_open: None,
             settings_marked: 0,
             credit_asked: false,
-            show_older_versions: false,
+            version_menu: false,
             play_after_build: false,
             credit_picture: None,
             sheet_size: None,
@@ -3738,11 +3738,12 @@ impl Launcher {
             page = page.child(self.crash_notice(crash, cx));
         }
         page = page.children(self.home_failed_build(cx));
-        page = page.child(if t.glass {
-            self.glass_home_tabs(rows, cx)
+        page = if t.glass {
+            // What Play still needs (and an open export or launch panel), above the tabs.
+            page.child(rows).child(self.glass_home_tabs(cx))
         } else {
-            self.home_tabs(rows, cx)
-        });
+            page.child(self.home_tabs(rows, cx))
+        };
         if let Some(e) = self.client_error.clone() {
             page = page.child(notice(e, &t));
         }

@@ -121,7 +121,8 @@ impl Launcher {
                     .items_center()
                     .gap(px(8.))
                     .child(self.edition_tabs(java.is_some(), cx))
-                    .children(self.version_chip(cx)),
+                    .children(self.version_chip(cx))
+                    .children(self.whats_new_link(cx)),
             ))
             .child(motion::enter(
                 ElementId::named_usize("home-title", self.switches),
@@ -330,12 +331,23 @@ impl Launcher {
         let follows = self
             .selected_instance()
             .is_some_and(|i| i.version.is_none());
-        let update = self
-            .updates
-            .horizon
-            .as_ref()
-            .filter(|_| follows && !tag.is_empty())
-            .map(|r| r.tag.clone());
+        let stable = self
+            .selected_instance()
+            .is_some_and(|i| i.channel == horizon_launcher::instances::Channel::Stable);
+        // A Stable instance follows the newest stable build, not each Nightly: its update is
+        // that build when it isn't installed yet.
+        let update = if stable {
+            self.stable_builds()
+                .first()
+                .map(|b| b.tag.clone())
+                .filter(|next| follows && !tag.is_empty() && !self.installed.contains(next))
+        } else {
+            self.updates
+                .horizon
+                .as_ref()
+                .filter(|_| follows && !tag.is_empty())
+                .map(|r| r.tag.clone())
+        };
         let installing = update
             .as_ref()
             .and_then(|u| self.installing.as_ref().filter(|(t, _)| t == u))
@@ -528,7 +540,8 @@ impl Launcher {
                     self.owner
                 };
                 let press = play_press(ready, owner, false);
-                let build_first = needs_build && update.is_none() && matches!(press, PlayPress::Play);
+                let build_first =
+                    needs_build && update.is_none() && matches!(press, PlayPress::Play);
                 let (label, icon) = match &update {
                     Some(_) => (tr("Update"), "download-04"),
                     None if build_first => (tr("Build and play"), "hammer"),
@@ -546,6 +559,19 @@ impl Launcher {
                                 this.build_native();
                             } else {
                                 this.request_native_build_consent();
+                            }
+                            cx.notify();
+                        }))
+                    }
+                    (Some(next), _) if stable => {
+                        let next = next.clone();
+                        main.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            let release = match &this.releases {
+                                Load::Ready(list) => list.iter().find(|r| r.tag == next).cloned(),
+                                _ => None,
+                            };
+                            if let Some(release) = release {
+                                this.install(&release);
                             }
                             cx.notify();
                         }))
@@ -661,10 +687,7 @@ impl Launcher {
                     tr("Play without updating").into(),
                     trf(
                         "Stay on {version}",
-                        &[(
-                            "version",
-                            &crate::glass_instance::version_label(tag),
-                        )],
+                        &[("version", &crate::glass_instance::version_label(tag))],
                     ),
                     locked || !ready,
                     PlayItem::Play,
@@ -737,6 +760,24 @@ impl Launcher {
             );
         }
         wrap
+    }
+
+    /// A quiet "What's new" after the version chip: the Versions page with the played build's
+    /// notes open.
+    fn whats_new_link(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let tag = self.whats_new_tag()?;
+        Some(
+            ui::text(13., FontWeight::NORMAL, ink::NOTE)
+                .id("home-whats-new")
+                .cursor_pointer()
+                .hover(|s| s.text_color(white(ink::FULL)))
+                .child(tr("What's new"))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.whats_new_open = Some(std::iter::once(tag.clone()).collect());
+                    this.go(Page::Versions);
+                    cx.notify();
+                })),
+        )
     }
 
     /// What the instance plays, as a chip beside the edition tabs (the mockup's tags): "Latest
@@ -1110,6 +1151,7 @@ mod tests {
             icon: None,
             group: None,
             version: None,
+            channel: Default::default(),
             played: Duration::ZERO,
             last_played: last,
             launch: Default::default(),
