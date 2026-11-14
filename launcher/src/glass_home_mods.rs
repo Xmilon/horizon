@@ -34,7 +34,8 @@ impl Launcher {
                     .flex()
                     .gap(px(4.))
                     .child(trf("No mods in {name} yet.", &[("name", &name)]))
-                    .child(ui::link("instance-mods-find", tr("Find mods")).on_click(find_mods(cx))),
+                    .child(ui::link("instance-mods-find", tr("Find mods")).on_click(find_mods(cx)))
+                    .children(self.dev_entry(cx)),
             );
         }
         let note = match count {
@@ -89,6 +90,7 @@ impl Launcher {
                         .as_ref()
                         .is_some_and(|e| native_status::is_native_file(&e.file))
             });
+        body = body.children(self.dev_panel(cx));
         body = body.children(native.then(|| self.native_build(cx)).flatten());
         let rows: Vec<ModRow> = self
             .instance_mods
@@ -120,7 +122,7 @@ impl Launcher {
                     .into_any_element()
             },
         );
-        body.child(list)
+        body.child(list).children(self.dev_entry(cx))
     }
 
     fn glass_mod_row(&mut self, row: ModRow, busy: bool, cx: &mut Context<Self>) -> Stateful<Div> {

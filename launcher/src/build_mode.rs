@@ -300,7 +300,7 @@ impl Launcher {
             .child(
                 text_in(14., pal.ink)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(tr("Native mod build")),
+                    .child(tr("Mod build")),
             )
             .child(right)
     }
@@ -403,6 +403,7 @@ impl Launcher {
                     false,
                     &t,
                 )
+                .tooltip(ui::tip(tr("Build log")))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.native_log_open();
                     cx.notify();
@@ -410,6 +411,7 @@ impl Launcher {
             )
             .child(
                 ui::icon_button("native-build-cancel", "stop", 32., 16., radius, false, &t)
+                    .tooltip(ui::tip(tr("Cancel the build")))
                     .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
                         native_mods::cancel();
                         cx.notify();
@@ -454,7 +456,18 @@ impl Launcher {
                     .child(icons),
             )
             .child(bar)
+            .children(self.native_mod_step.clone().map(|module| {
+                text_in(14., pal.ink)
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(module)
+            }))
             .child(text_in(13., pal.muted).truncate().child(step.to_owned()))
+            .children(self.first_build.map(|bytes| {
+                text_in(13., pal.muted).child(trf(
+                    "First time only: Horizon downloads its mod tools and a compiler ({size}). Later builds take seconds.",
+                    &[("size", &storage::format_bytes(bytes))],
+                ))
+            }))
     }
 
     /// Each turned-on native mod's route; filesystem and release reads never run while drawing.

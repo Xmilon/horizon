@@ -375,7 +375,9 @@ impl Launcher {
             (_, _, Some(_)) => Some((tr("Starting"), None)),
             // This instance's mods building (Build and play): the build's own progress.
             _ if building => Some((
-                tr("Building mods"),
+                self.native_mod_step
+                    .as_deref()
+                    .unwrap_or(tr("Building mods")),
                 self.native_progress.as_ref().and_then(|p| p.fraction),
             )),
             _ => None,
@@ -413,6 +415,31 @@ impl Launcher {
                 }
                 cx.notify();
             }));
+        // A build under way is cancelled from the button it was started from.
+        let more = if building {
+            div()
+                .id("play-cancel")
+                .occlude()
+                .absolute()
+                .right(px(8.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(40.))
+                .rounded(px(radius::CONTROL))
+                .cursor_pointer()
+                .hover(|s| s.bg(gpui::black().opacity(0.2)))
+                .child(ui::icon("stop", 18., glyph))
+                .tooltip(ui::tip(tr("Cancel the build")))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.play_after_build = false;
+                    native_mods::cancel();
+                    cx.notify();
+                }))
+        } else {
+            more
+        };
         let base = div()
             .relative()
             .flex()
@@ -636,7 +663,7 @@ impl Launcher {
                         "Stay on {version}",
                         &[(
                             "version",
-                            &horizon_launcher::nightly::label(tag).unwrap_or(tag.to_string()),
+                            &crate::glass_instance::version_label(tag),
                         )],
                     ),
                     locked || !ready,

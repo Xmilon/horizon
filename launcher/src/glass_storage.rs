@@ -51,11 +51,21 @@ impl Launcher {
             || tr("Calculating…").to_string(),
             |report| storage::format_bytes(report.rows.iter().map(|row| row.remaining_bytes).sum()),
         );
+        // One button frees everything that is safe to free, and says how much.
         card = card.child(ui::setting_row(
-            tr("Storage"),
-            Some(div().child(total).into_any_element()),
+            tr("Space Horizon can free"),
             Some(
-                button("storage-clear-all", "Clear all", Kind::Secondary, &t)
+                div()
+                    .child(tr("Mod tools, built mods and the compiler: each comes back when it is needed."))
+                    .into_any_element(),
+            ),
+            Some(
+                button(
+                    "storage-clear-all",
+                    trf("Free {size}", &[("size", &total)]),
+                    Kind::Secondary,
+                    &t,
+                )
                     .opacity(if blocked { 0.4 } else { 1.0 })
                     .on_click(cx.listener(move |this, _, _, cx| {
                         if !blocked {
@@ -91,8 +101,12 @@ impl Launcher {
             },
         );
         card = card.child(ui::setting_row(
-            tr("Cache limit"),
-            None,
+            tr("Limit"),
+            Some(
+                div()
+                    .child(tr("Horizon clears the oldest of these past this size."))
+                    .into_any_element(),
+            ),
             Some(limit.into_any_element()),
         ));
         if self.client.is_some() {
@@ -126,9 +140,16 @@ impl Launcher {
                 .storage_report
                 .as_ref()
                 .and_then(|report| report.rows.iter().find(|row| row.category == category));
+            // What it is for and what clearing it does, beside its size.
             let mut detail = div().child(row.map_or_else(
                 || tr("Calculating…").to_string(),
-                |row| storage::format_bytes(row.remaining_bytes),
+                |row| {
+                    format!(
+                        "{} · {}",
+                        storage::format_bytes(row.remaining_bytes),
+                        tr(category_note(category))
+                    )
+                },
             ));
             if let Some(row) = row {
                 for kept in &row.kept {
@@ -254,13 +275,25 @@ impl Launcher {
     }
 }
 
+/// Each kind of file by a name a player knows.
 fn category_label(category: Category) -> &'static str {
     match category {
-        Category::BuildFiles => "Build files",
-        Category::PrebuiltGames => "Prebuilt games",
-        Category::SpareGameBuilds => "Spare game builds",
-        Category::RustCompiler => "Rust compiler",
-        Category::OtherCaches => "Other caches",
+        Category::BuildFiles => "Mod build files",
+        Category::PrebuiltGames => "Games for building mods",
+        Category::SpareGameBuilds => "Server games",
+        Category::RustCompiler => "Compiler",
+        Category::OtherCaches => "Other temporary files",
+    }
+}
+
+/// What the files are for, and what happens when they are cleared.
+fn category_note(category: Category) -> &'static str {
+    match category {
+        Category::BuildFiles => "mod tools and built mods, made again on the next build",
+        Category::PrebuiltGames => "downloaded again on the next build",
+        Category::SpareGameBuilds => "games with mods for your servers, rebuilt when a server needs one",
+        Category::RustCompiler => "needed to build mods, downloaded again when cleared",
+        Category::OtherCaches => "safe to clear",
     }
 }
 

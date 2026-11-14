@@ -349,7 +349,9 @@ impl Launcher {
         cx: &mut Context<Self>,
     ) -> Div {
         let t = self.theme;
-        let current = native_mods::about(plays).map_or_else(|| plays.to_owned(), |a| a.base);
+        let current = crate::glass_instance::version_label(
+            &native_mods::about(plays).map_or_else(|| plays.to_owned(), |a| a.base),
+        );
         let fit = check.total.saturating_sub(check.off.len());
         let head = match (check.off.is_empty(), check.total) {
             (true, 1) => trf("Your mod fits {build}", &[("build", &check.build)]),

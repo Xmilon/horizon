@@ -21,6 +21,7 @@ mod game_tools;
 mod github_mods_page;
 mod glass;
 mod glass_account;
+mod glass_dev_mods;
 mod glass_home;
 mod glass_home_lists;
 mod glass_home_mods;
@@ -190,6 +191,9 @@ enum SelfUpdate {
     Failed(String),
 }
 
+/// An instance's game folder and its folder mods, each with its folder.
+type DevMods = (std::path::PathBuf, Vec<(String, std::path::PathBuf)>);
+
 /// The last game the launcher started ended badly: what it left behind.
 #[derive(Clone)]
 struct Crash {
@@ -306,6 +310,10 @@ struct Launcher {
     native_step: Option<String>,
     /// Where the build under way is, for the card's stages and bar.
     native_progress: Option<native_mods::Progress>,
+    /// The mod the build compiles now and how far through the mods ("fast-ore · 2 of 3").
+    native_mod_step: Option<String>,
+    /// The first build's one-time download (the compiler), in bytes; `None` once it is there.
+    first_build: Option<u64>,
     /// How the last native build ended ("Built (balanced, incremental)", or "Up to date").
     native_done: Option<String>,
     native_error: Option<String>,
@@ -316,6 +324,8 @@ struct Launcher {
     native_failed: Option<build_mode::FailedBuild>,
     /// The mod whose Why? is open in the update card.
     update_why: Option<String>,
+    /// The selected instance's folder mods (`glass_dev_mods`), by its game folder.
+    dev_mods: std::cell::RefCell<Option<DevMods>>,
     pending_consent: Option<PendingConsent>,
     /// Why the last Allow or Cancel failed, shown inside the dialog that the page is behind.
     consent_error: Option<String>,
@@ -677,11 +687,14 @@ impl Launcher {
             import_error: None,
             native_step: None,
             native_progress: None,
+            native_mod_step: None,
+            first_build: None,
             native_done: None,
             native_error: None,
             native_worlds: None,
             native_failed: None,
             update_why: None,
+            dev_mods: Default::default(),
             pending_consent: None,
             consent_error: None,
             native_for: None,
@@ -1336,14 +1349,19 @@ impl Launcher {
                 Msg::NativeRegistryConsent(inventory, reply) => {
                     native_registry_consent::show(window, inventory, reply, cx)
                 }
-                Msg::NativeProgress(step, progress) => {
+                Msg::NativeProgress(step, progress, module) => {
                     self.native_step = Some(step);
+                    if module.is_some() {
+                        self.native_mod_step = module;
+                    }
                     self.native_progress = Some(progress);
                 }
                 Msg::Native(result) => {
                     // The last step of a build that worked says how it went.
                     let last = self.native_step.take();
                     self.native_progress = None;
+                    self.native_mod_step = None;
+                    self.first_build = None;
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
                     let play_now = std::mem::take(&mut self.play_after_build) && result.is_ok();
                     self.native_done = match (&result, cancelled) {

@@ -33,8 +33,14 @@ impl Launcher {
             self.native_error = Some(error);
             return;
         };
-        let folder = match self.native_mods_to_build() {
-            Ok((folder, _)) => folder,
+        let (folder, ids) = match self.native_mods_to_build() {
+            Ok((folder, found)) => (
+                folder,
+                found
+                    .into_iter()
+                    .map(|bundle| bundle.manifest.id)
+                    .collect::<Vec<_>>(),
+            ),
             Err(e) => {
                 self.native_log_preflight(&e);
                 self.native_error = Some(e);
@@ -43,9 +49,17 @@ impl Launcher {
         };
         self.native_step = Some(tr("Starting the build").into());
         self.native_progress = None;
+        self.native_mod_step = None;
+        // The first build downloads the compiler: the card says so, with its size.
+        self.first_build = horizon_launcher::rust_toolchain::installed()
+            .is_none()
+            .then(|| horizon_launcher::rust_toolchain::host().map(|h| h.download_bytes()))
+            .flatten();
         self.native_done = None;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
+            // Each mod is its own library: the mods compiled so far, by their place in `ids`.
+            let seen = std::cell::RefCell::new(Vec::<usize>::new());
             let result = native_mods::build(
                 &base,
                 &folder,
@@ -53,7 +67,29 @@ impl Launcher {
                 None,
                 back_up,
                 |step| {
-                    let _ = tx.send(Msg::NativeProgress(step.label(), step.progress()));
+                    let module = match &step {
+                        native_mods::Step::Compile { name, .. } => {
+                            let krate = name.replace('-', "_");
+                            ids.iter()
+                                .position(|id| id.replace('-', "_") == krate)
+                                .map(|i| {
+                                    let mut seen = seen.borrow_mut();
+                                    if !seen.contains(&i) {
+                                        seen.push(i);
+                                    }
+                                    trf(
+                                        "{mod} · {done} of {total}",
+                                        &[
+                                            ("mod", &ids[i]),
+                                            ("done", &seen.len().to_string()),
+                                            ("total", &ids.len().to_string()),
+                                        ],
+                                    )
+                                })
+                        }
+                        _ => None,
+                    };
+                    let _ = tx.send(Msg::NativeProgress(step.label(), step.progress(), module));
                 },
                 |inventory| {
                     let (reply, answer) = std::sync::mpsc::channel();

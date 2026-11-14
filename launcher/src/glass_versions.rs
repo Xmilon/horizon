@@ -537,10 +537,13 @@ impl Launcher {
             for tag in tags {
                 let mut line = Vec::new();
                 if let Some(about) = native_mods::about(&tag) {
-                    line.push(trf("Built on {base}", &[("base", &about.base)]));
+                    line.push(trf(
+                        "Built on {base}",
+                        &[("base", &crate::glass_instance::version_label(&about.base))],
+                    ));
                 }
                 if let Some(about) = build_import::about(&tag) {
-                    let base = horizon_launcher::nightly::label(&about.base).unwrap_or(about.base);
+                    let base = crate::glass_instance::version_label(&about.base);
                     line.push(trf("Game files from {base}", &[("base", &base)]));
                     line.push(about.file);
                 }
@@ -551,9 +554,7 @@ impl Launcher {
                 } else {
                     self.glass_version_actions(&tag, cx).into_any_element()
                 };
-                let title = horizon_launcher::nightly::label(&tag)
-                    .or_else(|| build_import::label(&tag))
-                    .unwrap_or_else(|| tag.trim_start_matches('v').to_string());
+                let title = crate::glass_instance::version_label(tag.trim_start_matches('v'));
                 d = d.child(self.glass_version_card(&tag, title, &mut line, false, on_disk, right));
             }
             d

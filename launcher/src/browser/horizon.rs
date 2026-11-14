@@ -68,6 +68,28 @@ pub fn is_native_mod(id: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The names of the mods the registry's project `id` needs (they install with it), from the
+/// index already read (never the network): its version for this game, else its newest.
+pub fn requires(id: &str) -> Vec<String> {
+    let Some(index) = known_index() else {
+        return Vec::new();
+    };
+    let Some(p) = index.project(id) else {
+        return Vec::new();
+    };
+    p.versions
+        .iter()
+        .find(|v| v.game == GAME)
+        .or(p.versions.first())
+        .map(|v| {
+            v.requires
+                .iter()
+                .map(|r| index.project(&r.id).map_or_else(|| r.id.clone(), |m| m.name.clone()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// The GitHub stars of the registry's project `id`, by the index already read (never the
 /// network): None when it has none, when its source isn't a GitHub repository, or when no index
 /// was read.

@@ -824,6 +824,9 @@ impl Launcher {
                     })),
             );
         }
+        if p.source == SourceId::Horizon {
+            page = page.child(self.mods_page_facts(&p, installed, cx));
+        }
         if let Some(why) = support.reason() {
             page = page.child(
                 text(theme::UI)
@@ -952,6 +955,65 @@ impl Launcher {
 impl Launcher {
     /// A gallery: image `shot` large, the previous and next ones a click away, and every image
     /// as a strip of thumbnails that picks the large one.
+    /// What a player decides on before installing a registry mod, on its page: whether it fits,
+    /// what it brings with it, where it comes from and that it is code built on their computer;
+    /// once installed, the next step (Build and play) on the same screen.
+    fn mods_page_facts(&self, p: &Project, installed: bool, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let native = browser::horizon::is_native_mod(&p.id);
+        let needs = browser::horizon::requires(&p.id);
+        let mut facts = div().flex().flex_col().gap(px(6.));
+        if !needs.is_empty() {
+            facts = facts.child(
+                text(theme::UI)
+                    .text_color(t.ink)
+                    .child(trf("Needs: {mods}", &[("mods", &needs.join(", "))])),
+            );
+            facts = facts.child(text(theme::UI).text_color(t.ink_soft).child(if native {
+                trf(
+                    "Installing also adds {mods}. All of them are built on your computer before you play.",
+                    &[("mods", &needs.join(", "))],
+                )
+            } else {
+                trf(
+                    "Installing also adds {mods}.",
+                    &[("mods", &needs.join(", "))],
+                )
+            }));
+        }
+        if let Some(lines) = self.mods.about.get(&p.id) {
+            facts = facts.children(
+                lines
+                    .iter()
+                    .map(|line| text(theme::CAPTION).text_color(t.muted).child(tr(line).to_string())),
+            );
+        }
+        let build = installed
+            && native
+            && self.selected_instance().is_some_and(|i| {
+                matches!(
+                    self.native_state_of(i),
+                    native_status::State::NotBuilt | native_status::State::Outdated
+                )
+            })
+            && self.native_step.is_none();
+        facts.children(build.then(|| {
+            div().flex().mt(px(6.)).child(
+                button("mods-page-build-play", "Build and play", Kind::Primary, &t).on_click(
+                    cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.play_after_build = true;
+                        if this.settings.native_mods_allowed_at.is_some() {
+                            this.build_native();
+                        } else {
+                            this.request_native_build_consent();
+                        }
+                        cx.notify();
+                    }),
+                ),
+            )
+        }))
+    }
+
     fn mods_gallery(&mut self, gallery: &[Image], shot: usize, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let count = gallery.len();
