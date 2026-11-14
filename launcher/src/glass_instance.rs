@@ -683,11 +683,26 @@ impl Launcher {
     }
 }
 
-/// "Nightly · c9d474d", "Imported · 2026-10-30", or the tag.
-fn version_label(tag: &str) -> String {
-    horizon_launcher::nightly::label(tag)
-        .or_else(|| build_import::label(tag))
-        .unwrap_or_else(|| tag.to_string())
+/// A version as a player reads it: "Nov 13 update" for a build of the game (its commit stays in
+/// the details), "Imported · 2026-10-30", a developer build's name, or the tag. Players who
+/// don't know what a nightly is see the day it came out, not the channel's jargon.
+pub(super) fn version_label(tag: &str) -> String {
+    if let Some(developer) = horizon_launcher::developer_install::label(tag) {
+        return developer;
+    }
+    match horizon_launcher::nightly::date_of(tag) {
+        Some(date) => trf(
+            "{date} update",
+            &[("date", &glass_versions::published(date, ""))],
+        ),
+        None => build_import::label(tag).unwrap_or_else(|| tag.to_string()),
+    }
+}
+
+/// A build's commit, for the details under its name: `4baa571` of `nightly-2026-10-29-4baa571`.
+fn version_commit(tag: &str) -> Option<&str> {
+    horizon_launcher::nightly::date_of(tag)?;
+    tag.get(17..).filter(|c| !c.is_empty())
 }
 
 impl Launcher {
@@ -931,25 +946,37 @@ impl Launcher {
         let soft = self.look.accent_soft;
         let follows = self.followed_version();
         let chosen = self.draft_horizon();
-        let rows: Vec<_> = self
-            .horizon_choices()
+        let older = self.show_older_versions;
+        let choices = self.horizon_choices();
+        let hidden = choices.len().saturating_sub(1);
+        let rows: Vec<_> = choices
             .into_iter()
             .enumerate()
+            // Most players want the latest and nothing else: older builds wait behind the toggle,
+            // except the one this instance keeps.
+            .filter(|(i, tag)| *i == 0 || older || chosen.as_ref() == Some(tag))
             .map(|(i, tag)| {
                 let latest = follows.as_ref() == Some(&tag);
                 let newest = i == 0;
                 let on = chosen.as_ref() == Some(&tag);
-                let date = horizon_launcher::nightly::date_of(&tag)
-                    .map(|d| glass_versions::published(d, ""));
+                let (title, note) = if newest {
+                    (
+                        tr("Latest version").to_string(),
+                        trf(
+                            "{version}, moves to each new one",
+                            &[("version", &version_label(&tag))],
+                        ),
+                    )
+                } else {
+                    (
+                        version_label(&tag),
+                        version_commit(&tag).unwrap_or_default().to_string(),
+                    )
+                };
                 let pick = tag.clone();
                 list_choice(format!("horizon-version-{tag}"), on, &t)
                     .py(px(12.))
-                    .child(choice_text(version_label(&tag), date.unwrap_or_default()).flex_1())
-                    .children(newest.then(|| {
-                        ui::text(13., FontWeight::NORMAL, ink::FULL)
-                            .text_color(ui::color(soft))
-                            .child(tr("Newest"))
-                    }))
+                    .child(choice_text(title, note).flex_1())
                     .child(tick(on, soft))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         if let Some(d) = &mut this.instances.dialog {
@@ -973,6 +1000,27 @@ impl Launcher {
         } else {
             list_box("horizon-versions", 200.).children(rows)
         };
+        let toggle = (hidden > 0).then(|| {
+            ui::text(13., FontWeight::MEDIUM, ink::FULL)
+                .id("horizon-versions-older")
+                .mt(px(10.))
+                .cursor_pointer()
+                .text_color(ui::color(soft))
+                .hover(|s| s.underline())
+                .child(if older {
+                    tr("Hide older versions").to_string()
+                } else {
+                    trf(
+                        "Show older versions ({count})",
+                        &[("count", &hidden.to_string())],
+                    )
+                })
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.show_older_versions = !this.show_older_versions;
+                    cx.notify();
+                }))
+        });
+        let list = div().flex().flex_col().child(list).children(toggle);
         section(tr("Version").into(), None, list)
     }
 

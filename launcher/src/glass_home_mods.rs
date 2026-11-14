@@ -5,8 +5,9 @@
 use super::*;
 use crate::glass_ui::{self as ui, white};
 use build_mode::ModKind;
+use horizon_launcher::github_mods;
 use glass_home_lists::Listener;
-use horizon_theme::glass::radius;
+use horizon_theme::glass::{ink, radius};
 use instance_mods::ModRow;
 use servers_page::Field;
 
@@ -156,10 +157,7 @@ impl Launcher {
                     &[("source", e.source.label())],
                 ),
                 Some(e) => e.source.label().to_string(),
-                None => trf(
-                    "Local file · {file}",
-                    &[("file", row.file.trim_start_matches("mods/"))],
-                ),
+                None => tr("Local file").to_string(),
             }
         };
         let note = match row.version.is_empty() {
@@ -184,44 +182,37 @@ impl Launcher {
                 })),
             })
         });
-        let chip = row
-            .kind
+        let status = self.mod_status(&row, cx);
+        // A GitHub mod keeps its Update (or Check for updates) and Source on the row.
+        let github = row
+            .native
             .as_ref()
-            .filter(|(kind, _)| *kind == ModKind::Native)
-            .and_then(|(_, id)| self.route_chip(id, cx))
-            .map(|chip| div().relative().child(chip));
-        let controls = match &row.native {
-            Some(native) => self.native_mod_actions(native, busy, cx),
-            None => {
-                let switch_row = row.clone();
-                div().child(
-                    ui::toggle(
-                        SharedString::from(format!("mod-switch-{}", row.file)),
-                        row.on,
-                        self.look.accent,
-                        self.look.on_accent,
-                        &t,
-                    )
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
-                            this.switch_mod(&switch_row);
-                            cx.notify();
-                        },
-                    )),
-                )
-            }
-        };
+            .and_then(|n| n.origin.as_ref())
+            .map(|origin| self.github_actions(origin, busy || self.github.busy(), cx));
+        let menu = self.mod_menu(&row, busy, cx);
+        let switch_row = row.clone();
+        let controls = div().child(
+            ui::toggle(
+                SharedString::from(format!("mod-switch-{}", row.file)),
+                row.on,
+                self.look.accent,
+                self.look.on_accent,
+                &t,
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                match &switch_row.native {
+                    Some(native) => this.switch_native_mod(native, switch_row.on),
+                    None => this.switch_mod(&switch_row),
+                }
+                cx.notify();
+            })),
+        );
         ui::list_row(key, hovered, hover, &t)
             .child(icon)
             .child(ui::list_text(row.name.clone(), note))
-            .children(
-                row.kind
-                    .as_ref()
-                    .map(|(kind, _)| self.kind_badge(*kind).relative()),
-            )
-            .children(chip)
-            .children(self.internals_chip(&row.file, &row.internals))
+            .child(status.relative())
             .children(update.map(|u| u.relative()))
+            .children(github.map(|g| g.relative()))
             .child(
                 controls
                     .relative()
@@ -229,7 +220,222 @@ impl Launcher {
                     .items_center()
                     .rounded(px(radius::CONTROL)),
             )
+            .child(menu)
             .text_color(white(1.))
+    }
+
+    /// The row's one status: a dot and a short word, in the colour of what it says.
+    fn mod_status(&self, row: &ModRow, cx: &mut Context<Self>) -> Div {
+        let native = row.native.is_some() || matches!(row.kind, Some((ModKind::Native, _)));
+        let mine = self
+            .selected_instance()
+            .is_some_and(|i| self.native_for.as_deref() == Some(i.id.as_str()));
+        let state = self
+            .mods
+            .native_state
+            .borrow()
+            .as_ref()
+            .map_or(native_status::State::UpToDate, |(_, s)| *s);
+        let (word, color) = if !row.on {
+            (tr("Off"), white(ink::QUIET))
+        } else if row.error.is_some() || (native && mine && self.native_error.is_some()) {
+            (tr("Failed"), ui::danger())
+        } else if native && mine && self.native_step.is_some() {
+            (tr("Building"), ui::color(self.look.accent))
+        } else if native && self.settings.native_mods_allowed_at.is_none() {
+            // Native mods run as real code: nothing builds until the player allows them.
+            (tr("Needs permission"), ui::warn())
+        } else if native
+            && row.kind.as_ref().is_some_and(|(_, id)| {
+                self.native_routes(cx).mods.iter().any(|(m, route)| {
+                    m == id && matches!(route, native_mods::Route::Invalid { .. })
+                })
+            })
+        {
+            (tr("Does not fit"), ui::warn())
+        } else if native
+            && matches!(
+                state,
+                native_status::State::NotBuilt | native_status::State::Outdated
+            )
+        {
+            (tr("Needs build"), ui::warn())
+        } else {
+            (tr("Ready"), ui::live())
+        };
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(6.))
+            .child(div().size(px(6.)).rounded_full().bg(color))
+            .child(
+                ui::text(12., FontWeight::MEDIUM, 1.)
+                    .text_color(color)
+                    .child(word),
+            )
+    }
+
+    /// A native mod's switch, with its consent step.
+    fn switch_native_mod(&mut self, native: &native_status::Installed, on: bool) {
+        if !on && self.settings.native_mods_allowed_at.is_none() {
+            self.pending_consent = Some(PendingConsent::Local(native.id.clone()));
+            return;
+        }
+        let home = self.mods.home();
+        let Some(_lock) = horizon_launcher::browser::try_lock_home(&home) else {
+            self.mods.message = Some(Err(tr("Wait for the current operation to finish.").into()));
+            return;
+        };
+        self.mods.message = horizon_launcher::browser::java::set_enabled(&home, &native.id, !on)
+            .err()
+            .map(Err);
+        self.instance_mods_changed();
+    }
+
+    /// The ⋮ button and, when open, its menu.
+    fn mod_menu(&mut self, row: &ModRow, busy: bool, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let id = format!("mod-menu:{}", row.file);
+        let open = self.mods.route_open.as_deref().is_some_and(|o| o.starts_with(&id));
+        let confirming = self.mods.route_open.as_deref() == Some(format!("{id}:remove").as_str());
+        let again = format!("{id}:remove");
+        let button = ui::icon_button(
+            format!("mod-more-{}", row.file),
+            "more-vertical",
+            32.,
+            18.,
+            radius::SMALL,
+            open,
+            &t,
+        )
+        .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+            if this.closed_by_this_press(event) {
+                return;
+            }
+            this.mods.route_open = match this.mods.route_open.as_deref() {
+                Some(o) if o.starts_with(&id) => None,
+                _ => Some(id.clone()),
+            };
+            cx.notify();
+        }));
+        let mut wrap = div().relative().flex_none().child(button);
+        if !open {
+            return wrap;
+        }
+        let home = self.mods.home();
+        let path = home.join(&row.file);
+        let folder = path.parent().map_or(home, |p| p.to_path_buf());
+        let item = |name: &str, label: SharedString, note: String, locked: bool| {
+            ui::menu_item(format!("mod-menu-{name}"), label, note, locked, &t)
+        };
+        let mut menu = ui::popover(260.)
+            .bg(if ui::light() {
+                gpui::white().opacity(0.94)
+            } else {
+                ui::color(0x16112b).opacity(0.94)
+            })
+            .id("mod-menu")
+            .occlude()
+            .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                this.mods.route_open = None;
+                cx.notify();
+            }))
+            .child(
+                item(
+                    "folder",
+                    tr("Open folder").into(),
+                    tr("Where the file is").to_string(),
+                    false,
+                )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.mods.route_open = None;
+                    cx.open_with_system(&folder);
+                    cx.notify();
+                })),
+            );
+        if row.native.is_some() || matches!(row.kind, Some((ModKind::Native, _))) {
+            menu = menu.child(
+                item(
+                    "log",
+                    tr("View build log").into(),
+                    tr("What the last build printed").to_string(),
+                    false,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.mods.route_open = None;
+                    this.native_log_open();
+                    cx.notify();
+                })),
+            );
+        }
+        menu = menu.child(
+            item("file", tr("Show file").into(), row.file.clone(), false).on_click(
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.mods.route_open = None;
+                    cx.reveal_path(&path);
+                    cx.notify();
+                }),
+            ),
+        );
+        let label = if confirming {
+            tr("Remove for good")
+        } else {
+            tr("Remove")
+        };
+        let doomed = row.clone();
+        menu = menu.child(
+            item(
+                "remove",
+                label.into(),
+                tr("Takes it out of this instance").to_string(),
+                busy,
+            )
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                if confirming {
+                    this.remove_mod_row(&doomed);
+                    this.mods.route_open = None;
+                } else {
+                    this.mods.route_open = Some(again.clone());
+                }
+                cx.notify();
+            })),
+        );
+        wrap = wrap.child(
+            gpui::deferred(
+                div()
+                    .absolute()
+                    .top(px(34.))
+                    .right_0()
+                    .child(gpui::anchored().anchor(gpui::Anchor::TopRight).child(menu)),
+            )
+            .with_priority(1),
+        );
+        wrap
+    }
+
+    /// Takes a mod out of the instance, whatever put it there.
+    fn remove_mod_row(&mut self, row: &ModRow) {
+        let home = self.mods.home();
+        let result = match (&row.native, &row.entry) {
+            (Some(n), _) if n.origin.is_some() => {
+                let Some(_lock) = horizon_launcher::browser::try_lock_home(&home) else {
+                    self.mods.message =
+                        Some(Err(tr("Wait for the current operation to finish.").into()));
+                    return;
+                };
+                github_mods::remove(&home, &n.id).map(|_| ())
+            }
+            (None, Some(e)) => {
+                // `mods_remove` says what it did itself.
+                let _ = self.mods_remove(&e.project);
+                self.instance_mods_changed();
+                return;
+            }
+            _ => std::fs::remove_file(home.join(&row.file)).map_err(|e| e.to_string()),
+        };
+        self.mods.message = Some(result.map(|()| trf("Removed {name}.", &[("name", &row.name)])));
+        self.instance_mods_changed();
     }
 }
 

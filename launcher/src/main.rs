@@ -246,6 +246,11 @@ struct Launcher {
     settings_marked: usize,
     /// About's credit picture was asked for, and what came back.
     credit_asked: bool,
+    /// The version lists show every older build, not only the latest (Show older versions).
+    show_older_versions: bool,
+    /// Play pressed while the instance's native mods needed a build: the game starts once it
+    /// is built (Build and play).
+    play_after_build: bool,
     credit_picture: Option<std::sync::Arc<gpui::Image>>,
     /// The instance sheet's Storage: which instance was measured, and its size once known.
     sheet_size: Option<(String, Option<u64>)>,
@@ -617,6 +622,8 @@ impl Launcher {
             patch_scroll: Scrollbar::default(),
             settings_marked: 0,
             credit_asked: false,
+            show_older_versions: false,
+            play_after_build: false,
             credit_picture: None,
             sheet_size: None,
             mods_sticky: sticky::Sticky::default(),
@@ -1316,6 +1323,7 @@ impl Launcher {
                     let last = self.native_step.take();
                     self.native_progress = None;
                     let cancelled = matches!(&result, Err(native_mods::Failed::Other(error)) if error == native_mods::CANCELLED);
+                    let play_now = std::mem::take(&mut self.play_after_build) && result.is_ok();
                     self.native_done = match (&result, cancelled) {
                         (Ok(_), _) => last,
                         (Err(_), true) => Some(tr(native_mods::CANCELLED).into()),
@@ -1330,6 +1338,9 @@ impl Launcher {
                             self.request_native_build_consent();
                         }
                         self.native_error = Some(String::from(e));
+                    }
+                    if play_now {
+                        self.play();
                     }
                 }
                 Msg::LauncherProgress(p) => {
@@ -4080,6 +4091,7 @@ impl Launcher {
 
     /// Cancel and Escape share the transition; neither can execute a pending action.
     fn cancel_native_consent(&mut self) {
+        self.play_after_build = false;
         if let Err(error) = native_consent::resolve(
             &mut self.pending_consent,
             false,

@@ -21,33 +21,11 @@ pub(super) const SIDE_BY_SIDE: f32 = 1200.;
 /// Under this window width the top bar's tabs tighten and Settings' sections go above the page.
 pub(super) const COMPACT: f32 = 1180.;
 
-/// Height above the Version menu's rows that the window gives to the page's head: the top bar,
-/// the tabs, the title and the button the menu hangs from (taken a little high, so the menu
-/// never runs past the window's foot).
-const PICKER_ABOVE: f32 = 360.;
-/// What the menu takes besides its rows: its padding, the Manage versions row (55 high) and a
-/// margin under it.
-const PICKER_CHROME: f32 = 12. + 55. + 16.;
-/// The fewest and the most height the Version menu's rows get (two and a half rows; eight).
-const PICKER_ROWS_MIN: f32 = 130.;
-const PICKER_ROWS_MAX: f32 = 440.;
-
-/// How tall the Version menu's rows may be in a window `window_height` high: what is left under
-/// the button, within [`PICKER_ROWS_MIN`] and [`PICKER_ROWS_MAX`]. More rows scroll.
-fn picker_rows_max_height(window_height: f32) -> f32 {
-    (window_height - PICKER_ABOVE - PICKER_CHROME).clamp(PICKER_ROWS_MIN, PICKER_ROWS_MAX)
-}
-
 /// The Version menu's state (Home's picker).
 #[derive(Default)]
 pub(super) struct PickerState {
-    /// The menu is open.
+    /// The menu is open (the old look's; the glass look keeps versions in instance settings).
     pub(super) open: bool,
-    /// Its rows scroll.
-    pub(super) scroll: Scrollbar,
-    /// The window's height when the menu opened: its rows are as tall as the room under the
-    /// button.
-    pub(super) window_height: f32,
 }
 
 /// Which of Home's menus is open.
@@ -107,7 +85,6 @@ impl Launcher {
                 .items_center()
                 .gap(px(10.))
                 .child(self.play_group(tag, prepared || java.is_some(), cx))
-                .children(java.is_none().then(|| self.glass_picker(cx)))
                 .children(Some(mods))
                 .children(self.folder_group(java.is_none(), cx))
                 .children(settings(self, cx))
@@ -125,7 +102,6 @@ impl Launcher {
                         .items_center()
                         .gap(px(10.))
                         .child(self.play_group(tag, prepared || java.is_some(), cx))
-                        .children(java.is_none().then(|| self.glass_picker(cx)))
                         .children(self.folder_group(java.is_none(), cx))
                         .children(settings(self, cx)),
                 )
@@ -139,7 +115,13 @@ impl Launcher {
             .child(motion::enter(
                 ElementId::named_usize("home-edition", self.switches),
                 0,
-                self.edition_tabs(java.is_some(), cx),
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.))
+                    .child(self.edition_tabs(java.is_some(), cx))
+                    .children(self.version_chip(cx)),
             ))
             .child(motion::enter(
                 ElementId::named_usize("home-title", self.switches),
@@ -367,6 +349,22 @@ impl Launcher {
                 let running = self.installing.as_ref().filter(|(t, _)| t == v);
                 running.map(|(_, p)| Some(*p)).or(queued.then_some(None))
             });
+        let mine = self
+            .selected_instance()
+            .is_some_and(|i| self.native_for.as_deref() == Some(i.id.as_str()));
+        let building = mine && self.native_step.is_some();
+        // Native mods that changed since the last build: Play builds them first, one button.
+        let needs_build = !building
+            && self.native_step.is_none()
+            && self
+                .selected_instance()
+                .filter(|i| i.java.is_none())
+                .is_some_and(|i| {
+                    matches!(
+                        self.native_state_of(i),
+                        native_status::State::NotBuilt | native_status::State::Outdated
+                    )
+                });
         let busy = match (installing, self.preparing, &self.starting_client) {
             (Some(p), _, _) => Some((tr("Updating"), Some(p))),
             (_, _, _) if own.is_some() => Some((tr("Installing"), own.flatten())),
@@ -375,6 +373,11 @@ impl Launcher {
                 horizon_launcher::mojang::progress().map(|(d, n)| d as f32 / n.max(1) as f32),
             )),
             (_, _, Some(_)) => Some((tr("Starting"), None)),
+            // This instance's mods building (Build and play): the build's own progress.
+            _ if building => Some((
+                tr("Building mods"),
+                self.native_progress.as_ref().and_then(|p| p.fraction),
+            )),
             _ => None,
         };
         let open = self.home_menu == HomeMenu::Play;
@@ -498,8 +501,10 @@ impl Launcher {
                     self.owner
                 };
                 let press = play_press(ready, owner, false);
+                let build_first = needs_build && update.is_none() && matches!(press, PlayPress::Play);
                 let (label, icon) = match &update {
                     Some(_) => (tr("Update"), "download-04"),
+                    None if build_first => (tr("Build and play"), "hammer"),
                     None => (tr(play_label(press, owner)), "play"),
                 };
                 let main = crate::track_hover(
@@ -507,6 +512,17 @@ impl Launcher {
                     SharedString::from("play"),
                 );
                 let main = match (&update, press) {
+                    (None, PlayPress::Play) if build_first => {
+                        main.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.play_after_build = true;
+                            if this.settings.native_mods_allowed_at.is_some() {
+                                this.build_native();
+                            } else {
+                                this.request_native_build_consent();
+                            }
+                            cx.notify();
+                        }))
+                    }
                     (Some(_), _) => main.on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.install_update();
                         cx.notify();
@@ -696,157 +712,43 @@ impl Launcher {
         wrap
     }
 
-    /// The version (`VersionPicker`): "Version" over the one played, a chevron that turns while
-    /// its list is open; the list ticks the one played and ends with Manage versions.
-    fn glass_picker(&self, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        let soft = self.look.accent_soft;
-        let label = self.selected().map_or_else(
-            || tr("No version").into(),
-            |tag| {
-                horizon_launcher::nightly::label(tag)
-                    .or_else(|| build_import::label(tag))
-                    .unwrap_or_else(|| tag.clone())
-            },
-        );
-        let open = self.picker.open;
-        let chevron = ui::icon("arrow-down-01", 18., white(ink::NOTE)).when(open, |s| {
-            s.with_transformation(gpui::Transformation::rotate(gpui::radians(
-                std::f32::consts::PI,
-            )))
-        });
-        let picker_id = SharedString::from("picker");
-        let button = keyboard(
+    /// What the instance plays, as a chip beside the edition tabs (the mockup's tags): "Latest
+    /// version", "Nov 11 update", "26.3 · Fabric 0.17". Its versions are in instance settings,
+    /// which a click opens on Installation.
+    fn version_chip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let instance = self.selected_instance()?.clone();
+        let label = self.sheet_version(&instance);
+        let id = SharedString::from("home-version");
+        Some(
             track_hover(
                 div()
-                    .id(picker_id.clone())
+                    .id(id.clone())
                     .relative()
-                    .border_1()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(24.))
-                    .h(px(TALL))
                     .flex_none()
-                    .min_w(px(if self.window_width >= WIDE {
-                        220.
-                    } else {
-                        170.
-                    }))
-                    .px(px(16.))
-                    .rounded(px(radius::LARGE))
-                    .bg(white(fill::BUTTON))
-                    .border_color(if open {
-                        white(ui::edge::STRONG)
-                    } else {
-                        white(ui::edge::REST)
-                    })
-                    .active(|s| s.bg(white(0.18)))
+                    .items_center()
+                    .gap(px(6.))
+                    .h(px(32.))
+                    .px(px(12.))
+                    .rounded(px(radius::CONTROL))
+                    .border_1()
+                    .border_color(white(ui::edge::REST))
                     .cursor_pointer()
-                    .child(ui::hover_edge(&picker_id, radius::LARGE, 0.06, true))
-                    .child(
-                        div()
-                            .relative()
-                            .flex()
-                            .flex_col()
-                            .child(
-                                ui::text(12., FontWeight::NORMAL, ink::QUIET)
-                                    .line_height(px(18.))
-                                    .child(tr("Version")),
-                            )
-                            .child(
-                                ui::text(15., FontWeight::MEDIUM, ink::FULL)
-                                    .line_height(px(22.))
-                                    .child(label),
-                            ),
-                    )
-                    .child(chevron.relative())
-                    .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
-                        if !this.closed_by_this_press(event) {
-                            this.picker.open = !this.picker.open;
-                            this.picker.window_height = f32::from(window.viewport_size().height);
-                            // Opens at the top of the list, not where it was left.
-                            this.picker
-                                .scroll
-                                .handle
-                                .set_offset(gpui::point(px(0.), px(0.)));
-                        }
-                        cx.notify();
-                    })),
-                picker_id,
-            ),
-            &t,
-        );
-        let mut wrap = div().relative().child(button);
-        if open {
-            let follows = self.launcher_version().cloned();
-            // A solid backing under the glass, as the language menu's: the plate's backdrop
-            // doesn't paint under a popover whose rows scroll, and the rows must stay legible.
-            let backing = if ui::light() {
-                gpui::white().opacity(0.94)
-            } else {
-                ui::color(0x16112b).opacity(0.94)
-            };
-            let mut menu = ui::popover(300.)
-                .bg(backing)
-                .id("picker-menu")
-                .occlude()
-                .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                    this.picker.open = false;
-                    this.menu_closed_at = Some(event.position);
-                    cx.notify();
-                }));
-            // The versions scroll in the room under the button; Manage versions stays under them.
-            let mut rows = div()
-                .id("picker-list")
-                .flex()
-                .flex_col()
-                .max_h(px(picker_rows_max_height(self.picker.window_height)))
-                .overflow_y_scroll();
-            for tag in &self.installed {
-                let chosen = self.selected() == Some(tag);
-                let latest = follows.as_ref() == Some(tag);
-                let name = horizon_launcher::nightly::label(tag)
-                    .or_else(|| build_import::label(tag))
-                    .unwrap_or_else(|| tag.clone());
-                let note = if latest {
-                    tr("Newest · follows updates").to_string()
-                } else {
-                    tag.clone()
-                };
-                let pick = tag.clone();
-                rows = rows.child(
-                    ui::menu_item(format!("pick-{tag}"), name.into(), note, false, &t)
-                        .when(chosen, |d| {
-                            d.child(ui::icon("tick-02", 17., ui::color(soft)).relative())
-                        })
-                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.pin_version((!latest).then(|| pick.clone()));
-                            this.picker.open = false;
-                            cx.notify();
-                        })),
-                );
-            }
-            // The wheel moves the list while it can, and goes on to the page at its ends.
-            menu = menu.child(self.picker.scroll.wrap(rows, &t)).child(
-                ui::menu_item(
-                    "manage",
-                    tr("Manage versions").into(),
-                    tr("Install, remove and pick versions").into(),
-                    false,
-                    &t,
-                )
-                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                    this.go(Page::Versions);
-                    this.picker.open = false;
-                    cx.notify();
-                })),
-            );
-            wrap = wrap.child(
-                deferred(div().absolute().top(px(TALL + 8.)).left_0().child(menu)).with_priority(1),
-            );
-        }
-        wrap
+                    .font_family(horizon_theme::glass::FONT)
+                    .text_size(px(13.))
+                    .text_color(white(ink::BODY))
+                    .hover(|s| s.text_color(white(ink::FULL)))
+                    .child(ui::hover_edge(&id, radius::CONTROL, fill::ROW_HOVER, true))
+                    .child(ui::icon("download-04", 15., white(ink::QUIET)).relative())
+                    .child(div().relative().child(label)),
+                id,
+            )
+            .tooltip(ui::tip(tr("Change the version in instance settings")))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
+                cx.notify();
+            })),
+        )
     }
 
     /// The folder button and its ⋯ (`FolderGroup`), which shows under the pointer or while its
@@ -1166,17 +1068,6 @@ fn launch_command(id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_version_menus_rows_fit_the_room_under_the_button() {
-        // 760 high (the window's default): 760 - 360 above - 83 for the menu's padding and
-        // Manage versions = 317. The 600 px minimum window leaves 157; a short one keeps
-        // two and a half rows; a tall one stops at eight.
-        assert_eq!(picker_rows_max_height(760.), 317.);
-        assert_eq!(picker_rows_max_height(600.), 157.);
-        assert_eq!(picker_rows_max_height(400.), 130.);
-        assert_eq!(picker_rows_max_height(1400.), 440.);
-    }
 
     #[test]
     fn an_edition_tab_goes_to_that_editions_instance_played_last() {

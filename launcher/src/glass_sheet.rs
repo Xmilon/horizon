@@ -103,7 +103,7 @@ fn group(title: Option<SharedString>, rows: Div) -> Div {
 impl Launcher {
     /// What `instance` plays, as its rows and the sheet's head name it: "Nightly · 514ecf9", or
     /// "26.3 · Fabric" for a Java one.
-    fn sheet_version(&self, instance: &Instance) -> String {
+    pub(super) fn sheet_version(&self, instance: &Instance) -> String {
         match &instance.java {
             Some(java) => match &java.loader {
                 Some(loader) => format!(
@@ -114,13 +114,13 @@ impl Launcher {
                 ),
                 None => java.minecraft.clone(),
             },
+            // An instance that keeps no version of its own plays the latest.
+            None if instance.version.is_none() && self.launcher_version().is_some() => {
+                tr("Latest version").to_string()
+            }
             None => self.version_of(instance).map_or_else(
                 || tr("No version installed").to_string(),
-                |tag| {
-                    horizon_launcher::nightly::label(tag)
-                        .or_else(|| build_import::label(tag))
-                        .unwrap_or_else(|| tag.clone())
-                },
+                |tag| crate::glass_instance::version_label(tag),
             ),
         }
     }
