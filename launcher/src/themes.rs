@@ -42,8 +42,8 @@ impl ThemeAccent {
 pub enum Look {
     /// The same glass pages as Horizon's own, over the pixel sunset in the accent's hue.
     Glass,
-    /// The glass pages with solid plates and a thin edge over the theme's own dark sky (true black
-    /// for OLED screens) instead of the sunset.
+    /// The glass pages with a thin edge over the theme's own dark sky (true black for OLED
+    /// screens) instead of the sunset, its plates frosting it.
     Oled,
     /// The glass pages over the theme's own painted sky (`sky.rs`, with its drifting
     /// [`Mood`](horizon_theme::night::Mood)) instead of the sunset, its plates frosting it.

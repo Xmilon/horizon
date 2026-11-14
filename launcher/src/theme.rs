@@ -182,8 +182,9 @@ impl Theme {
                 themed.scene = false;
                 themed.edge = Some(night::over(night.stroke, night.stroke_alpha, night.card));
             }
-            // The painted skies replace the sunset too; the plates frost them as they would it.
-            if picked.look == themes::Look::Painted {
+            // The painted skies (and an OLED night's, with its edge) replace the sunset too; the
+            // plates frost them as they would it, so Glass and Blur apply.
+            if matches!(picked.look, themes::Look::Painted | themes::Look::Oled) {
                 themed.scene = false;
                 themed.look.own_sky = true;
             }
@@ -352,7 +353,7 @@ mod tests {
     }
 
     /// Every theme keeps Horizon's glass pages (so no page changes how it works) in its one
-    /// look: Hypr's is solid black plates with an edge, the painted ones frost their own sky,
+    /// look: Hypr's plates frost its black night with an edge, the painted ones their own sky,
     /// Taiga a snowy blue hour.
     #[test]
     fn the_new_families_keep_the_glass_pages() {
@@ -372,10 +373,9 @@ mod tests {
             assert_eq!(theme.dark, dark, "{id}: one look");
             assert_eq!(theme.edge.is_some(), oled);
             let painted = matches!(id, "overworld" | "taiga");
-            assert_eq!(theme.look.own_sky, painted, "{id}: frosts its own sky");
+            assert_eq!(theme.look.own_sky, painted || oled, "{id}: frosts its own sky");
             assert_eq!(theme.scene, !oled && !painted, "{id}: scene");
             if oled {
-                assert_eq!(theme.look.plate, theme.night.card);
                 assert_eq!(theme.night.page, 0x000000);
             }
             // Text on the main action, and the light look's accent on white.

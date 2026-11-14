@@ -274,11 +274,11 @@ pub fn backdrop(kind: Kind, radius: f32) -> AnyElement {
     .into_any_element()
 }
 
-/// A plate's 1 px edge: a theme's own (Hypr Neon's night), else a faint light line, so a plate
+/// A plate's 1 px edge: a theme's own (Hypr Neon's neon), else a faint light line, so a plate
 /// reads as a surface rather than as fog over the scene.
 fn edge() -> gpui::Hsla {
     PIECES.with_borrow(|p| match p.edge {
-        Some(edge) if p.solid() && !p.light => rgb(edge).into(),
+        Some(edge) if !p.light => rgb(edge).into(),
         _ if p.light => gpui::Hsla::from(rgb(horizon_theme::glass::ON_LIGHT)).opacity(0.10),
         _ => gpui::white().opacity(0.09),
     })

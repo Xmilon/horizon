@@ -63,7 +63,7 @@ fn thumb_centre(f: f32, width: f32) -> f32 {
 }
 
 /// Why Glass and Blur change nothing in `theme`'s look, if they don't: performance mode's plates
-/// and an OLED night's are a solid colour. The sunset's and a painted sky's are frosted glass.
+/// are a solid colour. The sunset's, a painted sky's and Hypr Neon's night's are frosted glass.
 fn look_unused(theme: &crate::theme::Theme, performance: bool) -> Option<&'static str> {
     if performance {
         Some("Performance mode draws solid panels, without glass or blur.")
@@ -925,8 +925,8 @@ mod tests {
         assert_eq!(fraction_at(5., THUMB), 0.);
     }
 
-    /// The sliders are live wherever the plates are glass (the sunset's and a painted sky's),
-    /// and off in performance mode and over an OLED night.
+    /// The sliders are live wherever the plates are glass (the sunset's, a painted sky's and
+    /// Hypr Neon's night), and off in performance mode.
     #[test]
     fn sliders_are_live_only_over_glass() {
         let unused = |theme: &str, performance: bool| {
@@ -951,7 +951,8 @@ mod tests {
             assert!(unused(painted, true), "{painted} performance");
         }
         assert!(!unused("sunrise", false));
-        assert!(unused("hypr_neon", false));
+        assert!(!unused("hypr_neon", false));
+        assert!(unused("hypr_neon", true));
     }
 
     #[test]
