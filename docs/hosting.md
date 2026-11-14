@@ -247,11 +247,12 @@ minutes (96 MB at most), so a player walking back isn't sent the save again.
 
 ### Other levels a mod shows a player: `max_viewed_*`
 
-A server mod (a portal mod, for example) can ask for areas of chunks in other levels for one player. The
-server keeps them loaded and sends them to a Horizon client that can keep other levels; a vanilla client
-is sent nothing. An area either only keeps its chunks loaded (nothing ticks there because of it) or ticks
-them as a player standing there would. An area counts as no player: no mobs spawn around it, it doesn't
-count for sleeping, raids or spawners. Terrain generated for it is saved like any other.
+A server mod (a portal mod, for example) can ask for areas of chunks in other levels for one player
+(`PlayerRef::set_chunk_areas`). The server keeps them loaded and sends them to a Horizon client that can
+keep other levels; a vanilla client is sent nothing. An area either only keeps its chunks loaded (nothing
+ticks there because of it) or ticks them as a player standing there would. An area counts as no player:
+no mobs spawn around it, it doesn't count for sleeping, raids or spawners. Terrain generated for it is
+saved like any other.
 
 The four caps limit what mods can ask for, counted per level:
 
@@ -264,6 +265,19 @@ The four caps limit what mods can ask for, counted per level:
 
 0 refuses every area of that kind. A request over a cap is refused whole, and the mod is told which cap and
 its value. Areas end when the player leaves.
+
+### Levels a mod opens: `horizon-max-runtime-levels`
+
+A mod can open levels of its own while the server runs ([runtime levels](modding/src/how-to/world/runtime-levels.md)).
+The server keeps at most 64 of them open at once, for all mods together; the 65th request is refused
+with `CapReached`. Set another number under `[properties]` in `server.toml`:
+
+```toml
+[properties]
+horizon-max-runtime-levels = 128
+```
+
+A level frees its place when its mod unloads or deletes it (a delete also removes its folder from `dimensions/`). After 300 ticks with nobody in it, it leaves memory, as any level does, but keeps its place: it opens again when someone enters it.
 
 Already have a vanilla server? Run `horizon-server init` in its folder, or `horizon-server import
 server.properties` to write `server.toml` from it. The world, `ops.json`, `whitelist.json` and the ban lists
@@ -681,6 +695,23 @@ drops absent regions. Completed chunks keep their saved biomes and blocks. New g
 differ in surface material, carving, features and structures. The
 [design note](design/mod-api/mod-biome-regions.md) lists record limits and fixture coverage.
 
+### Worlds saved with mods that are gone: `[missing_mods]`
+
+A world records the mods it was saved with: code mods and content mods, and the namespaces of the mods' blocks.
+If one of them is no longer loaded, opening the world turns that mod's blocks into air and removes what they hold,
+and the next save makes it permanent. So the server refuses to start that world: it logs one line per missing mod
+and a last line naming the switch, and changes nothing in the world. To open it anyway, back the world up, then add
+to `server.toml` and restart:
+
+```toml
+[missing_mods]
+allow = true   # false, the default: don't start
+```
+
+Started as `horizon-client --dedicated` directly, `--allowMissingMods` does the same for one start. With either one,
+the server logs the same list as a warning and opens the world. A mod whose `mod_mismatch` listener marks a missing
+mod resolved (a migration) takes it off the list.
+
 ## 8. Start it with the computer
 
 ```sh
@@ -799,6 +830,33 @@ most 8, as many as the machine has cores). It applies at the next start. It is t
 environment variable `HORIZON_PARALLEL_TICK=1`, for a host that gives you no way to set one (a game panel
 with a fixed startup command). With the setting off, a `HORIZON_PARALLEL_TICK` already in the server's
 environment still applies.
+
+### Mob AI far from players: `[entities] dab`
+
+Off by default, because it is not vanilla's behaviour: mobs far from every player react more slowly. It is
+Pufferfish's "dynamic activation of brain", with the same names and defaults. Add the section to `server.toml`:
+
+```toml
+[entities]
+dab = true                    # false (the default): every mob thinks every tick, as in vanilla
+dab_start_distance = 12       # blocks; a mob this close to the nearest player is never slowed
+dab_max_tick_freq = 20        # ticks; the longest wait between two AI ticks
+dab_activation_dist_mod = 8   # raise it to slow far mobs less, lower it to slow them more
+```
+
+A mob farther than `dab_start_distance` from the nearest player (squared distance `d²`) runs its AI on the ticks where
+`age % interval == 0`, with `interval = clamp(d² >> dab_activation_dist_mod, 1, dab_max_tick_freq)`: 14 ticks at
+60 blocks with the defaults, 20 from about 71 blocks. Only the decisions wait: goals and targets, the brains of villagers,
+piglins, axolotls and the like, and each species' `customServerAiStep`. A far mob still moves (its navigation, move,
+look and jump controls run), falls, floats, is pushed, takes damage and effects, and its despawn check runs.
+
+Never slowed: withers and wardens; a mob with a target or anger, or hurt in the last two seconds; raiders in a raid; a
+mob that is ridden, riding, carrying a passenger or on a lead; a tamed mob that is not sitting.
+
+Unlike Pufferfish, it applies to every mob (Pufferfish limits the brain part to villagers, axolotls, hoglins,
+zombified piglins and goats and has an entity blacklist), and a level with no player counts as far away. It applies at
+the next start, and is the same switch as the environment variables `HORIZON_DAB=1`, `HORIZON_DAB_START_DISTANCE`,
+`HORIZON_DAB_MAX_TICK_FREQ` and `HORIZON_DAB_ACTIVATION_DIST_MOD`.
 
 ## When something goes wrong
 

@@ -6,9 +6,13 @@
 //! clicks). The player still moves with the local physics, as the vanilla
 //! client predicts its own movement; the server stays authoritative for
 //! everything else.
+mod selector_metadata;
+use selector_metadata::hurt_sound_for;
 mod attack_target;
+mod break_prediction;
 mod fall_sound;
 mod interaction_actions;
+mod interaction_prediction;
 mod level_format;
 mod raw_ingress;
 mod recipe_properties;
@@ -64,7 +68,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use winit::{event::MouseButton, keyboard::KeyCode};
+use winit::keyboard::KeyCode;
 use {
     horizon_core::nbt::Tag,
     horizon_mod_runtime::attachments::{Holder, ResidentAttachments},
@@ -78,7 +82,8 @@ use {
 mod abilities;
 mod chat_received;
 use chat_received::QueuedChat;
-mod client_level_tick;
+pub(in crate::game) mod client_level_tick;
+mod entity_section_steps;
 mod item_use;
 mod remote_attributes;
 mod tables;
@@ -153,28 +158,6 @@ pub(super) fn remote_text(tag: &Tag) -> horizon_client::text::Text {
 /// level random either.
 pub(super) fn player_voice_pitch() -> f32 {
     1.0
-}
-
-/// The hurt sound of a `ClientboundDamageEventPacket`'s damage type, by its
-/// synchronized registry id: `Player.getHurtSound` picks the type's effects.
-fn hurt_sound_for(
-    registries: &Dynamic,
-    damage: &horizon_world::damage_source::Catalog,
-    source_type: i32,
-) -> &'static str {
-    if let Some(data) = registries.data("minecraft:damage_type", source_type) {
-        let effects = data.get("effects").and_then(|t| match t {
-            Tag::String(effects) => effects.to_string().ok(),
-            _ => None,
-        });
-        return horizon_client::health::hurt_sound(effects.as_deref().unwrap_or("hurt"));
-    }
-    registries
-        .name("minecraft:damage_type", source_type)
-        .and_then(|name| damage.id(name).and_then(|id| damage.definition(id)))
-        .map_or(horizon_client::health::hurt_sound("hurt"), |d| {
-            horizon_client::health::hurt_sound(&d.effects)
-        })
 }
 
 /// The live entity a bound sound names; absence means that object was removed.
@@ -502,7 +485,7 @@ pub(super) struct Remote {
     pub far_terrain: Option<horizon_client::lod_net::Offer>,
     pub(super) builtin: Arc<Builtin>,
     lang: Arc<Language>,
-    pub(super) registries: Arc<Dynamic>,
+    pub(in crate::game) registries: Arc<Dynamic>,
     /// The block, item and fluid tags of `registries` by name, as native mods read them
     /// (`install_remote_tags`).
     pub(super) tags: Option<horizon_client::items::Items>,
@@ -614,7 +597,7 @@ pub(super) struct Remote {
     use_target: Option<[i32; 3]>,
     /// A mod menu's extra data, kept for the `OpenScreen` of its window that
     /// follows (`horizon:menu_extra`).
-    menu_extra: Option<horizon_protocol::menu_extra::Message>,
+    pub(in crate::game) menu_extra: Option<horizon_protocol::menu_extra::Message>,
     pub(super) entities: HashMap<i32, Tracked>,
     /// Per-tick remote entity scratch retained between frames.
     tick_fluids: Vec<Option<horizon_client::mobs::living::Fluids>>,
@@ -674,6 +657,7 @@ pub(super) struct Remote {
     /// plus the commands native mods own (`chat::chat_tree_for`). Rebuilt where
     /// that base changes, not at each keystroke.
     pub chat_tree: horizon_client::command::Dispatcher,
+    selector_metadata_supported: bool,
     /// Whether a `ClientboundCommandsPacket` has supplied the server's tree.
     /// The local fallback is for UI completion only; vanilla signs command
     /// arguments against an empty tree until the server sends one.
@@ -731,8 +715,8 @@ pub(super) struct Remote {
     /// `MultiPlayerGameMode.destroyBlockPos`, `.destroyProgress` and the face last sent: the block
     /// the break targets, which outlives the break itself.
     destroying: Option<([i32; 3], u8, f32)>,
-    /// `MultiPlayerGameMode.destroyingItem`: the held item key the break began with.
-    destroying_item: String,
+    /// `MultiPlayerGameMode.destroyingItem`: the main-hand stack the break began with.
+    destroying_item: Option<ItemStack>,
     /// `MultiPlayerGameMode.isDestroying`: a break is running. `destroying` keeps the target after
     /// one ends (`destroyBlockPos` is written only when a break starts), so a dig resumed on the
     /// same block and item sends no new START and the server keeps its clock (#4124).
@@ -740,7 +724,7 @@ pub(super) struct Remote {
     /// Per-hand swing policy, restored when the current input attempt ends.
     pub(in crate::game) interaction_swing: [bool; 2],
     destroy_delay: u32,
-    input: horizon_client::interaction_input::InteractionInput,
+    pub(super) input: horizon_client::interaction_input::InteractionInput,
     /// Keys whose presses send a packet (swap hands, drop, a mount's
     /// inventory): like the click queue, they wait for the tick's
     /// `handleKeybinds` phase rather than going out between window events.
@@ -1121,7 +1105,9 @@ impl Game<'_> {
                     }
                 };
             });
+        self.ui.registries.selector_tokens.clear();
         self.remote = Some(Remote {
+            selector_metadata_supported: true,
             professions: self.client_professions()?,
             session,
             brand: "unknown".into(),
@@ -1241,7 +1227,7 @@ impl Game<'_> {
             profile: 0,
             profile_name: String::new(),
             destroying: None,
-            destroying_item: String::new(),
+            destroying_item: None,
             is_destroying: false,
             interaction_swing: [true; 2],
             destroy_delay: 0,
@@ -1364,7 +1350,9 @@ impl Game<'_> {
         let chat_tree = self.chat_tree_for(None);
         let services_keys = Arc::new(std::sync::Mutex::new(ServicesKeys::Ready(Vec::new())));
 
+        self.ui.registries.selector_tokens.clear();
         self.remote = Some(Remote {
+            selector_metadata_supported: true,
             professions: self.client_professions()?,
             session,
             brand: "horizon-studio".into(),
@@ -1481,7 +1469,7 @@ impl Game<'_> {
             profile: 0,
             profile_name: String::new(),
             destroying: None,
-            destroying_item: String::new(),
+            destroying_item: None,
             is_destroying: false,
             interaction_swing: [true; 2],
             destroy_delay: 0,
@@ -1560,7 +1548,7 @@ impl Game<'_> {
         if let Some(mut r) = self.remote.take() {
             r.session.disconnect();
         }
-        super::lan::forget_sync_data();
+        super::lan::sync::forget_sync_data();
         self.gui.atlas.clear_object_skins();
         self.server_packs_disconnect();
         self.code_of_conduct = None;
@@ -2951,7 +2939,7 @@ impl Game<'_> {
             p.state = state;
             return;
         }
-        self.set_block(pos, state);
+        self.set_block(pos, state, false);
     }
     /// BlockStatePredictionHandler.endPredictionsUpTo (ClientboundBlockChangedAckPacket): the
     /// actions up to `sequence` are settled, so the blocks they predicted take the state the
@@ -2974,7 +2962,7 @@ impl Game<'_> {
             if self.world.block(pos[0], pos[1], pos[2]).0 as i32 == prediction.state {
                 continue;
             }
-            self.set_block(pos, prediction.state);
+            self.set_block(pos, prediction.state, false);
             // ClientLevel.syncBlockState: the block that comes back may now hold
             // the player, and then it goes to the position the prediction
             // remembered.
@@ -3037,7 +3025,7 @@ impl Game<'_> {
         let z = at[2].clamp(-3.0e7, 3.0e7);
         player.position = Vec3::new(x, at[1], z);
     }
-    fn set_block(&mut self, pos: [i32; 3], state: i32) {
+    fn set_block(&mut self, pos: [i32; 3], state: i32, predicted: bool) {
         // A state we don't have (a server with mods we lack) reads as air, as in its chunks.
         let state = state.max(0) as u32;
         let known = horizon_client::chunk::known_block_state(state);
@@ -3047,16 +3035,7 @@ impl Game<'_> {
             && self.world.set(pos[0], pos[1], pos[2], state).is_ok()
         {
             self.sync_block_entity((pos[0], pos[1], pos[2]), Some(previous), state);
-            // LevelChunk.setBlockState removes the block entity of a block
-            // that changes: the moving piston the client's moveBlocks made
-            // stops when the server places what it moved (#3002).
-            let facts = self.res.facts();
-            let moving = |s: BlockStateId| &*facts.get(s).name == "minecraft:moving_piston";
-            if moving(previous) && !moving(state) {
-                let at = horizon_core::position::BlockPos::new(pos[0], pos[1], pos[2]);
-                self.forget_moving_piston(at);
-                self.moving_pistons_stale = true;
-            }
+            self.client_block_written(pos, previous, state, predicted);
         }
         // A block we just placed: play its place sound (the server skips the placer).
         if let Some((target, _)) = self.remote.as_ref().and_then(|r| r.placing)
@@ -3577,6 +3556,11 @@ impl Game<'_> {
             C::CustomPayload(p) if p.channel == horizon_client::datapack_net::CHANNEL => {
                 horizon_client::datapack_net::accept_chunk(&p.data)?;
             }
+            C::CustomPayload(p)
+                if p.channel == horizon_client::lan::commands::selector_sync::CHANNEL =>
+            {
+                self.receive_selector_tokens(&p.data)?;
+            }
             // Another level's world: its open, its packets and its close (`viewed_worlds`).
             C::CustomPayload(p) if p.channel == horizon_protocol::viewed_levels::CHANNEL => {
                 self.viewed_levels_payload(&p.data)?;
@@ -3594,14 +3578,7 @@ impl Game<'_> {
             // A mod menu type's block and its mod's bytes, just before the
             // menu's `OpenScreen`.
             C::CustomPayload(p) if p.channel == horizon_protocol::menu_extra::CHANNEL => {
-                match horizon_protocol::menu_extra::decode(&p.data) {
-                    Ok(extra) => {
-                        if let Some(r) = self.remote.as_mut() {
-                            r.menu_extra = Some(extra);
-                        }
-                    }
-                    Err(e) => log::debug!("Horizon: a bad menu extra payload: {e}"),
-                }
+                self.receive_menu_extra(&p.data);
             }
             C::CustomPayload(p) if horizon_client::lan::recipes::viewer_channel(&p.channel) => {
                 self.remote_recipe_viewer(&p.channel, &p.data);
@@ -3711,10 +3688,9 @@ impl Game<'_> {
                 // A new player, without effects (the server sends them
                 // again) and with no item in use.
                 self.potions.effects.clear();
-                // The server sends the level, chunks and entities again, and opens again
-                // the levels it views: none is kept through a Respawn.
+                // Every synced attachment but the player's is sent again; the viewed
+                // levels go or stay with the level entered (`enter_respawn_level`).
                 if let Some(r) = self.remote.as_mut() {
-                    r.viewed.clear();
                     r.attachments
                         .retain(|holder, _| matches!(holder, Holder::Player(_)));
                 }
@@ -3760,7 +3736,7 @@ impl Game<'_> {
                     r.sequence = 0;
                 }
                 self.portals.respawn_attributes.respawn(p.keep & 1 != 0);
-                self.enter_remote_dimension(&p.spawn, true, reason);
+                self.enter_respawn_level(&p, reason);
                 // handleRespawn adds the new LocalPlayer after what the kept
                 // level holds; a new level holds nothing yet.
                 let before: std::collections::HashSet<u32> =
@@ -4016,7 +3992,7 @@ impl Game<'_> {
                 ) {
                     t.codec_base = path.end();
                 }
-                self.move_entity(m.id, path, rotation, m.on_ground, MovePacket::Move);
+                self.remote_move_entity_and_file(m.id, path, rotation, m.on_ground);
             }
             C::EntityPositionSync(p) => {
                 let path = match p.path {
@@ -4027,13 +4003,7 @@ impl Game<'_> {
                 if let Some(t) = self.remote.as_mut().and_then(|r| r.entities.get_mut(&p.id)) {
                     t.codec_base = path.end();
                 }
-                self.move_entity(
-                    p.id,
-                    Some(path),
-                    Some((p.yaw, p.pitch)),
-                    p.on_ground,
-                    MovePacket::PositionSync,
-                )
+                self.remote_position_sync_and_file(p.id, path, p.yaw, p.pitch, p.on_ground);
             }
             C::TeleportEntity(p) => {
                 let base = self
@@ -4066,6 +4036,7 @@ impl Game<'_> {
                 if self.driven_mount().is_some_and(|m| m.id as i32 == p.id) {
                     self.remote_move_vehicle(position, p.yaw);
                 }
+                self.entity_section_moved_id(p.id as u32);
             }
             C::SetPassengers(p) => self.remote_set_passengers(p.vehicle, &p.passengers),
             // ClientPacketListener.handleEntityLinkPacket: who holds a mob's
@@ -4096,7 +4067,7 @@ impl Game<'_> {
                     });
                 }
             }
-            C::MoveVehicle(p) => self.remote_move_vehicle(p.position, p.yaw),
+            C::MoveVehicle(p) => self.remote_move_vehicle_and_file(p.position, p.yaw),
             C::MoveMinecartAlongTrack(p) => self.remote_move_minecart(p),
             // ClientPacketListener.handleRotateMob: lerpHeadTo(yHeadRot, 3).
             C::RotateHead(p) => {
@@ -5548,18 +5519,7 @@ impl Game<'_> {
                 self.clock.set_frozen(p.frozen);
             }
             C::TickingStep(p) => self.clock.set_frozen_ticks_to_run(p.steps),
-            C::UpdateAdvancements(p) => {
-                let icons = p
-                    .added
-                    .iter()
-                    .map(|a| {
-                        a.display
-                            .as_ref()
-                            .map_or_else(String::new, |d| self.item_name(d.icon.item).to_string())
-                    })
-                    .collect();
-                self.remote_advancements(p, icons);
-            }
+            C::UpdateAdvancements(p) => self.remote_advancements(p),
             // handleAwardStats: StatsCounter.setValue for each.
             C::AwardStats(p) => {
                 let Some(r) = self.remote.as_ref() else {
@@ -6336,11 +6296,11 @@ impl Game<'_> {
     /// ClientPacketListener.handleMovePlayer.
     fn remote_teleport(&mut self, p: &play::PlayerPosition) -> Result<()> {
         use play::relative as rel;
-        let current = self
+        let (had_player, current) = self
             .player
             .as_ref()
-            .map(|pl| pl.position)
-            .unwrap_or(Vec3::ZERO);
+            .map(|pl| (true, pl.position))
+            .unwrap_or((false, Vec3::ZERO));
         let velocity = self
             .player
             .as_ref()
@@ -6365,8 +6325,7 @@ impl Game<'_> {
             (yaw, pitch),
             p,
         );
-        // BlockStatePredictionHandler.onTeleport: a prediction made before this
-        // one keeps its block but not the player position it remembered.
+        // BlockStatePredictionHandler.onTeleport: a prior prediction keeps its block, not its remembered player position.
         if let Some(r) = self.remote.as_mut() {
             r.last_teleport_sequence = r.sequence;
         }
@@ -6418,6 +6377,7 @@ impl Game<'_> {
                 self.apply_remote_abilities();
             }
         }
+        entity_section_steps::player_teleport(self, had_player, current, position);
         if !self.replay.playing() {
             self.previous_position = position;
         }
@@ -6628,10 +6588,12 @@ impl Game<'_> {
                 .flatten()
             })
             .flatten();
+        let player_from = entity_section_steps::player_before(self);
         if let Some(player) = player {
             self.native_player_tick_pre(mod_api::__private::PlayerTickPreCall { player });
         }
         let result = self.tick_local_player(entity_collisions, pushed, sprint_window);
+        entity_section_steps::player_after(self, player_from);
         // `EntityEvent.Size` for the pose the tick set.
         self.native_local_player_size();
         if let Some(player) = player {
@@ -7359,6 +7321,7 @@ impl Game<'_> {
             let players = &r.level_players;
             let tab_players = &r.tab_players;
             let m = &mut self.mobs[i];
+            let section_from = m.position;
             if player {
                 // AvatarRenderer.extractRenderState: isSpectator, from the player list.
                 m.extra.spectator = players
@@ -7569,8 +7532,13 @@ impl Game<'_> {
                 }
                 _ => {}
             }
+            let section_id = m.id;
+            let section_to = m.position;
             if let Some(player) = player_ref {
                 self.native_player_tick_post(mod_api::__private::PlayerTickPostCall { player });
+            }
+            if section_from != section_to {
+                self.remote_entity_section_step(section_id, section_from, section_to);
             }
         }
         // ExperienceOrb.tick runs on a client too (all but the merges and the
@@ -7649,16 +7617,7 @@ impl Game<'_> {
             .retain(|_, (_, steps)| *steps > 0);
         let mut entered = Vec::new();
         if running {
-            let mut items = self.dropped.lift();
-            items.retain_mut(|item| {
-                // The server decides entity collisions. This copy predicts block movement.
-                let (_, discarded) =
-                    self.tick_item_with_block_contacts(item, None, &[], true, &mut |splash| {
-                        entered.push(splash);
-                    });
-                !discarded
-            });
-            self.put_back_dropped(items);
+            entity_section_steps::tick_items(self, &mut entered);
         }
         // Entity.doWaterSplashEffect on this window: Level.addParticle draws
         // the bubbles and splashes. ClientLevel.playSeededSound drops
@@ -8114,9 +8073,9 @@ impl Game<'_> {
             return true;
         }
         // sameDestroyTarget: the same block and still the item the break began with.
-        let held = self.main_hand_key();
         let same = self.remote.as_ref().is_some_and(|r| {
-            r.destroying.is_some_and(|(p, _, _)| p == hit.pos) && r.destroying_item == held
+            r.destroying.is_some_and(|(p, _, _)| p == hit.pos)
+                && self.same_destroying_item(&r.destroying_item)
         });
         // startDestroyBlock leaves only a break that is still running alone (`isDestroying &&
         // sameDestroyTarget`); a click on the block a stopped break still names starts it again,
@@ -8171,9 +8130,9 @@ impl Game<'_> {
                 }
                 return true;
             }
+            let held = self.main_hand_key();
             if let Some(r) = self.remote.as_mut() {
-                r.destroying = Some((hit.pos, face, 0.0));
-                r.destroying_item = held;
+                (r.destroying, r.destroying_item) = (Some((hit.pos, face, 0.0)), held);
                 r.is_destroying = true;
             }
             // startDestroyBlock plays the first hit and crack itself; the
@@ -8262,35 +8221,6 @@ impl Game<'_> {
         );
         canceled
     }
-    /// MultiPlayerGameMode.destroyBlock: the predicted break.
-    fn predict_break(&mut self, pos: [i32; 3], state: BlockStateId, sequence: i32) {
-        self.tutorial_destroy(state, 1.0);
-        // BlockStatePredictionHandler.retainKnownServerState.
-        let here = self.player_position();
-        if let Some(r) = self.remote.as_mut() {
-            r.predictions
-                .entry(pos)
-                .and_modify(|p| p.sequence = sequence)
-                .or_insert(Prediction {
-                    sequence,
-                    state: state.0 as i32,
-                    player_pos: here,
-                });
-        }
-        // Block.playerWillDestroy's destroy event (particles and the break
-        // sound), which BaseFireBlock skips: the server's extinguish sound
-        // is all a player hears.
-        if !self.res.facts().get(state).has_class("BaseFireBlock") {
-            self.play_break_sound(pos, state);
-            self.destroy_particles(pos, state);
-        }
-        // The server's block update follows (waterlogged blocks leave water).
-        let air = self.world.air;
-        if self.world.set(pos[0], pos[1], pos[2], air).is_ok() {
-            self.world.block_entities.remove(&(pos[0], pos[1], pos[2]));
-        }
-        self.mining = None;
-    }
     /// `Player.blockActionRestricted` for the block at `pos`: a spectator
     /// never breaks, an adventure player only with a main-hand item whose
     /// `can_break` matches the block (`ItemStack.canBreakBlockInAdventureMode`).
@@ -8314,142 +8244,6 @@ impl Game<'_> {
                     .is_some_and(|p| WirePatch::adds(&p, CAN_BREAK)))
     }
 
-    /// `Minecraft.startUseItem`'s entity turn for `hand`: Interact goes to
-    /// the server, and whether the click ends there is what this client's
-    /// copy of the entity answers (`MultiPlayerGameMode.interact`).
-    fn remote_use_entity(&mut self, hand: Hand) -> bool {
-        // A menu this use opens (a chest minecart's) is no clicked block's.
-        if let Some(r) = self.remote.as_mut() {
-            r.use_target = None;
-        }
-        let sneaking = self.remote_shift_down();
-        // A boat, minecart, item frame, armor stand or painting nearer than
-        // any mob: the server uses it (AbstractBoat.interact boards it).
-        if let Some(hit) = self.remote_object_hit(false)
-            && self.mob_hit().is_none_or(|(_, d, _)| hit.distance < d)
-            && self.before_block(hit.distance)
-        {
-            // Interaction.interact answers SUCCESS when it responds and
-            // CONSUME otherwise: both end the click (nothing behind the box
-            // is used), but only SUCCESS swings; the packet carries the hand.
-            let response = self.interactions.get(&hit.id).map(|i| i.response);
-            // Objects whose interact passes (paintings, empty or fixed item frames,
-            // boats sneaked at or out of control, carts that pass) leave each hand's
-            // turn to its item: a crossbow aimed at it shoots.
-            let is_painting = self.paintings.iter().any(|p| p.id as i32 == hit.id);
-            let held = self.with_hand(hand, |g| g.held().cloned());
-            let frame_passes = self
-                .item_frames
-                .iter()
-                .find(|f| f.id as i32 == hit.id)
-                .is_some_and(|f| {
-                    item_frame_interact_passes(f.fixed, f.item.is_some(), held.is_some())
-                });
-            let boat_passes = self
-                .boats
-                .iter()
-                .enumerate()
-                .find(|(_, b)| b.id as i32 == hit.id)
-                .is_some_and(|(i, b)| {
-                    boat_interact_passes(
-                        b.chest,
-                        sneaking,
-                        b.out_of_control >= 60.0,
-                        self.boat_has_room(i),
-                    )
-                });
-            let (cart_passes, is_rideable_cart) = self
-                .carts
-                .iter()
-                .find(|c| c.id as i32 == hit.id)
-                .map(|c| {
-                    let ridden = self.riding == Some(c.id)
-                        || self.mobs.iter().any(|m| m.extra.mount == Some(c.id));
-                    (
-                        c.kind
-                            .interact_passes(sneaking, ridden, self.can_use_game_master_blocks()),
-                        c.kind == super::minecarts::CartKind::Rideable,
-                    )
-                })
-                .unwrap_or((false, false));
-            // Cushion.interact on a client: PASS when sneaked at or when
-            // something already sits on it, CONSUME (no swing) otherwise.
-            let is_cushion = self.cushions.iter().any(|c| c.id as i32 == hit.id);
-            let cushion_passes = is_cushion
-                && (sneaking
-                    || self.riding.is_some_and(|r| r as i32 == hit.id)
-                    || self
-                        .mobs
-                        .iter()
-                        .any(|m| m.extra.mount.is_some_and(|r| r as i32 == hit.id)));
-            let passes =
-                is_painting || frame_passes || boat_passes || cart_passes || cushion_passes;
-            // Otherwise the main hand's turn takes it; there is no off hand turn.
-            if response.is_none() && hand == Hand::Off && !passes {
-                return false;
-            }
-            self.send(S::Interact(play::Interact {
-                id: hit.id,
-                hand: hand_id(hand),
-                location: hit.location,
-                secondary: sneaking,
-            }));
-            if passes {
-                return false;
-            }
-            // Minecart.interact resets the passenger's easing baseline on
-            // a successful boarding click, not on SetPassengers (commands
-            // can mount a player without this interaction).
-            if let Some(i) = self.carts.iter().position(|c| {
-                c.id as i32 == hit.id && c.kind == super::minecarts::CartKind::Rideable
-            }) {
-                self.carts
-                    .update(i, |c| c.player_rotation_offset = c.rotation_offset);
-            }
-            // MinecartCommandBlock.interact on the client: the editor opens.
-            if self.carts.iter().any(|c| {
-                c.id as i32 == hit.id && c.kind == super::minecarts::CartKind::CommandBlock
-            }) {
-                self.open_cart_command_block(hit.id as u32);
-            }
-            // Minecart.interact boards the cart and answers CONSUME on the client,
-            // which ends the click without an arm swing. AbstractBoat.interact
-            // answers SUCCESS there, which swings. Cushion.interact answers
-            // CONSUME there too.
-            if remote_object_swings(response, is_rideable_cart || is_cushion) {
-                self.with_hand(hand, Game::swing_arm);
-            }
-            return true;
-        }
-        if let Some((i, distance, location)) = self.mob_hit()
-            && self.before_block(distance)
-        {
-            let id = self.mobs[i].id as i32;
-            self.send(S::Interact(play::Interact {
-                id,
-                hand: hand_id(hand),
-                location,
-                secondary: sneaking,
-            }));
-            // Player.interactOn: another player passes, and so does a mob
-            // the held item means nothing to: the item is used instead.
-            let player = self
-                .remote
-                .as_ref()
-                .is_some_and(|r| r.level_players.contains_key(&id));
-            if !player && self.remote_mob_takes(i, hand) {
-                self.remote_feed_particles(i, hand);
-                // As for the objects above, only SUCCESS swings the hand: a
-                // CONSUME ends the click without one.
-                if self.remote_mob_swings(i, hand) {
-                    self.with_hand(hand, Game::swing_arm);
-                }
-                return true;
-            }
-        }
-        false
-    }
-
     /// `Minecraft.startUseItem`'s block turn for `hand`: a use that swung drops
     /// the hand (`LocalPlayer.itemUsed`) when it spent the held item or the
     /// player has infinite materials.
@@ -8465,361 +8259,6 @@ impl Game<'_> {
             self.heights.item_used(hand);
         }
         done
-    }
-
-    /// MultiPlayerGameMode.useItemOn for `hand`: whether the click ends there
-    /// (the block reacts, or a block item is placed).
-    fn remote_use_item_on(&mut self, hand: Hand) -> bool {
-        let held = self.with_hand(hand, |g| g.held().cloned());
-        let held_block = held
-            .as_ref()
-            .and_then(|h| self.items().get(&h.item))
-            .is_some_and(|i| i.block.is_some());
-        let debug_stick = held
-            .as_ref()
-            .is_some_and(|stack| &*stack.item == "minecraft:debug_stick");
-        if let Some(hit) = self.pick() {
-            use mod_api::InteractionResult as Answer;
-            use mod_api::TriState;
-            let spectator = self.spectator();
-            // RightClickBlock on this client, where performUseItemOn starts,
-            // for a spectator too (whose use only opens menus on the server):
-            // it may force the block's use or the item's useOn, or answer for
-            // both.
-            let (mut canceled, mut use_block, mut use_item) =
-                (None, TriState::Default, TriState::Default);
-            match self.right_click_block(&hit, hand, held.as_ref()) {
-                super::native_hooks::BlockClickAnswer::Go {
-                    use_block: block,
-                    use_item: item,
-                } => (use_block, use_item) = (block, item),
-                super::native_hooks::BlockClickAnswer::Canceled(answer) => {
-                    canceled = Some(answer);
-                }
-            }
-            // The held item's onItemUseFirst on this client: the broadcast
-            // event skips the item's before-block Part when canceled. Only
-            // non-PASS answers end the block interaction; PASS goes
-            // on to the block (a Part's answer comes from the server).
-            if canceled.is_none()
-                && !spectator
-                && use_item.or(true)
-                && let Some(stack) = held.as_ref()
-            {
-                canceled = self
-                    .use_item_on_block(&hit, hand, Some(stack), mod_api::UsePhase::ItemBeforeBlock)
-                    .filter(|answer| *answer != Answer::Pass);
-            }
-            // Player.isSecondaryUseActive with something in either hand
-            // keeps the block from reacting by default; an explicit block
-            // allow overrides that skip, and False always skips the block.
-            let sneaking = self.remote_shift_down();
-            let hands_full = self.stack_in(self.selected).is_some() || self.offhand.is_some();
-            let block_used = canceled.is_none() && use_block.or(!(sneaking && hands_full));
-            let item_forced = use_item == TriState::True;
-            let item_used = canceled.is_none()
-                && use_item.or(true)
-                && (self.may_build()
-                    || self.with_hand(hand, |g| g.can_place_on_in_adventure(hit.pos)))
-                && held
-                    .as_ref()
-                    .is_none_or(|stack| self.items().get(&stack.item).is_some())
-                && (item_forced
-                    || held.as_ref().is_some_and(|stack| {
-                        self.items().get(&stack.item).is_some_and(|info| {
-                            !self
-                                .cooldowns
-                                .is_on_cooldown(&horizon_client::cooldowns::group(
-                                    stack,
-                                    info.use_cooldown.as_ref(),
-                                ))
-                        })
-                    }));
-            let block_answer = if !spectator && block_used {
-                self.use_item_on_block(&hit, hand, held.as_ref(), mod_api::UsePhase::Block)
-            } else {
-                None
-            };
-            let vanilla_block = block_used && block_answer.is_none();
-            let seq = self.next_sequence();
-            // ShelfBlock.useItemOn consumes a nonempty main-hand click client-side
-            // without predicting the inventory swap or swinging.
-            let shelf_reacts = hand == Hand::Main
-                && held.is_some()
-                && vanilla_block
-                && self.shelf_hit(&hit).is_some();
-            let (result, changes) = if let Some(answer) = block_answer {
-                if let Some(result) = super::native_hooks::block_use_result(answer) {
-                    (result, DryUse::default())
-                } else if hand == Hand::Main {
-                    self.remote_block_template(&hit, held.as_ref(), true)
-                } else {
-                    (InteractionResult::Pass, DryUse::default())
-                }
-            } else if hand == Hand::Main && !spectator && vanilla_block {
-                self.remote_block_reacts(&hit, held.as_ref())
-            } else {
-                // useItemOn runs for the off hand too (useWithoutItem doesn't):
-                // RespawnAnchorBlock.useItemOn charges an anchor with its
-                // glowstone, SUCCESS.
-                let charges = vanilla_block && self.anchor_takes(hit.pos, held.as_ref());
-                let result = if charges {
-                    InteractionResult::Success
-                } else {
-                    InteractionResult::Pass
-                };
-                (result, DryUse::default())
-            };
-            // AbstractCauldronBlock.useItemOn, either hand: CauldronInteractions
-            // answers on the client as on the server and only the server acts,
-            // so a bucket the cauldron takes is not used again (UseItem).
-            // The main-hand path already asked above; only the off-hand fallback asks here.
-            let result =
-                if result.consumes_action() || spectator || !vanilla_block || hand == Hand::Main {
-                    result
-                } else {
-                    match self.with_hand(hand, |game| game.cauldron_outcome(hit.pos, held.as_ref()))
-                    {
-                        horizon_client::cauldron::Outcome::Success => InteractionResult::Success,
-                        horizon_client::cauldron::Outcome::Consume => InteractionResult::Consume,
-                        horizon_client::cauldron::Outcome::Pass => result,
-                    }
-                };
-            // useItemOn on this client, unless a sneak with something in hand
-            // skips it: RedStoneOreBlock's dust, and the wick smoke of a lit
-            // candle an empty hand snuffs (CandleBlock.useItemOn) or a lit
-            // candle cake (CandleCakeBlock.useItemOn).
-            if hand == Hand::Main && !spectator && vanilla_block {
-                self.redstone_ore_particles(hit.pos);
-                let state = self.world.block(hit.pos[0], hit.pos[1], hit.pos[2]);
-                let name = self.block_name(hit.pos);
-                let lit =
-                    self.pack.assets.registry.state(state).is_some_and(|s| {
-                        s.properties.get("lit").map(String::as_str) == Some("true")
-                    });
-                let snuffs = if name.ends_with("candle_cake") {
-                    hit.point[1] - f64::from(hit.pos[1]) > 0.5
-                } else {
-                    name.ends_with("candle") && self.may_build()
-                };
-                if held.is_none() && lit && snuffs {
-                    self.candle_smoke(hit.pos, state);
-                }
-            }
-            let result = if !spectator
-                && vanilla_block
-                && !result.consumes_action()
-                && self.with_hand(hand, |g| g.predict_campfire_douse(&hit, held.as_ref(), seq))
-            {
-                InteractionResult::Success
-            } else {
-                result
-            };
-            let item_answer = if !spectator && !result.consumes_action() && item_used {
-                self.use_item_on_block(&hit, hand, held.as_ref(), mod_api::UsePhase::ItemAfterBlock)
-            } else {
-                None
-            };
-            let item_used =
-                item_used && !spectator && !result.consumes_action() && item_answer.is_none();
-            // DebugStickItem.useOn once the block passed: SUCCESS on the client
-            // too (the hand swings below); only the server changes the block.
-            let (result, changes) = if debug_stick && item_used {
-                (InteractionResult::Success, DryUse::default())
-            } else {
-                (result, changes)
-            };
-            let reacts = result.consumes_action();
-            // ArmorStandItem.useOn runs in startPrediction before the packet
-            // goes out (the server may spawn the stand at once).
-            let stand_fits = item_used
-                && held
-                    .as_ref()
-                    .is_some_and(|s| &*s.item == "minecraft:armor_stand")
-                && held
-                    .as_ref()
-                    .is_some_and(|s| self.armor_stand_spawn(&hit, s).is_some());
-            let cursor = [
-                (hit.point[0] - f64::from(hit.pos[0])) as f32,
-                (hit.point[1] - f64::from(hit.pos[1])) as f32,
-                (hit.point[2] - f64::from(hit.pos[2])) as f32,
-            ];
-            self.send(S::UseItemOn(play::UseItemOn {
-                hand: hand_id(hand),
-                pos: hit.pos,
-                face: i32::from(face_direction(hit.face)),
-                cursor,
-                inside: hit.inside,
-                world_border: false,
-                sequence: seq,
-            }));
-            // MultiPlayerGameMode.performUseItemOn: a spectator's use predicts
-            // nothing and ends the click (CONSUME, no swing); the server opens
-            // the block's menu. A cancelled RightClickBlock answers instead,
-            // as for any player (below).
-            if spectator && canceled.is_none() {
-                return true;
-            }
-            // A cancelled RightClickBlock's answer, once the packet went out
-            // (startPrediction sends it whatever the use): SUCCESS swings
-            // here, and PASS goes on to useItem and the other hand.
-            if let Some(answer) = canceled {
-                if answer == Answer::Success {
-                    self.with_hand(hand, Game::swing_arm);
-                }
-                return answer.consumes_action() || answer == Answer::Fail;
-            }
-            // Only a predicted placement (predict_place) marks a cell whose
-            // resend plays a place sound: an empty hand or a non-block item
-            // places nothing (BlockItem.place is where the sound comes from).
-            if let Some(r) = self.remote.as_mut() {
-                r.use_target = Some(hit.pos);
-            }
-            if let Some(answer) = item_answer {
-                if answer == Answer::Success {
-                    self.with_hand(hand, Game::swing_arm);
-                }
-                return answer.consumes_action() || answer == Answer::Fail;
-            }
-            if shelf_reacts {
-                return true;
-            }
-            if reacts {
-                self.predict_use(&changes, seq);
-                // LeverBlock.useWithoutItem on the client: the predicted pull puffs.
-                if vanilla_block || block_answer == Some(Answer::TryWithEmptyHand) {
-                    if &*self.block_name(hit.pos) == "minecraft:lever" {
-                        self.lever_puff(hit.pos);
-                    }
-                    self.open_command_block_if_editable((hit.pos[0], hit.pos[1], hit.pos[2]));
-                    self.open_block_editor_if_editable((hit.pos[0], hit.pos[1], hit.pos[2]));
-                }
-                // MultiPlayerGameMode.useItemOn: SUCCESS SwingSource.CLIENT
-                // (a chest, barrel, furnace, …). CONSUME does not swing.
-                if result.should_swing() && block_answer != Some(Answer::SuccessServer) {
-                    self.with_hand(hand, Game::swing_arm);
-                }
-            } else if item_used && held.as_ref().is_some_and(|s| &*s.item == "minecraft:brush") {
-                // BrushItem.useOn: brushing starts here (CONSUME, no swing); the
-                // server brushes and the dust is this client's own.
-                self.with_hand(hand, Game::start_using_item);
-                return true;
-            } else if item_used
-                && let Some(stack) = held.as_ref().filter(|s| &*s.item == "minecraft:bone_meal")
-                && self.with_hand(hand, |g| g.remote_bone_meal_succeeds(&hit, stack))
-            {
-                // BoneMealItem.useOn succeeded on this client's level (SUCCESS;
-                // the server grows the plant): this hand swings and the click
-                // ends, so the other hand (a torch) is never tried.
-                self.with_hand(hand, Game::swing_arm);
-                return true;
-            } else if stand_fits {
-                // ArmorStandItem.useOn on a client level: SUCCESS once the
-                // stand fits, before the server spawns it. This hand swings
-                // and the click ends.
-                self.with_hand(hand, Game::swing_arm);
-                return true;
-            } else if let Some(stack) = held
-                .as_ref()
-                .filter(|_| item_used)
-                .filter(|s| s.item.ends_with("_spawn_egg"))
-            {
-                // SpawnEggItem.useOn on a client level: FAIL for a mob that
-                // cannot spawn (the click ends, no swing), else SUCCESS (swing).
-                // Either way no UseItem follows, so the server does not spawn
-                // a second mob from the fluid ray. ItemStack.useOn's adventure
-                // predicate was checked before selecting this phase.
-                if self.spawn_egg_allowed(&stack.item) {
-                    self.with_hand(hand, Game::swing_arm);
-                }
-                return true;
-            } else if let Some(stack) = held.as_ref().filter(|_| item_used).filter(|s| {
-                matches!(
-                    &*s.item,
-                    "minecraft:flint_and_steel" | "minecraft:fire_charge"
-                )
-            }) {
-                if self.predict_fire_starter(stack, &hit, hand, seq) {
-                    self.with_hand(hand, Game::swing_arm);
-                }
-                return true;
-            } else if let Some(stack) = held.as_ref().filter(|_| item_used)
-                && &*stack.item == "minecraft:potion"
-                && stack.potion() == Some("minecraft:water")
-                && hit.face != [0, -1, 0]
-                && self
-                    .named_block_in_tag("minecraft:convertible_to_mud", &self.block_name(hit.pos))
-                && (self.may_build()
-                    || self.with_hand(hand, |g| g.can_place_on_in_adventure(hit.pos)))
-            {
-                // PotionItem.useOn on a client level: SUCCESS. The bottle is
-                // poured out into the hand and the block turns to mud here at
-                // once; the sounds (`playSound(null, ...)`) and the splash
-                // particles (`sendParticles`) are the server's.
-                if let Some(mud) = self.pack.assets.registry.default_state("minecraft:mud") {
-                    let pos =
-                        horizon_core::position::BlockPos::new(hit.pos[0], hit.pos[1], hit.pos[2]);
-                    self.predict_blocks(&vec![(pos, mud)], seq);
-                }
-                self.with_hand(hand, |g| {
-                    g.filled_result(ItemStack::new("minecraft:glass_bottle", 1))
-                });
-                self.with_hand(hand, Game::swing_arm);
-                return true;
-            } else if let Some(stack) = held.as_ref().filter(|_| item_used)
-                && (self.with_hand(hand, |g| g.predict_item_on_block(stack, &hit))
-                    || self.predict_map_on_banner(stack, &hit))
-            {
-                // Item.useOn succeeded here (InteractionResult.SUCCESS):
-                // this hand swings and the click ends, so the other hand
-                // (a shield, a torch) is never tried.
-                self.with_hand(hand, Game::swing_arm);
-                return true;
-            }
-            if item_used && held_block {
-                let consumable = held
-                    .as_ref()
-                    .and_then(|stack| self.items().get(&stack.item).cloned())
-                    .filter(|info| info.consumable.is_some());
-                let placed = if reacts {
-                    None
-                } else {
-                    held.as_ref()
-                        .and_then(|stack| self.remote_can_place(&hit, stack))
-                };
-                // BlockItem.useOn: a consumable that could not be placed is used
-                // (Item.use), which the server does for this same packet. CONSUME
-                // does not swing, and a full player's FAIL still ends the click.
-                // Adventure's can_place_on leaves the placing to the server.
-                if !reacts
-                    && placed.is_none()
-                    && self.may_build()
-                    && let Some(info) = &consumable
-                {
-                    self.with_hand(hand, |g| g.start_eating(info));
-                }
-                if let Some(placed) = &placed {
-                    self.predict_place(placed, seq);
-                    if let Some(stack) = &held {
-                        let pos = placed.0;
-                        self.apply_predicted_item([pos.x, pos.y, pos.z], stack);
-                    }
-                    self.with_hand(hand, Game::consume_held);
-                } else if let Some(r) = self.remote.as_mut() {
-                    // BlockItem.place plays its sound only once the block is set: the
-                    // server's resend of the target it refused is no placement.
-                    r.placing = None;
-                }
-                if placed.is_some() {
-                    self.with_hand(hand, Game::swing_arm);
-                }
-                // BlockItem.place returns FAIL when placement is rejected:
-                // stop this click without trying the item or the other hand.
-                return true;
-            }
-            return reacts;
-        }
-        false
     }
 
     /// `Item.useOn` on this client's level for the items whose effects are
@@ -9102,7 +8541,7 @@ impl Game<'_> {
                         player_pos: here,
                     });
             }
-            self.set_block(pos, state.0 as i32);
+            self.set_block(pos, state.0 as i32, true);
         }
     }
 
@@ -9183,7 +8622,7 @@ impl Game<'_> {
                 )
             });
         }
-        let Some((content, sound, _)) = horizon_client::items::bucket_contents(&stack.item) else {
+        let Some((content, sound, _)) = self.predicted_bucket_contents(stack) else {
             return (false, None, Vec::new());
         };
         let Some(hit) = self.pick() else {
@@ -9570,34 +9009,6 @@ impl Game<'_> {
         // applyAfterUseComponentSideEffects, then LivingEntityUseItemEvent.Finish.
         self.remote_use_item_finished(slot, &stack, &info);
     }
-    /// MouseHandler updates KeyMapping; handleKeybinds sends packets on a tick.
-    pub(super) fn remote_mouse(&mut self, button: MouseButton, pressed: bool) -> Result<()> {
-        use horizon_client::interaction_input::Button;
-        let input = match button {
-            MouseButton::Left => {
-                self.toggles
-                    .button(2, pressed, false, self.settings.toggle_attack);
-                self.left = self.toggles.is_down(2);
-                Some(Button::Attack)
-            }
-            MouseButton::Right => {
-                self.toggles
-                    .button(3, pressed, false, self.settings.toggle_use);
-                self.right = self.toggles.is_down(3);
-                Some(Button::Use)
-            }
-            MouseButton::Middle => Some(Button::Pick),
-            _ => None,
-        };
-        if pressed
-            && let Some(button) = input
-            && let Some(remote) = self.remote.as_mut()
-        {
-            remote.input.press(button);
-        }
-        Ok(())
-    }
-
     pub(super) fn request_remote_mining_stop(&mut self) {
         if let Some(r) = self.remote.as_mut() {
             r.stop_mining = true;
@@ -9635,6 +9046,7 @@ impl Game<'_> {
         input.tick(&mut RemoteInputWorld(self), attack, use_item);
         self.remote_queued_keys();
         if let Some(r) = self.remote.as_mut() {
+            input.merge_queued(std::mem::take(&mut r.input));
             r.input = input;
         }
     }
@@ -9797,12 +9209,11 @@ impl Game<'_> {
         self.stop_sprint_after_extra_knockback();
     }
     /// The latency the server's player list gives this player
-    /// (`PlayerInfo.getLatency`). A new entry reads 0 until the server's first
-    /// latency update (every 600 ticks), so 0 shows nothing rather than `0 ms`.
-    pub(super) fn own_latency(&self) -> Option<i32> {
+    /// (`PlayerInfo.getLatency`), none before the server lists it. A new entry reads 0 until the
+    /// server's first latency update (every 600 ticks).
+    pub(in crate::game) fn own_latency(&self) -> Option<i32> {
         let r = self.remote.as_ref()?;
-        let me = r.tab_players.get(&r.profile)?;
-        (me.latency > 0).then_some(me.latency)
+        r.tab_players.get(&r.profile).map(|me| me.latency)
     }
 
     /// An attribute's value on this client's player, if its map has the attribute.
@@ -10392,8 +9803,7 @@ impl Game<'_> {
             .filter(|e| e.window == p.container);
         let target = extra
             .as_ref()
-            .map(|e| (e.pos[0], e.pos[1], e.pos[2]))
-            .or(target);
+            .map_or(target, |e| e.pos.map(|p| (p[0], p[1], p[2])));
         if menu == "minecraft:lectern" {
             // LecternScreen: the book and page come in the menu's content and data.
             if let Some(r) = self.remote.as_mut() {
@@ -10814,10 +10224,7 @@ impl Game<'_> {
         let delta = self.world.game_time - r.clock_game_time;
         r.clock_game_time = self.world.game_time;
         for clock in r.clocks.values_mut() {
-            let partial = f64::from(clock.partial_tick) + delta as f64 * f64::from(clock.rate);
-            let full = partial.floor();
-            clock.partial_tick = (partial - full) as f32;
-            clock.total_ticks += full as i64;
+            let _ = client_level_tick::advance_clock(clock, delta);
         }
         self.world.day_time = r.clock_time(r.default_clock);
     }
@@ -11723,6 +11130,10 @@ mod passage_cross_tests;
 #[cfg(test)]
 pub(crate) mod tests {
     use super::super::api_values::TryIntoApi;
+
+    mod predicted_block_notice_tests {
+        include!("predicted_block_notice_tests.rs");
+    }
 
     #[test]
     #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
@@ -14699,7 +14110,7 @@ pub(crate) mod tests {
         }];
         let inventory = horizon_mod_package::enabled::EnabledMods::new([(
             "ruby".to_owned(),
-            horizon_mod_package::Side::Both,
+            mod_api::Side::Both,
         )]);
         build(&base, std::path::Path::new(""), &mods, &root, &inventory).unwrap();
         let (registry, _) = horizon_world::level::data::load_registry_with_flags(&root).unwrap();

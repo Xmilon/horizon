@@ -76,6 +76,26 @@ pub struct KeyMapping {
     pub label: Text,
 }
 
+/// Why `ClientHost::set_mapping_down` or `ClientHost::click_mapping` refused a mapping.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(horizon_mod_api_macros::Wire)]
+pub enum MappingError {
+    /// No player is in a world.
+    NoWorld,
+    /// No vanilla mapping has this name.
+    Unknown {
+        /// The name asked for.
+        key: String,
+    },
+    /// A vanilla mapping a player does not play with: one outside the movement, gameplay and
+    /// inventory categories (`key.screenshot`, `key.fullscreen`, `key.chat`...).
+    NotGameplay {
+        /// The name asked for.
+        key: String,
+    },
+}
+
 /// The metadata of a server play packet observed by `Hooks::client_packet`.
 ///
 /// Fields beyond the type id are exposed only for custom payloads. This is
@@ -849,6 +869,33 @@ pub struct Stack {
     pub count: u32,
     /// The stack's data components, as the game's JSON form.
     pub components: String,
+}
+
+/// How a mod's item panel (`panel_items`) looks (`panel_style`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(horizon_mod_api_macros::Wire)]
+pub enum PanelStyle {
+    /// The recipe book's page arrows and a plain search box (the default).
+    #[default]
+    RecipeBook,
+    /// A recipe viewer's: square page buttons on a bar over the items and
+    /// the viewer's search box, as Horizon's Recipes panel draws them.
+    Viewer,
+    /// JEI's look on Minecraft 1.12: the items flush with the screen's right
+    /// edge under a row of square page buttons that always shows (they wrap
+    /// around), the viewer's search box at the foot of the screen with a
+    /// settings button beside it that opens the mod's page in Options > Mods,
+    /// and a whole slot lit under the pointer.
+    Classic {
+        /// The search box under the window when there is room below it (JEI's
+        /// "center search bar"), else under the items.
+        centred_search: bool,
+        /// Lay the panel out beside a window at least this wide, centred on
+        /// the screen (a recipe screen the mod draws over the container);
+        /// 0 for the container's own.
+        window_width: u16,
+    },
 }
 
 /// What the player did on a native mod's panel (`panel_event`).

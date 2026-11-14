@@ -59,6 +59,42 @@ def use_names(text, src):
     return found
 
 
+def domain_export_collisions(src):
+    """Guard rustfmt-formatted root exports, including catalog-generated hook Event names.
+
+    An identical direct re-export of a domain item is harmless and excluded.
+    Other generated names cannot be enumerated without a build; their explicit
+    re-exports are covered, but non-hook generated glob members are not.
+    """
+    explicit, domains = {}, {}
+    glob_domains = set()
+    for path in sorted((src / "exports").glob("*.rs")):
+        glob_domains.update(re.findall(r"pub use (\w+)::types::\*;", fragment_scope(path, ())))
+    for path in [src / "lib.rs", *sorted((src / "exports").glob("*.rs"))]:
+        text = fragment_scope(path, ()) if path.parent.name == "exports" else path.read_text()
+        for domain in re.findall(r"pub use (\w+)::types::\*;", text):
+            types = src / domain / "types.rs"
+            for name in pub_items(types):
+                domains.setdefault(name, []).append(str(types))
+        text = re.sub(r"pub use \w+::types::\*;", "", text)
+        text = re.sub(r"pub use (\w+)::types::(\w+);",
+                      lambda m: "" if m[1] in glob_domains and m[2] in pub_items(src / m[1] / "types.rs") else m[0], text)
+        names = use_names(text, src) - {"*"}
+        names |= set(re.findall(r"^pub (?:unsafe )?(?:struct|enum|union|trait|type|fn|const|static|mod) (\w+)", text, re.M))
+        for name in names:
+            explicit.setdefault(name, []).append(str(path))
+    for path in sorted((src / "hooks").glob("*.rs")):
+        for name in re.findall(r"^    fn (\w+)\(", path.read_text(), re.M):
+            event = "".join(word[:1].upper() + word[1:] for word in name.split("_")) + "Event"
+            explicit.setdefault(event, []).append(str(path) + " (generated event)")
+    problems = []
+    for name, locations in sorted(domains.items()):
+        locations = locations + explicit.get(name, [])
+        if len(locations) > 1:
+            problems.append(f"{name}: {' and '.join(locations)}: rename the type or remove the explicit export")
+    return problems
+
+
 def game_side_api_names(api, private, src):
     """Names re-exported both as API (`api` text) and on the game's side (`private` text)."""
     return use_names(api, src) & (use_names(private, src) - {"*"})
@@ -74,6 +110,31 @@ def preceding(lines, i):
 
 
 class ModApiBoundaryTests(unittest.TestCase):
+    def test_domain_globs_do_not_hide_names(self):
+        self.assertEqual(domain_export_collisions(API), [])
+
+    def test_domain_collision_guard_on_synthetic_exports(self):
+        with tempfile.TemporaryDirectory() as folder:
+            src = Path(folder)
+            (src / "exports").mkdir()
+            (src / "lib.rs").write_text("pub(crate) struct Name;\n")
+            for domain in ("block", "item"):
+                (src / domain).mkdir()
+                (src / domain / "types.rs").write_text("pub struct Name;\npub(crate) struct Hidden;\n")
+            exports = src / "exports/domains.rs"
+            for extra in ("pub use other::Name;", "pub use other::Other as Name;", "pub use block::types::Name as Name;",
+                          "pub struct Name;", "pub use item::types::Name;",
+                          "pub use item::types::*;"):
+                exports.write_text("pub use block::types::*;\n" + extra + "\n")
+                problems = domain_export_collisions(src)
+                self.assertEqual(len(problems), 1)
+                self.assertIn("Name:", problems[0])
+                self.assertIn("block/types.rs", problems[0])
+            exports.write_text("pub use block::types::*;\npub use block::types::Name;\n")
+            self.assertEqual(domain_export_collisions(src), [])
+            exports.write_text("pub use block::types::*;\nmod __private {\n    pub use other::Name;\n}\n")
+            self.assertEqual(domain_export_collisions(src), [])
+
     def test_every_public_type_has_an_explicit_wire_policy(self):
         from tools.check_mod_api_wire import repository_violations
         self.assertEqual(repository_violations(), [],

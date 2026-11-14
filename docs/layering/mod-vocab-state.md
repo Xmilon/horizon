@@ -5,8 +5,8 @@
 Part of #2587. The vocabulary is **not stateless**, and this first change does **not** claim it is
 free of unsafe. Its crate-level `deny(unsafe_code)` remains in force. The unchanged
 `src/__private/points.rs` contains the sole temporary unsafe exception (local lint expectations)
-and the open injection-dispatch registry. #2697 moves only the final seal into
-`horizon-engine-slots`; point activity stays in this registry. The #2587 follow-up then moves raw-pointer
+and the open injection-dispatch registry. #2697 moves the final seal into
+`horizon-engine-slots`; #3523 also moves generated point records and activity there, behind a set-once dispatch socket. The #2587 follow-up then moves raw-pointer
 conversion and ownership behind the points boundary and installs `forbid(unsafe_code)`.
 
 Crash detail buffers, profiling, borrowed resource scopes, static-string storage, retained fluids,
@@ -44,6 +44,7 @@ OUT_DIR file checked by the generator before writing it.
 | `@generated/wire_generated.rs::WIRE_LAYOUT` | `::std::sync::LazyLock<u64>` | immutable ABI layout fingerprint | Hash of the build-fixed Wire layouts; the generator validates its sole declaration and type before writing output. |
 | `__private/points.rs::OPEN` | `Mutex<Open>` | dispatch table | Temporary points exception pending #2697: open injection-listener routing and seal state remain in the unchanged points module. |
 | `block/fluid_capability.rs::BUCKET_IDS` | `std::sync::LazyLock<[crate::Identifier;3]>` | immutable lookup cache | Three vanilla bucket identifiers resolved once; no live registration or world state. |
+| `block/part_state.rs::EDITING` | `RefCell<Vec<(BlockEntityRef,&'staticstr,&'staticstr)>>` | reentrancy guard | Per-thread stack of the block entity Part-state edits open on this thread, so an edit of the same block entity and key from inside its own edit is refused. |
 | `client/arm_pose.rs::TEST_POSES` | `std::cell::Cell<Option<&'static[PoseInfo]>>` | Parts lookup table | Thread-local test lookup of installed Parts metadata by engine-issued slot. |
 | `client/client_reload.rs::first::ID` | `LazyLock<Identifier>` | immutable cache | Immutable vanilla reload-boundary identifier, allocated once and shared by anchor declarations. |
 | `client/client_reload.rs::last::ID` | `LazyLock<Identifier>` | immutable cache | Immutable vanilla reload-boundary identifier, allocated once and shared by anchor declarations. |
@@ -72,9 +73,11 @@ OUT_DIR file checked by the generator before writing it.
 | `runtime.rs::MODS` | `OnceLock<Installed>` | dispatch table | Dependency-ordered hook routing and its per-mod enabled bits remain engine-owned. |
 | `runtime.rs::MODS_SWITCHED` | `std::sync::atomic::AtomicU64` | dispatch table | Counts changes to the per-mod enabled bits it sits beside; read through the host's capability provider table, never by a guest's own copy. |
 | `runtime.rs::TEST_MODS` | `std::cell::Cell<Option<&'staticInstalled>>` | dispatch table | Thread-local dispatch inventory for isolated engine tests. |
+| `wire/mod.rs::RESOURCE_REACHED` | `std::cell::Cell<bool>` | reentrancy guard | Per-thread flag set while a Wire layout walk reaches a resource handle's codec, read by the Part state declaration's capability check. |
 | `wire/wire_resources.rs::ACCESS` | `OnceLock<ResourceAccess>` | set-once socket | Set-once platform callback registration; mutable platform storage lives above the engine. |
 | `wire/wire_resources.rs::shared::MARKER` | `std::sync::OnceLock<std::sync::Arc<Unsupported>>` | immutable cache | Shared immutable unsupported-resource marker with no writable payload. |
 | `world/server_reload.rs::first::ID` | `LazyLock<Identifier>` | immutable cache | Immutable vanilla reload-boundary identifier, allocated once and shared by anchor declarations. |
 | `world/server_reload.rs::functions::ID` | `LazyLock<Identifier>` | immutable cache | Immutable vanilla reload-boundary identifier, allocated once and shared by anchor declarations. |
 | `world/server_reload.rs::last::ID` | `LazyLock<Identifier>` | immutable cache | Immutable vanilla reload-boundary identifier, allocated once and shared by anchor declarations. |
+| `world/startup_progress.rs::SCREEN` | `OnceLock<Arc<dynStartupScreen>>` | dispatch table | One engine-installed startup-screen service; registration contexts carry this same resource to native and wasm mods, and retained progress handles use it after registration. |
 | `world/ticket_controller.rs::TEST_CONTROLLERS` | `std::cell::Cell<Option<&'static[ControllerInfo]>>` | Parts lookup table | Thread-local test lookup of installed Parts metadata by engine-issued slot. |

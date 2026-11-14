@@ -268,7 +268,10 @@ struct Probe;
 
 #[mod_api::horizon_part]
 impl ItemPart for Probe {
-    fn use_on(&self, host: &mut dyn ServerHost, event: &mut UseOnEvent<'_>) -> Flow {
+    fn use_on(&self, host: HostSide<'_>, event: &mut UseOnEvent<'_>) -> Option<InteractionResult> {
+        let HostSide::Server(host) = host else {
+            return None;
+        };
         let player = host.players().acting_player().expect("a player acts");
         let level = host.level("minecraft:overworld").expect("a loaded level");
         let block = level.block(host, event.pos).expect("a loaded block");
@@ -277,9 +280,9 @@ impl ItemPart for Probe {
             .action_bar(host, Text::literal(name.clone()))
             .unwrap();
         if name == "minecraft:stone" {
-            Flow::Cancel
+            Some(InteractionResult::SuccessServer)
         } else {
-            Flow::Continue
+            None
         }
     }
 }
@@ -429,9 +432,12 @@ struct Chatty;
 
 #[mod_api::horizon_part]
 impl ItemPart for Chatty {
-    fn use_on(&self, host: &mut dyn ServerHost, _event: &mut UseOnEvent<'_>) -> Flow {
+    fn use_on(&self, host: HostSide<'_>, _event: &mut UseOnEvent<'_>) -> Option<InteractionResult> {
+        let HostSide::Server(host) = host else {
+            return None;
+        };
         host.commands().run_command("say hello");
-        Flow::Continue
+        None
     }
 }
 
@@ -492,10 +498,10 @@ fn a_part_reads_the_clicked_block_and_tells_the_acting_player() {
         host.level.set_block(pos, block);
         host.join(7, 41);
         host.players.acting = Some(7);
-        let mut claimed = false;
+        let mut result = None;
         let hit = top_hit();
         dispatch_use_on(
-            &mut host,
+            HostSide::Server(&mut host),
             calls::UseOnCall {
                 stack: &stack,
                 pos,
@@ -504,10 +510,14 @@ fn a_part_reads_the_clicked_block_and_tells_the_acting_player() {
                 hit,
                 player: 7,
                 player_entity_id: 41,
-                claimed: &mut claimed,
+                result: &mut result,
             },
         );
-        assert_eq!(claimed, expected, "{block}");
+        assert_eq!(
+            result,
+            expected.then_some(InteractionResult::SuccessServer),
+            "{block}"
+        );
         let player = host.players.get(7).unwrap();
         assert_eq!(player.action_bar, [Text::literal(block)], "{block}");
     }
@@ -762,10 +772,10 @@ fn an_unexpected_host_call_names_the_method() {
     mark_game_thread();
     stick_part("chatty", Chatty);
     let mut host = Silent;
-    let mut claimed = false;
+    let mut result = None;
     let (pos, face) = ([0; 3], [0, 1, 0]);
     dispatch_use_on(
-        &mut host,
+        HostSide::Server(&mut host),
         calls::UseOnCall {
             stack: &stick(),
             pos,
@@ -774,7 +784,7 @@ fn an_unexpected_host_call_names_the_method() {
             hit: top_hit(),
             player: 7,
             player_entity_id: 41,
-            claimed: &mut claimed,
+            result: &mut result,
         },
     );
 }
@@ -793,11 +803,11 @@ struct HeardStick;
 
 #[mod_api::horizon_part]
 impl ItemPart for HeardStick {
-    fn use_on(&self, _: &mut dyn ServerHost, event: &mut UseOnEvent<'_>) -> Flow {
+    fn use_on(&self, _: HostSide<'_>, event: &mut UseOnEvent<'_>) -> Option<InteractionResult> {
         assert_eq!((event.player, event.player_entity_id), (7, 41));
         assert_eq!((event.hand, event.hit), (Hand::Off, top_hit()));
         HEARD_STICK.store(true, std::sync::atomic::Ordering::SeqCst);
-        Flow::Continue
+        None
     }
 }
 
@@ -843,9 +853,9 @@ fn a_block_use_hears_the_hand_the_hit_and_the_player() {
     })
     .unwrap();
     let mut host = FakeHost::new();
-    let mut claimed = false;
+    let mut result = None;
     dispatch_use_on(
-        &mut host,
+        HostSide::Server(&mut host),
         calls::UseOnCall {
             stack: &stick(),
             pos: [0; 3],
@@ -854,10 +864,10 @@ fn a_block_use_hears_the_hand_the_hit_and_the_player() {
             hit: top_hit(),
             player: 7,
             player_entity_id: 41,
-            claimed: &mut claimed,
+            result: &mut result,
         },
     );
-    assert!(!claimed);
+    assert_eq!(result, None);
     assert!(HEARD_STICK.load(std::sync::atomic::Ordering::SeqCst));
     let low = BlockHit::new([0.5, 0.25, 0.0], [0, 0, -1], false);
     let held = stick();
@@ -1137,13 +1147,13 @@ fn an_ability_question_reaches_only_the_parts_of_the_asked_item_and_names_the_ab
     // Another test installs parts with tags: a dispatch must run on a game thread.
     mark_game_thread();
     let sticks = Abilities {
-        granted: "minecraft:shield_block",
-        denied: "minecraft:shears_carve",
+        granted: "shield_block",
+        denied: "shears_carve",
         asked: Default::default(),
     };
     let stones = Abilities {
-        granted: "my_mod:chop",
-        denied: "my_mod:chop_not",
+        granted: "my_mod_chop",
+        denied: "my_mod_chop_not",
         asked: Default::default(),
     };
     let mods: Mods = vec![ModEntry::new(
@@ -1162,27 +1172,27 @@ fn an_ability_question_reaches_only_the_parts_of_the_asked_item_and_names_the_ab
         can_perform
     };
     // The part answers per ability: a grant, a denial and what it leaves alone.
-    assert!(ask(&stick(), "minecraft:shield_block", false));
-    assert!(!ask(&stick(), "minecraft:shears_carve", true));
-    assert!(ask(&stick(), "minecraft:shears_harvest", true));
-    assert!(!ask(&stick(), "minecraft:shears_harvest", false));
+    assert!(ask(&stick(), "shield_block", false));
+    assert!(!ask(&stick(), "shears_carve", true));
+    assert!(ask(&stick(), "shears_harvest", true));
+    assert!(!ask(&stick(), "shears_harvest", false));
     // Another item's part hears only its own item, a part-less item keeps vanilla's answer.
-    assert!(ask(&stone, "my_mod:chop", false));
-    assert!(!ask(&stone, "minecraft:shield_block", false));
-    assert!(ask(&diamond, "minecraft:shears_carve", true));
-    assert!(!ask(&diamond, "minecraft:shield_block", false));
+    assert!(ask(&stone, "my_mod_chop", false));
+    assert!(!ask(&stone, "shield_block", false));
+    assert!(ask(&diamond, "shears_carve", true));
+    assert!(!ask(&diamond, "shield_block", false));
     assert_eq!(
         *sticks.asked.lock().unwrap(),
         [
-            "minecraft:shield_block",
-            "minecraft:shears_carve",
-            "minecraft:shears_harvest",
-            "minecraft:shears_harvest"
+            "shield_block",
+            "shears_carve",
+            "shears_harvest",
+            "shears_harvest"
         ]
     );
     assert_eq!(
         *stones.asked.lock().unwrap(),
-        ["my_mod:chop", "minecraft:shield_block"]
+        ["my_mod_chop", "shield_block"]
     );
 }
 

@@ -5,9 +5,11 @@
 //! writes, they act on the level in place, the one the hook runs in; a parked
 //! level, a stale handle or a client returns false. Reaching a parked level, as `play_sound` and the
 //! reads do through `native_level_world`, is a follow-up.
-use super::{Game, GameLevel, native_explosions::NativeBlast};
+use super::{Game, GameLevel};
 use horizon_world::level::{BlockEventData, LevelEvent};
-use mod_api::{BlockKey, ExplosionInteraction, LevelRef};
+use mod_api::{
+    BlockKey, EntityRef, ExplodeError, ExplosionInteraction, ExplosionSettings, LevelRef,
+};
 
 /// A position inside the world's horizontal and vertical bounds.
 fn in_bounds(at: [f64; 3]) -> bool {
@@ -133,30 +135,32 @@ impl Game<'_> {
         });
         true
     }
-    /// Explodes at `center` with no source entity, as `Level.explode(null,
-    /// x, y, z, radius, fire, interaction)` does (`native_explode`): `fire`
-    /// lights some of the air around, `interaction` says what happens to
-    /// blocks: `None`, `Block` or `Tnt` (vanilla's `Mob` and `Trigger` aren't
-    /// offered yet). False for a chunk that isn't loaded or a radius outside
-    /// `0 < radius <= 32`.
+    /// Explodes at `center` as vanilla's full `Level.explode(source,
+    /// damageSource, calculator, x, y, z, radius, fire, interaction, particles...,
+    /// sound)` does (`native_explode`), the causing entity derived from
+    /// `source`. Refused, with nothing exploded, for another level, a stale
+    /// `source` or one in another level, and as `native_explode` refuses.
     pub(super) fn level_explode(
         &mut self,
         level: LevelRef,
+        source: Option<EntityRef>,
         center: [f64; 3],
         radius: f32,
         fire: bool,
         interaction: ExplosionInteraction,
-    ) -> bool {
+        settings: ExplosionSettings,
+    ) -> Result<(), ExplodeError> {
         if !self.level_in_place(level) {
-            return false;
+            return Err(ExplodeError::Unavailable);
         }
-        let blast = match interaction {
-            ExplosionInteraction::None => NativeBlast::Keep,
-            ExplosionInteraction::Block => NativeBlast::Block,
-            ExplosionInteraction::Tnt => NativeBlast::Tnt,
-            _ => unreachable!("ExplosionInteraction: unhandled variant"),
+        let source = match source {
+            Some(entity) => Some(
+                self.native_explosion_source(entity)
+                    .ok_or(ExplodeError::Unavailable)?,
+            ),
+            None => None,
         };
-        self.native_explode(level.dimension_id(), center, radius, fire, blast)
+        self.native_explode(source, center, radius, fire, interaction, settings)
     }
     /// Strikes lightning at `at`, as summoning a `minecraft:lightning_bolt`
     /// does: it sets fire, hurts and converts what it hits (a pig to a

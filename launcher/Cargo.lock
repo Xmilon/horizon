@@ -2903,6 +2903,7 @@ dependencies = [
  "horizon-mod-api-gen",
  "horizon-mod-package",
  "horizon-mod-point-emit",
+ "horizon-mod-vocab",
  "horizon-platform",
  "horizon-port-pack",
  "horizon-prepare",
@@ -2917,6 +2918,7 @@ dependencies = [
  "keyring",
  "libc",
  "objc2-app-kit 0.3.2",
+ "object 0.39.1",
  "oo7",
  "png 0.18.1",
  "proc-macro2",
@@ -2958,6 +2960,7 @@ dependencies = [
  "heck 0.5.0",
  "horizon-game-discovery",
  "horizon-mod-point-shape",
+ "horizon-mod-source",
  "horizon-mod-surface",
  "prettyplease",
  "proc-macro2",
@@ -2986,11 +2989,11 @@ version = "0.1.0"
 dependencies = [
  "cap-fs-ext",
  "cap-std",
- "flate2",
  "getrandom 0.4.3",
  "horizon-core",
  "horizon-mod-api-macros",
  "horizon-mod-point-shape",
+ "horizon-mod-surface",
  "horizon-mod-vocab",
  "horizon-shader-api",
  "libc",
@@ -3009,6 +3012,7 @@ dependencies = [
  "toml 1.1.8+spec-1.1.0",
  "wasmparser",
  "windows-sys 0.61.2",
+ "xz4rust",
  "zip",
 ]
 
@@ -3039,12 +3043,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "horizon-mod-source"
+version = "0.1.0"
+dependencies = [
+ "horizon-mod-surface",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+ "toml 1.1.8+spec-1.1.0",
+]
+
+[[package]]
 name = "horizon-mod-surface"
 version = "0.1.0"
 dependencies = [
+ "libc",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -8113,6 +8131,12 @@ name = "xxhash-rust"
 version = "0.8.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "550a2b930b62486a393c52d5c3b84bff264b28aa437ed64694d31e93b1757af7"
+
+[[package]]
+name = "xz4rust"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "606930b71bad6379f366994e4e6252a3462fa28bfc3695c33b07bef8f967d6d6"
 
 [[package]]
 name = "y4m"

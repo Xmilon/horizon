@@ -18,6 +18,8 @@ pub mod item_damage;
 pub mod parallel;
 pub mod powder_snow;
 #[cfg(test)]
+mod test_log;
+#[cfg(test)]
 mod test_resources;
 pub use horizon_client_render::{
     assets, atlas_sources, audio, auth, autotune, ban_notice, bidi, biome, block_edit,
@@ -111,6 +113,7 @@ pub mod locator_bar;
 pub mod lod_net;
 pub mod map_decoration_types;
 pub mod menu;
+pub mod menu_extra_net;
 pub mod merchant;
 pub mod mobs;
 pub mod mod_content;
@@ -121,6 +124,7 @@ pub mod multiplayer;
 pub mod music;
 pub mod native_client_hooks;
 pub mod native_stack_hooks;
+pub mod neoforge_mob_maps;
 pub mod net;
 pub mod nether_portal;
 pub mod no_resources;

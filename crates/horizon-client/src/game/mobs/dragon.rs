@@ -863,11 +863,7 @@ impl Dragon {
         level.damage_pre(hurting, &mut container);
         dealt = container.capture_inflicted();
         self.health -= dealt;
-        if dealt != 0.0 {
-            container.record_health_damage(dealt);
-            let hurting = horizon_client::health::Hurting::Dragon(self.id as i32, source);
-            level.damage_post(hurting, &container);
-        }
+        container.record_health_damage(dealt);
         self.last_hurt = damage + container.pre_change();
         self.invulnerable = container.post_attack_invulnerability_ticks();
         if !window {
@@ -900,6 +896,10 @@ impl Dragon {
                 source,
             );
         }
+        // The last of `LivingEntity.hurtServer` (`reallyHurt`'s `super.hurtServer`):
+        // `LivingDamageEvent.Post`, health taken or not.
+        let hurting = horizon_client::health::Hurting::Dragon(self.id as i32, source);
+        level.damage_post(hurting, &container);
         if self.phase.sitting() {
             self.sitting_damage += before - self.health.max(0.0);
             if self.sitting_damage > 0.25 * MAX_HEALTH {
@@ -3215,7 +3215,7 @@ impl Game<'_> {
             .as_mut()
             .is_some_and(|d| std::mem::take(&mut d.flame_ended))
         {
-            self.breath_clouds.retain(|c| !c.from_dragon);
+            self.retain_breath_clouds(|c| !c.from_dragon);
         }
     }
     pub(super) fn tick_breath(&mut self) {
@@ -3256,7 +3256,7 @@ impl Game<'_> {
             }
             c.age += 1;
             if breath_expired(c.age, c.duration) {
-                return false;
+                return self.forget_expired_cloud(c.id);
             }
             if !c.from_dragon && c.age >= BREATH_WAIT {
                 // DragonFireball's cloud: radius per tick (7 - 3) / duration.
@@ -4043,8 +4043,8 @@ impl Game<'_> {
         let amount = super::fireworks::blast_damage(damage, from, p);
         self.hurt_dragon(2, amount, true, by, DamageKind::Fireworks);
     }
-    /// `ServerExplosion.hurtEntities`: crystals in reach are removed without
-    /// another blast; explosions always hurt dragons.
+    /// `ServerExplosion.hurtEntities`: crystals in reach are removed without another
+    /// blast; explosions always hurt dragons, except one `explosion_detonate` spared.
     pub(super) fn explosion_hits_special(
         &mut self,
         center: [f64; 3],
@@ -4062,7 +4062,7 @@ impl Game<'_> {
         let crystals: Vec<Vec3> = self
             .crystals
             .iter()
-            .filter(|c| in_reach(c.position))
+            .filter(|c| in_reach(c.position) && self.combat.visits(c.id))
             .map(|c| c.position)
             .collect();
         // The blast's source carries the player who set it off, if any.
@@ -4092,7 +4092,7 @@ impl Game<'_> {
                 self.destroy_crystal(i, by, CrystalDamage::Explosion);
             }
         }
-        let Some(d) = self.dragon.as_ref() else {
+        let Some(d) = self.dragon.as_ref().filter(|d| self.combat.visits(d.id)) else {
             return;
         };
         let hits = d.explosion_hits(center, radius, |b| {

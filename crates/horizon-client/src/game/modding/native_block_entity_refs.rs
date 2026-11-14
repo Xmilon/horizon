@@ -44,6 +44,23 @@ impl Game<'_> {
         ))
     }
 
+    /// `block_entity`, also for a block entity taken out for its own tick: its generation
+    /// stays in place while it is out.
+    pub(super) fn block_entity_identity(
+        &self,
+        level: LevelRef,
+        pos: [i32; 3],
+    ) -> Option<BlockEntityRef> {
+        let world = self.native_level_read_world(level)?;
+        if !world.loaded(pos[0], pos[2]) {
+            return None;
+        }
+        let generation = world.block_entities.generation(&(pos[0], pos[1], pos[2]))?;
+        Some(mod_api::__private::game::block_entity_ref(
+            level, pos, generation,
+        ))
+    }
+
     /// The data of the block entity at `pos`, as saved without identity or position
     /// metadata, for the hook that hears its block's removal: the entity is gone from
     /// the world by then, so it is read first. None for a block without one, or while
@@ -862,7 +879,6 @@ mod tests {
                     );
                     let other = game.block_entity(level, [5, 64, 0]).unwrap();
                     assert!(player.open_menu(game, other).unwrap());
-                    game.tick_player_menus();
                     let host = game.lan.as_ref().unwrap();
                     Some(host.hub.guest(12).unwrap().menu.as_ref().unwrap().window)
                 } else {

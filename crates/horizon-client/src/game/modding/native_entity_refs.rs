@@ -184,19 +184,18 @@ impl Game<'_> {
             .collect()
     }
     /// The level `dimension` (`minecraft:the_nether`) as a handle: on a client,
-    /// the level it shows, whatever the server calls it. None with no world
-    /// open, or for a dimension the server hasn't loaded. API 373.
+    /// the level it shows, whatever the server calls it, or one the server opened
+    /// for viewing (`client_level_key`). None with no world open, or for a
+    /// dimension the server hasn't loaded. API 373.
     pub(super) fn level(&self, dimension: &str) -> Option<LevelRef> {
-        if !self.is_logical_server() {
-            let epoch = self.native_lifecycle.epoch()?;
-            let remote = self.remote.as_ref().filter(|r| r.logged_in)?;
-            return (remote.level == dimension).then(|| LevelRef::new(epoch, remote.level_key));
-        }
         let epoch = self.native_lifecycle.epoch()?;
+        if !self.is_logical_server() {
+            return Some(LevelRef::new(epoch, self.client_level_key(dimension)?));
+        }
         let dim = std::iter::once(self.dim)
             .chain(self.levels.parked_dims())
             .find(|d| d.id() == dimension)?;
-        Some(LevelRef::new(epoch, dim.key()))
+        Some(self.level_ref(epoch, dim.key()))
     }
     /// The client level in place as a handle: the level this window shows and
     /// ticks. None before login, while reconfiguring, or with no world open.
@@ -254,9 +253,7 @@ impl Game<'_> {
         min: [f64; 3],
         max: [f64; 3],
     ) -> Option<Vec<EntityRef>> {
-        if self.native_lifecycle.epoch() != Some(level.epoch())
-            || !min.iter().chain(&max).all(|v| v.is_finite())
-        {
+        if !self.level_handle_current(level) || !min.iter().chain(&max).all(|v| v.is_finite()) {
             return None;
         }
         let bounds = Aabb::new(
@@ -413,7 +410,7 @@ impl Game<'_> {
         entity: Option<EntityRef>,
     ) -> Option<Vec<ItemStack>> {
         if !self.is_logical_server()
-            || self.native_lifecycle.epoch() != Some(level.epoch())
+            || !self.level_handle_current(level)
             || self.dim.key() != level.dimension()
             || !world_items!(self).has_loot_table(table)
         {
@@ -647,7 +644,7 @@ impl Game<'_> {
         // through the level gate refuses while the operation runs.
         !self.world.carrier_fences.locks_cell(&pos)
             && self.is_logical_server()
-            && self.native_lifecycle.epoch() == Some(level.epoch())
+            && self.level_handle_current(level)
             && self.world.loaded(pos[0], pos[2])
             && self.world.shape.contains_y(pos[1])
     }
@@ -662,7 +659,7 @@ impl Game<'_> {
         pos: [i32; 3],
         kind: BlockShapeKind,
     ) -> Option<Vec<[f64; 6]>> {
-        if !self.is_logical_server() || self.native_lifecycle.epoch() != Some(level.epoch()) {
+        if !self.is_logical_server() || !self.level_handle_current(level) {
             return None;
         }
         let (world, anims) = if self.dim.key() == level.dimension() {
@@ -723,8 +720,9 @@ impl Game<'_> {
         })
     }
 
-    /// Clip an empty-context ray against collider or outline shapes, without fluids.
-    /// None on failed reads, dynamic shapes, invalid rays or traversal limits.
+    /// Clip an empty-context ray against collider or outline shapes, without fluids, in the
+    /// world `native_level_view_world` reads. None on failed reads, dynamic shapes, invalid
+    /// rays or traversal limits.
     pub(super) fn level_clip(
         &self,
         level: LevelRef,
@@ -739,7 +737,7 @@ impl Game<'_> {
             collision_context::CollisionContext,
             world_ray::{RayBlockMode, RayFluidMode, clip_world},
         };
-        let world = self.native_level_world(level)?;
+        let world = self.native_level_view_world(level)?;
         let mut rays = super::explosion::ColliderRays {
             scene: SceneCollisions {
                 world,
@@ -794,6 +792,12 @@ impl Game<'_> {
     /// The entity's position (`Entity.position`): its feet, the middle of
     /// its box for a painting or an item frame.
     pub(super) fn entity_position(&self, entity: EntityRef) -> Option<[f64; 3]> {
+        if self.native_lifecycle.epoch() == Some(entity.epoch())
+            && let Some((id, position)) = self.native_lifecycle.entity_sections.write_position
+            && id == entity.id()
+        {
+            return Some(position);
+        }
         match self.native_entity_read_target(entity) {
             Some(target) => self.target_position(target),
             None => self
@@ -871,7 +875,7 @@ impl Game<'_> {
                 .native_client_tracked(entity)
                 .map(|_| self.native_level_key())?,
         };
-        Some(LevelRef::new(entity.epoch(), key))
+        Some(self.level_ref(entity.epoch(), key))
     }
 }
 
@@ -955,6 +959,17 @@ pub(super) mod tests {
     use mod_api::__private::game::*;
     /// Isolate declarations and frozen registries without changing another test's resources.
     pub(in crate::game) fn run_fresh_cases(name: &str, flag: &str, cases: &[&str]) -> bool {
+        run_fresh_cases_at_once(name, flag, cases, 1)
+    }
+
+    /// [`run_fresh_cases`] with up to `at_once` children running together, for a test that runs
+    /// alone in its job (the wasm fixture's): each child still has its own process and folders.
+    pub(in crate::game) fn run_fresh_cases_at_once(
+        name: &str,
+        flag: &str,
+        cases: &[&str],
+        at_once: usize,
+    ) -> bool {
         if std::env::var_os(flag).is_some() {
             return false;
         }
@@ -964,15 +979,8 @@ pub(super) mod tests {
                 .unwrap();
         let scratch_owner = tempfile::tempdir().unwrap();
         let target = scratch_owner.path();
-        for case in cases {
-            let scratch = target.join(format!(
-                "be-types-fixture-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
+        let run = |case: &str| {
+            let scratch = target.join(format!("fresh-case-{case}"));
             std::fs::create_dir(&scratch).unwrap();
             let mut command = std::process::Command::new(std::env::current_exe().unwrap());
             command
@@ -1004,15 +1012,31 @@ pub(super) mod tests {
             }
             let output = output_within(&mut command, name, case);
             std::fs::remove_dir_all(scratch).unwrap();
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // The child's log, captured with this test's own output.
-            print!("{stdout}");
-            eprint!("{}", String::from_utf8_lossy(&output.stderr));
-            assert!(output.status.success(), "{name}: {case}");
-            assert!(
-                ran_one_test(&stdout),
-                "{name}: {case}: the child matched no test of that name"
-            );
+            output
+        };
+        for group in cases.chunks(at_once.max(1)) {
+            let run = &run;
+            let outputs: Vec<_> = std::thread::scope(|scope| {
+                let running: Vec<_> = group
+                    .iter()
+                    .map(|&case| scope.spawn(move || run(case)))
+                    .collect();
+                running
+                    .into_iter()
+                    .map(|child| child.join().unwrap())
+                    .collect()
+            });
+            for (case, output) in group.iter().zip(outputs) {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // The child's log, captured with this test's own output.
+                print!("{stdout}");
+                eprint!("{}", String::from_utf8_lossy(&output.stderr));
+                assert!(output.status.success(), "{name}: {case}");
+                assert!(
+                    ran_one_test(&stdout),
+                    "{name}: {case}: the child matched no test of that name"
+                );
+            }
         }
         true
     }
@@ -1921,10 +1945,10 @@ pub(super) mod tests {
             // A block with no part answers as before.
             assert!(!asks("minecraft:stone", Land));
             // A reload without the mod's answers takes them back.
-            game.res
-                .rest()
-                .mob_data
-                .set_pathfindable(false, |_, _, vanilla| vanilla);
+            game.res.mob_data().resolve_parts(
+                game.res.facts(),
+                &horizon_client::mobs::data::PartAnswers::default(),
+            );
             assert!(!asks("minecraft:glass", Land));
             assert!(asks("minecraft:air", Land));
         });

@@ -10,7 +10,7 @@
 //! cooldowns follow their level; shared `Arrival`s hold each traveller's
 //! saved compound until its destination chunks are loaded.
 use super::entity::{Entity as _, entity_lists_of, for_each_entity};
-use super::{Dim, Game, Screen};
+use super::{Dim, Game, Result, Screen};
 use horizon_client::fast_hash::FxHashMap;
 use horizon_client::nether_portal::{ENTITY_DELAY, PortalState};
 use horizon_client::world::PendingEntity;
@@ -19,6 +19,7 @@ use horizon_core::{
     position::BlockPos,
     random::RandomSource,
 };
+use horizon_world::level::flags as level_flags;
 use std::collections::HashMap;
 use {
     horizon_core::nbt::Tag,
@@ -468,48 +469,25 @@ impl Game<'_> {
     }
     /// The nether portal blocks of the chunks within `radius` of `center`
     /// (the points of interest `PortalForcer` searches): loaded chunks as
-    /// they are, the others as saved; chunks never generated have none.
+    /// they are, the others as saved (each read once until it is saved again);
+    /// chunks never generated have none.
     fn portal_blocks(&self, center: BlockPos, radius: i32) -> Vec<BlockPos> {
         let b = self.res.behaviours();
+        let is_portal = |state| b.portal_axis(state).is_some();
         let chunk_radius = radius.div_euclid(16) + 1;
         let (cx, cz) = (center.x >> 4, center.z >> 4);
         let mut out = Vec::new();
         for z in cz - chunk_radius..=cz + chunk_radius {
             for x in cx - chunk_radius..=cx + chunk_radius {
-                let saved;
-                let chunk = match self.world.chunks.get(&(x, z)) {
-                    Some(c) => &**c,
-                    None => {
-                        match self
-                            .save
-                            .load(x, z, self.pack.assets.registry, world_biomes!(self))
-                        {
-                            Some(c) => {
-                                saved = c;
-                                &saved
-                            }
-                            None => continue,
-                        }
-                    }
-                };
-                for (s, section) in chunk.sections.iter().enumerate() {
-                    if !section.blocks.maybe_has(|v| {
-                        b.portal_axis(horizon_world::registry::BlockStateId(v))
-                            .is_some()
-                    }) {
-                        continue;
-                    }
-                    let base = self.world.bottom_y() + 16 * s as i32;
-                    for y in base..base + 16 {
-                        for lz in 0..16 {
-                            for lx in 0..16 {
-                                let (wx, wz) = (x * 16 + lx, z * 16 + lz);
-                                if b.portal_axis(chunk.block(wx, y, wz)).is_some() {
-                                    out.push(BlockPos::new(wx, y, wz));
-                                }
-                            }
-                        }
-                    }
+                match self.world.chunks.get(&(x, z)) {
+                    Some(c) => out.extend(c.blocks_where(is_portal)),
+                    None => out.extend_from_slice(&self.save.saved_portal_blocks(
+                        x,
+                        z,
+                        self.pack.assets.registry,
+                        world_biomes!(self),
+                        is_portal,
+                    )),
                 }
             }
         }
@@ -1470,8 +1448,8 @@ impl Game<'_> {
         }
         let _save_lease = horizon_client::join_seq::visibility::PassLease::enter();
         let waiting = std::mem::take(&mut self.world.loaded_entities);
-        self.resolve_arrivals();
-        self.spawn_loaded_entities();
+        horizon_client::spans::time("resolve_arrivals", || self.resolve_arrivals());
+        horizon_client::spans::time("spawn_arrivals", || self.spawn_loaded_entities());
         self.world.loaded_entities.extend(waiting);
     }
     /// Entities waiting for the loaded dimension whose exit area is loaded:
@@ -1511,7 +1489,9 @@ impl Game<'_> {
                     end_portal_rotation(into_end, [yaw, pitch], self.level.world_spawn_angle);
                 (at, motion, turn)
             } else {
-                let Some(exit) = self.nether_exit_portal(&plan) else {
+                let exit =
+                    horizon_client::spans::time("exit_portal", || self.nether_exit_portal(&plan));
+                let Some(exit) = exit else {
                     continue;
                 };
                 let (at, rotation) = self.arrival(&plan, exit);
@@ -2401,3 +2381,120 @@ mod cooldown_tests;
 #[cfg(test)]
 #[path = "nether_portal/arrival_effects_tests.rs"]
 pub(in crate::game) mod arrival_effects_tests;
+
+impl Game<'_> {
+    /// PortalShape: an obsidian frame around 2..=21 by 3..=21 empty blocks.
+    pub(super) fn portal_shape(
+        &self,
+        start: [i32; 3],
+        x_axis: bool,
+    ) -> Option<([i32; 3], i32, i32)> {
+        let name = |p: [i32; 3]| {
+            self.res
+                .facts()
+                .get(self.world.block(p[0], p[1], p[2]))
+                .name
+                .clone()
+        };
+        let empty = |p: [i32; 3]| {
+            let n = name(p);
+            matches!(
+                &*n,
+                "minecraft:air"
+                    | "minecraft:cave_air"
+                    | "minecraft:fire"
+                    | "minecraft:soul_fire"
+                    | "minecraft:nether_portal"
+            )
+        };
+        let frame = |p: [i32; 3]| &*name(p) == "minecraft:obsidian";
+        let d = if x_axis { [1, 0, 0] } else { [0, 0, 1] };
+        let mut bottom = start;
+        let mut n = 0;
+        while empty([bottom[0], bottom[1] - 1, bottom[2]]) && n < 21 {
+            bottom[1] -= 1;
+            n += 1;
+        }
+        if !frame([bottom[0], bottom[1] - 1, bottom[2]]) {
+            return None;
+        }
+        let mut left = bottom;
+        n = 0;
+        while empty([left[0] - d[0], left[1], left[2] - d[2]]) && n < 21 {
+            left = [left[0] - d[0], left[1], left[2] - d[2]];
+            n += 1;
+        }
+        if !frame([left[0] - d[0], left[1], left[2] - d[2]]) {
+            return None;
+        }
+        let mut width = 0;
+        while width <= 21 {
+            let p = [left[0] + d[0] * width, left[1], left[2] + d[2] * width];
+            if !empty(p) || !frame([p[0], p[1] - 1, p[2]]) {
+                break;
+            }
+            width += 1;
+        }
+        if !(2..=21).contains(&width)
+            || !frame([left[0] + d[0] * width, left[1], left[2] + d[2] * width])
+        {
+            return None;
+        }
+        let mut height = 0;
+        'rows: while height <= 21 {
+            let y = left[1] + height;
+            if !frame([left[0] - d[0], y, left[2] - d[2]])
+                || !frame([left[0] + d[0] * width, y, left[2] + d[2] * width])
+            {
+                break;
+            }
+            for i in 0..width {
+                if !empty([left[0] + d[0] * i, y, left[2] + d[2] * i]) {
+                    break 'rows;
+                }
+            }
+            height += 1;
+        }
+        let top_ok =
+            (0..width).all(|i| frame([left[0] + d[0] * i, left[1] + height, left[2] + d[2] * i]));
+        ((3..=21).contains(&height) && top_ok).then_some((left, width, height))
+    }
+    /// BaseFireBlock.onPlace: lighting fire inside a frame creates a portal,
+    /// only in the Overworld and the Nether (`inPortalDimension`).
+    pub(super) fn try_light_portal(&mut self, at: [i32; 3]) -> Result<bool> {
+        if !matches!(self.dim, Dim::Overworld | Dim::Nether) {
+            return Ok(false);
+        }
+        for x_axis in [true, false] {
+            if let Some((origin, width, height)) = self.portal_shape(at, x_axis) {
+                let d = if x_axis { [1, 0, 0] } else { [0, 0, 1] };
+                let registry = &self.pack.assets.registry;
+                let Some(default) = registry.default_state("minecraft:nether_portal") else {
+                    return Ok(false);
+                };
+                let mut portal = registry.state(default).cloned().ok_or("portal state")?;
+                portal
+                    .properties
+                    .insert("axis".into(), if x_axis { "x" } else { "z" }.into());
+                let id = registry.resolve(&portal).unwrap_or(default);
+                // PortalShape.createPortalBlocks uses BlockPos.betweenClosed:
+                // X varies fastest, then Y, then Z.
+                let first = BlockPos::new(origin[0], origin[1], origin[2]);
+                let last = BlockPos::new(
+                    origin[0] + d[0] * (width - 1),
+                    origin[1] + height - 1,
+                    origin[2] + d[2] * (width - 1),
+                );
+                for pos in BlockPos::between_closed(first, last).expect("portal size is bounded") {
+                    self.level_set_with_flags(
+                        [pos.x, pos.y, pos.z],
+                        id,
+                        level_flags::UPDATE_CLIENTS | level_flags::UPDATE_KNOWN_SHAPE,
+                    )?;
+                }
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+}

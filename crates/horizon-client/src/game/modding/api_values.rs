@@ -2518,17 +2518,6 @@ mod item_model_snapshot_tests {
     }
 }
 
-impl TryIntoApi for horizon_mod_package::Side {
-    type Api = mod_api::Side;
-    type Error = std::convert::Infallible;
-    fn try_into_api(&self) -> Result<Self::Api, Self::Error> {
-        Ok(match self {
-            Self::Client => mod_api::Side::Client,
-            Self::Both => mod_api::Side::Both,
-        })
-    }
-}
-
 impl TryIntoApi for horizon_client_core::suggestion::Suggestion {
     type Api = mod_api::Suggestion;
     type Error = std::convert::Infallible;
@@ -2960,6 +2949,19 @@ impl TryIntoApi for horizon_client_core::gamerules::Value {
     }
 }
 
+impl TryIntoEngine for mod_api::GameRuleValue {
+    type Engine = horizon_client_core::gamerules::Value;
+    type Error = ();
+    fn try_into_engine(&self, _: &Items) -> Result<Self::Engine, Self::Error> {
+        match *self {
+            Self::Bool(value) => Ok(Self::Engine::Bool(value)),
+            Self::Int(value) => Ok(Self::Engine::Int(value)),
+            // A kind this game has no rule of.
+            _ => Err(()),
+        }
+    }
+}
+
 #[test]
 fn game_rule_int_snapshot_preserves_full_range() {
     for value in [i32::MIN, -1, 0, 256, i32::MAX] {
@@ -3060,7 +3062,7 @@ pub(in crate::game) mod damage;
 #[path = "api_values/item_properties.rs"]
 mod item_properties;
 #[path = "api_values/loot_values.rs"]
-mod loot_values;
+pub(crate) mod loot_values;
 #[path = "api_values/particle_values.rs"]
 mod particle_values;
 pub(crate) use loot_values::{dispatch_loot_condition, dispatch_loot_function};

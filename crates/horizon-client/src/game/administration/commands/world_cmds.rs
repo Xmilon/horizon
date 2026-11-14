@@ -44,7 +44,7 @@ fn holder(text: Text) -> Holder {
 }
 /// `ChatFormatting`-free float text as `Component.translatable` prints a `double`.
 fn java_double_text(v: f64) -> Text {
-    Text::literal(horizon_client::snbt::java_double(v))
+    Text::literal(horizon_core::java_number::double_to_string(v))
 }
 
 impl Game<'_> {
@@ -215,7 +215,7 @@ impl Game<'_> {
         self.feedback(Text::translate(
             "commands.damage.success",
             &[
-                Text::literal(horizon_client::snbt::java_float(amount)),
+                Text::literal(horizon_core::java_number::float_to_string(amount)),
                 name,
             ],
         ));
@@ -2005,7 +2005,7 @@ impl Game<'_> {
         if min_distance == f64::from(f32::MAX) {
             min_distance = 0.0;
         }
-        let float = |v: f32| Text::literal(horizon_client::snbt::java_float(v));
+        let float = |v: f32| Text::literal(horizon_core::java_number::float_to_string(v));
         if iteration >= 10_000 {
             let key = if respect {
                 "commands.spreadplayers.failed.teams"
@@ -2222,6 +2222,7 @@ mod allay_owner_damage_tests {
     use horizon_core::geometry::Vec3;
 
     #[test]
+    #[ignore = "daily"]
     fn allay_owner_adapters_compare_the_actual_player_uuid() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../.local/horizon-client")

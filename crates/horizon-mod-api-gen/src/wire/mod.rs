@@ -40,6 +40,7 @@ pub(super) const IMPORTS: &[&str] = &[
     "Levels",
     "Messages",
     "Players",
+    "RuntimeLevels",
     "ClientSession",
     "RenderAssets",
     "InstanceGroups",
@@ -80,11 +81,12 @@ pub(super) const IMPORTS: &[&str] = &[
 
 /// Imported traits a call never hands over, each reached through another's method instead.
 pub(super) const REACHED: &[(&str, &str, &str)] = &[
-    ("ConfigFiles", "host", "Ok(h.config_files())"),
+    ("ConfigFiles", "", ""),
     ("Commands", "server_host_mut", "Ok(h.commands())"),
     ("Levels", "server_host", "Ok(h.levels())"),
     ("Messages", "server_host", "Ok(h.messages())"),
     ("Players", "server_host", "Ok(h.players())"),
+    ("RuntimeLevels", "server_host_mut", "Ok(h.runtime_levels())"),
     ("ClientSession", "client_host", "Ok(h.client_session())"),
     ("RenderAssets", "client_host", "Ok(h.render_assets())"),
     ("InstanceGroups", "client_host", "Ok(h.instance_groups())"),
@@ -121,6 +123,13 @@ pub(super) const REACHED: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Bounded file-capability selectors, shared by the guest proxy and host dispatch.
+pub(super) const FILE_ROOTS: &[(u8, &str, &str)] = &[
+    (0, "Host", "config_files"),
+    (1, "Host", "data_files"),
+    (2, "ServerHost", "world_data_files"),
+];
+
 /// Traits a mod implements: their methods are the world's exports. The handler traits the
 /// capability keys name join them (`exports`).
 const EXPORTS: &[&str] = &[
@@ -145,6 +154,7 @@ const EXPORTS: &[&str] = &[
     "ParticleProvider",
     "EnchantmentDamageEffect",
     "CommandArgumentType",
+    "EntitySelectorType",
     "GroundStateProvider",
     "PlaceProvider",
     "TooltipAppender",
@@ -859,6 +869,7 @@ fn layout(surface: &Surface<'_>) -> u64 {
         "group state: 32 words in the std member's horizon_group_state; 0 handler table, 1 cache budget, 2 eviction guard, 3.. eviction callbacks; members allocate through an evicting global allocator",
     );
     feed("static replies: bounded acknowledged ids or uncached text");
+    feed("ConfigFiles imports: u8 root selector, 0 config, 1 data, 2 world; other values refused");
     feed("Hooks::subscribed: Vec<(hook name, i32 priority, bool receive_cancelled)>");
     for method in &surface.methods {
         feed(&format!("{method:?}"));
@@ -877,6 +888,7 @@ mod tests {
     /// The generated impls depend on the hand-written `Wire` impls the generator skips, so an
     /// edit to that file must rerun the build script.
     #[test]
+    #[ignore = "daily"]
     fn enchantment_damage_registrar_and_callback_cross_to_wire() {
         std::thread::Builder::new()
             .stack_size(64 << 20)
@@ -914,6 +926,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn a_worldgen_part_method_crosses_and_waits_for_its_group_as_a_worker_call() {
         std::thread::Builder::new()
             .stack_size(64 << 20)
@@ -948,6 +961,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn the_hand_written_wire_impls_are_tracked_sources() {
         std::thread::Builder::new()
             .stack_size(64 << 20)
@@ -971,6 +985,7 @@ mod tests {
             .unwrap();
     }
     #[test]
+    #[ignore = "daily"]
     fn layout_includes_private_borrowed_shapes() {
         let run = || {
             let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -1046,6 +1061,7 @@ mod tests {
     /// The book renders the coverage page from the generator at build time; what the page
     /// promises is checked here, against the generator itself.
     #[test]
+    #[ignore = "daily"]
     fn coverage_page_is_well_formed() {
         std::thread::Builder::new()
             .stack_size(64 << 20)

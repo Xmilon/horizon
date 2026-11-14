@@ -22,11 +22,11 @@ pub struct RegisteredAttribute {
     pub name: String,
     pub definition: Definition,
     pub syncable: bool,
-    pub sentiment: super::Sentiment,
+    pub tooltip: super::Tooltip,
 }
 /// A mod's declared attribute type, as the game hands it to
 /// [`Catalog::with_attributes`]: the declaring mod's id (the sort key), the
-/// namespaced attribute id, its definition, sync flag and sentiment.
+/// namespaced attribute id, its definition, sync flag and tooltip style.
 #[derive(Clone, Debug)]
 pub struct AddedAttribute {
     /// The declaring mod's id (`mymod`).
@@ -37,8 +37,8 @@ pub struct AddedAttribute {
     pub definition: Definition,
     /// Whether the attribute joins the sync set.
     pub syncable: bool,
-    /// The tooltip sentiment of a rising or falling value.
-    pub sentiment: super::Sentiment,
+    /// How its tooltip lines read: sentiment, display and base modifier.
+    pub tooltip: super::Tooltip,
 }
 /// A mod's ask to widen an existing attribute's bounds, as the game hands it
 /// to [`Catalog::with_widened_bounds`] (#3728).
@@ -166,9 +166,9 @@ impl Catalog {
                 syncable: a["syncable"]
                     .as_bool()
                     .ok_or_else(|| invalid("missing attribute sync flag"))?,
-                // The vanilla export carries no sentiment: vanilla's own
-                // colors stay where the tooltip reads them.
-                sentiment: super::Sentiment::default(),
+                // The vanilla export carries no tooltip style: vanilla's own
+                // colors and formats stay where the tooltip reads them.
+                tooltip: super::Tooltip::default(),
             });
         }
         let mut defaults = BTreeMap::new();
@@ -291,7 +291,7 @@ impl Catalog {
                 name: attribute.id.clone(),
                 definition: attribute.definition,
                 syncable: attribute.syncable,
-                sentiment: attribute.sentiment,
+                tooltip: attribute.tooltip.clone(),
             });
         }
         let defaults = self
@@ -723,7 +723,10 @@ mod row_tests {
             id: id.into(),
             definition: Definition::ranged(1.0, 0.0, 10.0).unwrap(),
             syncable,
-            sentiment: Sentiment::Neutral,
+            tooltip: super::super::Tooltip {
+                sentiment: Sentiment::Neutral,
+                ..Default::default()
+            },
         };
         // Declared in the order the mods happen to register: the catalog
         // sorts them by mod id, then attribute id.

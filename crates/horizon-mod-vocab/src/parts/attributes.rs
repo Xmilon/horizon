@@ -1,5 +1,5 @@
 use super::*;
-use crate::Sentiment;
+use crate::{AttributeTooltip, Sentiment};
 
 /// An attribute type a mod declares, as the game reads it when it grows the
 /// attribute catalog (`Catalog::with_attributes`, ).
@@ -21,6 +21,8 @@ pub struct AttributeDeclaration {
     pub syncable: bool,
     /// The tooltip sentiment of a rising or falling value.
     pub sentiment: Sentiment,
+    /// How its tooltip lines read: display kind and base modifier.
+    pub tooltip: AttributeTooltip,
 }
 
 /// The attribute types mods declared.
@@ -58,7 +60,9 @@ pub trait AttributesRegistrar {
     /// `mymod:mana`), its `default` and `[min, max]` bounds, whether it
     /// joins the attribute sync (`Attribute.setSyncable`), and the sentiment
     /// that colors its tooltip lines (`Attribute.setSentiment`, POSITIVE by
-    /// default; the translation key is `attribute.name.<ns>.<path>`).
+    /// default; the translation key is `attribute.name.<ns>.<path>`), and how its
+    /// tooltip lines read (`tooltip`: percentages, on/off, a base modifier; NeoForge's
+    /// `PercentageAttribute`, `BooleanAttribute` and `IAttributeExtension.getBaseId`).
     ///
     /// Only both-side packages may declare attributes; other sides refuse because
     /// declarations assign network registry IDs.
@@ -73,8 +77,8 @@ pub trait AttributesRegistrar {
     /// An id outside the mod's manifest-owned namespaces (a vanilla attribute's included),
     /// a malformed id, a duplicate — of this mod's or another's, caught
     /// where the declarations join the catalog — a non-finite default or
-    /// bound, or bounds the default is not inside (`min > max` included)
-    /// refuses, naming the mod.
+    /// bound, bounds the default is not inside (`min > max` included), or a
+    /// base modifier that is not a namespaced id refuses, naming the mod.
     fn declare_attribute(
         &mut self,
         path: &str,
@@ -83,6 +87,7 @@ pub trait AttributesRegistrar {
         max: f64,
         syncable: bool,
         sentiment: Sentiment,
+        tooltip: AttributeTooltip,
     ) -> Result<(), crate::AttributeRegistrationError>;
 
     /// Widen the `[min, max]` bounds of an attribute that already exists,

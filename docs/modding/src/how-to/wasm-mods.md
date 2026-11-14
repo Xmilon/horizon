@@ -201,13 +201,19 @@ A group's members share one linear memory: their heaps, stacks and static data t
 the largest `wasm_memory_mib` a member's `horizon-mod.toml` declares (1 to 4096 MiB, wasm32's 4 GiB),
 so a library declares what it and its addons need. Without a declaration, the limit is
 1 GiB or the instance cap, whichever is smaller. The limit is a ceiling, not memory taken: the group
-uses what it grows to. Past the limit, or past what the system gives, `memory.grow` answers -1 inside the
+uses what it grows to. It bounds that used memory only: on 64-bit systems the runtime still reserves
+address space for each memory (4 GiB plus a guard region), committing none of it, and a lower cap does
+not shrink that reservation. Past the limit, or past what the system gives, `memory.grow` answers -1 inside the
 guest and the call goes on; Rust's allocator then reports the failure as usual (`try_reserve` returns an
 error; an infallible allocation ends the call with a trap and the log names the group and its limit).
 
 Each instance caps every group with `wasm.memory_cap_mib:<MiB>` in `horizon-mods.txt`, beside `options.txt`:
 4096 unless the player lowers it. A group whose members declare more than the cap is refused at load, and
 the Mods page names the group, what it declares and the cap.
+
+### Threads
+
+Wasm threads and shared memory are off for wasm mods. A module that declares or imports a shared memory, or uses an atomic instruction, is refused when the group links, and the refusal names the member and quotes the reason. Wasmtime's `threads` feature is compiled in only for native hosts that embed their own engine; the engine that runs mods keeps both settings off.
 
 ## Compiled module cache
 

@@ -104,6 +104,7 @@ fn configurations_coexist_without_eviction() {
     let (_dir, cache, _, bytes) = fixture();
     let production = crate::runtime::engine().unwrap();
     let mut config = wasmtime::Config::new();
+    crate::runtime::without_threads(&mut config);
     config.epoch_interruption(crate::runtime::ENGINE_CONFIG.1);
     config.max_wasm_stack(horizon_guest_stack::GUEST_STACK_BYTES);
     // Wasmtime validates this bound even for synchronous engines. No async
@@ -198,7 +199,7 @@ fn stale_temporaries_are_removed_and_fresh_ones_kept() {
 
 #[test]
 fn the_key_is_one_sha256_per_input() {
-    let engine = Engine::default();
+    let engine = crate::runtime::test_engine();
     let a = ModuleCache::key(&engine, &wasm(42));
     assert_eq!(a.len(), 129);
     assert_eq!(a, ModuleCache::key(&engine, &wasm(42)));
@@ -339,7 +340,7 @@ fn group_linker_uses_cache_and_programmatic_linking_leaves_it_empty() {
         use crate::link::{Group, Member};
         let (_dir, cache, _, _) = fixture();
         // Programmatic linking does not install a production epoch deadline.
-        let engine = Engine::default();
+        let engine = crate::runtime::test_engine();
         let bytes = wat::parse_str(
             r#"(module
         (@custom "dylink.0" "\01\04\00\00\00\00")
@@ -428,7 +429,11 @@ fn measure_child_compile() {
         let start = std::time::Instant::now();
         assert!(
             std::process::Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "module_cache::tests::compiler_actor"])
+                .args([
+                    "--include-ignored",
+                    "--exact",
+                    "module_cache::tests::compiler_actor"
+                ])
                 .env_clear()
                 .env("HORIZON_COMPILER_INPUT", &input.0)
                 .env("HORIZON_COMPILER_OUTPUT", ModuleCache::key(&engine, &bytes))
@@ -457,7 +462,11 @@ fn actor_command(input: &Path, key: &str, mode: &str) -> std::process::Command {
     let mut command = std::process::Command::new(std::env::current_exe().unwrap());
     command
         .env_clear()
-        .args(["--exact", "module_cache::tests::compiler_actor"])
+        .args([
+            "--include-ignored",
+            "--exact",
+            "module_cache::tests::compiler_actor",
+        ])
         .env("HORIZON_COMPILER_INPUT", input)
         .env("HORIZON_COMPILER_OUTPUT", key)
         .env("HORIZON_COMPILER_MODE", mode);
@@ -486,6 +495,7 @@ fn missing(_: &Path, _: &str) -> std::process::Command {
 }
 
 #[test]
+#[ignore = "daily"]
 fn child_success_avoids_in_process_compile() {
     let (_dir, cache, _, bytes) = fixture();
     let engine = crate::runtime::engine().unwrap();
@@ -503,6 +513,7 @@ fn child_success_avoids_in_process_compile() {
 }
 
 #[test]
+#[ignore = "daily"]
 fn child_failures_refuse_without_unbounded_compilation() {
     for (command, marker) in [
         (wrong as fn(&Path, &str) -> std::process::Command, None),

@@ -15,10 +15,12 @@ mod mob_dispatch_panic_tests;
 mod player_loot_entity;
 mod projectile_targets;
 mod projectile_world;
+pub(super) use projectile_world::ProjWorld;
 mod pufferfish_player;
 mod residency;
 #[cfg(test)]
 mod retained_limits_tests;
+mod section_steps;
 mod world_view;
 use super::api_values::{TryIntoApi, TryIntoEngine};
 use super::level_sounds::LevelSound;
@@ -222,9 +224,8 @@ pub(super) struct Creatures {
     /// (game/network/lan_pvp.rs).
     pub sweeps: Vec<super::lan_pvp::Sweep>,
     /// Explosion packets from a guest's turn, waiting for it to end
-    /// (centre, small, radius, blocks hit, the players it pushed;
-    /// game/network/lan_particles.rs).
-    pub lan_explosions: Vec<([f64; 3], bool, f32, usize, Vec<(u32, [f64; 3])>)>,
+    /// (game/network/lan_particles.rs).
+    pub lan_explosions: Vec<super::lan_particles::LanExplosion>,
     /// The snapshot's buffer between ticks, empty: ~400 bytes a mob, so
     /// thousands of mobs would allocate and free megabytes every tick.
     seen_buf: Vec<Seen>,
@@ -251,14 +252,6 @@ pub(super) struct Creatures {
     /// Particles from a guest's turn, waiting for it to end.
     pub lan_particles: Vec<super::lan_particles::QueuedParticle>,
 }
-pub(super) struct ProjWorld<'a, 'w> {
-    pub w: &'a MobWorld<'w>,
-    pub targets: Vec<(Who, Aabb)>,
-    /// The world border's [minX, minZ, maxX, maxZ], which stops the ray as a
-    /// block would (`clipIncludingBorder`); None: no border.
-    pub border: Option<[f64; 4]>,
-}
-
 /// `Projectile.isPickable`: a projectile in `#minecraft:redirectable_projectile`
 /// (a ghast's fireball and both wind charges) is pickable, so another
 /// projectile's `ProjectileUtil.getEntityHitResult` can strike it
@@ -4414,87 +4407,88 @@ impl Game<'_> {
         let mut trails = Vec::new();
         let mut bubble_tops = Vec::new();
         let mut snow_contacts = Vec::new();
+        let mut section_steps = section_steps::begin(self);
         let mut keep_flags = vec![true; projectiles.len()];
         let mut winds = std::mem::take(&mut self.creatures.pickable_projectile_targets);
         // The impacts the mods may cancel (`native_projectile_impact`), on a server.
         let hear = self.native_hears_impacts();
         let mut impacts: Vec<Impact> = Vec::new();
         let mut vehicle_winds = self.vehicle_winds();
-        {
-            let targets = self.projectile_targets();
-            let breezes: Vec<u32> = self
-                .mobs
+        let targets = self.projectile_targets();
+        let breezes: Vec<u32> = self
+            .mobs
+            .iter()
+            .filter(|m| m.alive() && m.species() == Species::Breeze)
+            .map(|m| m.id)
+            .collect();
+        // Mobs' projectiles also hit the guests (game/network/lan_mobs.rs).
+        let guests = self.lan_projectile_targets();
+        let has_guests = !guests.is_empty();
+        let targets_guests = if has_guests {
+            let mut targets_guests = targets.clone();
+            targets_guests.extend(guests);
+            targets_guests
+        } else {
+            Vec::new()
+        };
+        let border = Some(self.border.bounds());
+        // Every guest, not only the ones a projectile can hit: a dead or
+        // spectating guest's pearl or arrow still resolves to them.
+        let guest_entities = self.lan_guest_entities();
+        // ThrownEnderpearl.tick: a dead player's pearl is discarded in
+        // place of its tick while ender_pearls_vanish_on_death is on.
+        let vanish = self
+            .ui
+            .rules
+            .bool_at(horizon_client::gamerules::vanilla::ENDER_PEARLS_VANISH_ON_DEATH);
+        let host_dead = self.player_view().is_some_and(|p| !p.alive);
+        let dead_guests: Vec<u32> = self.lan.as_ref().map_or_else(Vec::new, |h| {
+            h.hub
+                .guests
                 .iter()
-                .filter(|m| m.alive() && m.species() == Species::Breeze)
-                .map(|m| m.id)
-                .collect();
-            let w = self.mob_world_base(&[]);
-            let rain = self.arrow_rain();
-            let scene = self.arrow_scene(&rain);
-            // Mobs' projectiles also hit the guests (game/network/lan_mobs.rs).
-            let guests = self.lan_projectile_targets();
-            let has_guests = !guests.is_empty();
-            let targets_guests = if has_guests {
-                let mut targets_guests = targets.clone();
-                targets_guests.extend(guests);
-                targets_guests
-            } else {
-                Vec::new()
-            };
-            let border = Some(self.border.bounds());
-            let pw = ProjWorld {
-                w: &w,
-                targets,
-                border,
-            };
-            let pw_guests = ProjWorld {
-                w: &w,
-                targets: targets_guests,
-                border,
-            };
-            // Every guest, not only the ones a projectile can hit: a dead or
-            // spectating guest's pearl or arrow still resolves to them.
-            let guest_entities = self.lan_guest_entities();
-            // ThrownEnderpearl.tick: a dead player's pearl is discarded in
-            // place of its tick while ender_pearls_vanish_on_death is on.
-            let vanish = self
-                .ui
-                .rules
-                .bool_at(horizon_client::gamerules::vanilla::ENDER_PEARLS_VANISH_ON_DEATH);
-            let host_dead = self.player_view().is_some_and(|p| !p.alive);
-            let dead_guests: Vec<u32> = self.lan.as_ref().map_or_else(Vec::new, |h| {
-                h.hub
-                    .guests
-                    .iter()
-                    .filter(|g| g.dead)
-                    .map(|g| g.conn)
-                    .collect()
-            });
-            // `EntityTickList.forEach`: a projectile that joined during this
-            // tick's entity pass (a mob's shot) first ticks on the next one; a
-            // player's or a dispenser's, which join before the pass, tick now.
-            let through = self.ticked_entities_through;
-            for i in 0..projectiles.len() {
-                if projectiles[i].id > through {
-                    continue;
-                }
-                // ServerLevel.tick: losing an entity-ticking ticket must not
-                // advance projectile flags or motion while its chunk unloads.
-                let at = projectiles[i].position;
-                if !ticking(at.x.floor() as i32, at.z.floor() as i32) {
-                    projectiles.update(i, |p| p.previous = at);
-                    continue;
-                }
-                // A ghast's fireball or a wind charge is pickable, so a pearl, an
-                // arrow or a trident can strike it (`Projectile.isPickable`,
-                // `Projectile.onHit`).
-                winds.clear();
-                if matches!(projectiles[i].kind, ProjectileKind::EnderPearl)
-                    || projectiles[i].arrow.is_some()
-                {
-                    pickable_projectile_hitboxes_into(&projectiles, &keep_flags, i, &mut winds);
-                }
-                let mut redirect = None;
+                .filter(|g| g.dead)
+                .map(|g| g.conn)
+                .collect()
+        });
+        // `EntityTickList.forEach`: a projectile that joined during this
+        // tick's entity pass (a mob's shot) first ticks on the next one; a
+        // player's or a dispenser's, which join before the pass, tick now.
+        let through = self.ticked_entities_through;
+        for i in 0..projectiles.len() {
+            if projectiles[i].id > through {
+                continue;
+            }
+            // ServerLevel.tick: losing an entity-ticking ticket must not
+            // advance projectile flags or motion while its chunk unloads.
+            let at = projectiles[i].position;
+            if !ticking(at.x.floor() as i32, at.z.floor() as i32) {
+                projectiles.update(i, |p| p.previous = at);
+                continue;
+            }
+            // A ghast's fireball or a wind charge is pickable, so a pearl, an
+            // arrow or a trident can strike it (`Projectile.isPickable`,
+            // `Projectile.onHit`).
+            winds.clear();
+            if matches!(projectiles[i].kind, ProjectileKind::EnderPearl)
+                || projectiles[i].arrow.is_some()
+            {
+                pickable_projectile_hitboxes_into(&projectiles, &keep_flags, i, &mut winds);
+            }
+            let mut redirect = None;
+            {
+                let w = self.mob_world_base(&[]);
+                let rain = self.arrow_rain();
+                let scene = self.arrow_scene(&rain);
+                let pw = ProjWorld {
+                    w: &w,
+                    targets: &targets,
+                    border,
+                };
+                let pw_guests = ProjWorld {
+                    w: &w,
+                    targets: &targets_guests,
+                    border,
+                };
                 projectiles.update(i, |p| {
                     if vanish
                         && matches!(p.kind, ProjectileKind::EnderPearl)
@@ -4522,15 +4516,15 @@ impl Game<'_> {
                     }
                     let use_guests = (mob_shot || pvp) && has_guests;
                     let (keep, hit) = match (p.arrow.is_some(), use_guests, winds.is_empty()) {
-                        (true, false, true) => horizon_client::arrows::tick(p, &scene, &pw.targets),
+                        (true, false, true) => horizon_client::arrows::tick(p, &scene, pw.targets),
                         (true, true, true) => {
-                            horizon_client::arrows::tick(p, &scene, &pw_guests.targets)
+                            horizon_client::arrows::tick(p, &scene, pw_guests.targets)
                         }
                         (true, with_guests, false) => {
                             let mut targets = if with_guests {
-                                pw_guests.targets.clone()
+                                pw_guests.targets.to_vec()
                             } else {
-                                pw.targets.clone()
+                                pw.targets.to_vec()
                             };
                             targets.extend_from_slice(&winds);
                             horizon_client::arrows::tick(p, &scene, &targets)
@@ -4539,14 +4533,14 @@ impl Game<'_> {
                         (false, true, true) => p.tick(&pw_guests),
                         (false, pvp_shot, false) => {
                             let mut targets = if pvp_shot {
-                                pw_guests.targets.clone()
+                                pw_guests.targets.to_vec()
                             } else {
-                                pw.targets.clone()
+                                pw.targets.to_vec()
                             };
                             targets.extend_from_slice(&winds);
                             p.tick(&ProjWorld {
                                 w: if pvp_shot { pw_guests.w } else { pw.w },
-                                targets,
+                                targets: &targets,
                                 border,
                             })
                         }
@@ -4666,13 +4660,21 @@ impl Game<'_> {
                         redirect = Some((j, (p.owner, p.owner_uuid, p.guest)));
                     }
                 });
-                if let Some((j, (owner, owner_uuid, guest))) = redirect {
-                    let look = self.owner_look(owner, guest);
-                    projectiles.update(j, |wind| {
-                        super::deflect::aim_deflect(wind, look, owner, owner_uuid, guest);
-                    });
-                }
             }
+            if let Some((j, (owner, owner_uuid, guest))) = redirect {
+                let look = self.owner_look(owner, guest);
+                projectiles.update(j, |wind| {
+                    super::deflect::aim_deflect(wind, look, owner, owner_uuid, guest);
+                });
+            }
+            keep_flags[i] = keep_flags[i]
+                && section_steps::record(
+                    self,
+                    &mut section_steps,
+                    projectiles.get(i),
+                    at,
+                    keep_flags[i],
+                );
         }
         self.creatures.pickable_projectile_targets = winds;
         for (block, position, movement) in snow_contacts {
@@ -4743,6 +4745,7 @@ impl Game<'_> {
             projectiles,
             horizon_client::join_seq::RestoreOrder::SpawnsFirst,
         );
+        section_steps::finish(self, section_steps);
         for (p, hit) in hits {
             let Some((p, hit)) = self.broken_vehicle_retick(p, hit, &mut vehicle_winds) else {
                 continue;
@@ -5924,16 +5927,7 @@ impl Game<'_> {
                         self.spawn_mob_raw("minecraft:endermite", [from.x, from.y, from.z], false);
                     }
                     // ServerPlayer.teleport: removeVehicle before the placement.
-                    self.stop_riding();
-                    if let Some(pl) = self.player.as_mut() {
-                        pl.position = to;
-                        pl.velocity = Vec3::ZERO;
-                        pl.fall_distance = 0.0;
-                        pl.impulse.reset();
-                        pl.teleported = true;
-                        pl.teleported_delta = [false; 3];
-                    }
-                    self.previous_position = to;
+                    section_steps::teleport_player(self, to);
                     self.hurt_player_by("minecraft:ender_pearl", damage);
                     self.audio.play(
                         "minecraft:entity.player.teleport",
@@ -7892,34 +7886,7 @@ impl Game<'_> {
             self.mark_motion(entity_start, (1 << 32) | u64::from(mob.id));
             self.mark_entity(entity_start, &mob.kind.id);
             self.rendered_mobs.set(self.rendered_mobs.get() + 1);
-            // `EntityRenderer.getPackedLightCoords`: the block the mob's light
-            // probe (its eye) is in, at the position this frame draws rather
-            // than this tick's.
-            let probe = mob.light_probe(alpha);
-            let light = self.world.light(probe[0], probe[1], probe[2]);
-            let mut packed = (u32::from(light >> 4) * 16) | ((u32::from(light & 15) * 16) << 8);
-            // EntityRenderer.getBlockLightLevel: a burning mob has 15 block
-            // light, and so do the Allay, Blaze, Magma Cube, Vex and Wither
-            // renderers' overrides; the sky light stays the level's.
-            if mob.fire_ticks > 0
-                || matches!(
-                    mob.species(),
-                    Species::Allay
-                        | Species::Blaze
-                        | Species::MagmaCube
-                        | Species::Vex
-                        | Species::Wither
-                )
-            {
-                packed = (packed & 0xFF) | ((15 * 16) << 8);
-            }
-            // GlowSquidRenderer.getBlockLightLevel: the body brightens as the
-            // dark ticks run out (the block light is the second byte).
-            if mob.species() == Species::GlowSquid {
-                let lit = (packed >> 12) & 15;
-                let block = horizon_client::mobs::aquatic::glow_squid_block_light(mob, lit);
-                packed = (packed & 0xFF) | ((block * 16) << 8);
-            }
+            let packed = self.mob_packed_light(mob, alpha);
             // The mods' pre hooks (a player's `render_player_pre`, then `render_living_pre`),
             // before any of the vanilla model's parts (a sulfur cube's swallowed block) are
             // drawn. A cancel skips the rest of the entity's drawing and its post hooks; the
@@ -7934,7 +7901,10 @@ impl Game<'_> {
                 self.cull_entity_vertices(out, entity_start);
                 continue;
             };
-            if mob.species() == Species::SulfurCube && !mob.is_invisible() {
+            // A mod's renderer for the type (`register_entity_renderers`) draws in place of its
+            // model and vanilla layers; the mods' layers and post hooks still follow.
+            let modded = self.mod_living_renderer_geometry(mob, alpha as f32, camera, packed, out);
+            if mob.species() == Species::SulfurCube && !mob.is_invisible() && !modded {
                 self.sulfur_cube_body_geometry(
                     mob,
                     alpha as f32,
@@ -7956,7 +7926,7 @@ impl Game<'_> {
             // then only the outline draws.
             let silhouette_on_gpu = outline.is_none() || !mob.invisible;
             let posable = skinning
-                && !is_player
+                && !(is_player || modded)
                 && !layers_only
                 && silhouette_on_gpu
                 && armor.is_empty()
@@ -7983,7 +7953,7 @@ impl Game<'_> {
                     &mut skin,
                 );
                 skinned = Some((mark, skin.bounds));
-            } else {
+            } else if !modded {
                 if layers_only {
                     horizon_client::mobs::render::render_layers(
                         mob,
@@ -8046,7 +8016,7 @@ impl Game<'_> {
             }
             // Cosmetics (game/cosmetics.rs), posed on the GPU with the mob's own jobs: culled
             // with it.
-            if !layers_only
+            if !(layers_only || modded)
                 && horizon_hooks::engine::any()
                 && (is_player || &*mob.kind.id == "minecraft:mannequin")
             {
@@ -8065,9 +8035,11 @@ impl Game<'_> {
             }
             // CustomHeadLayer (a pumpkin, skull or head item) included.
             if layers {
-                // Held items join the GPU path's draws, their silhouette too.
-                let skin = (skinning && silhouette_on_gpu).then_some(&mut skinned);
-                self.mob_block_geometry(mob, camera, alpha, packed, skin, out);
+                if !modded {
+                    // Held items join the GPU path's draws, their silhouette too.
+                    let skin = (skinning && silhouette_on_gpu).then_some(&mut skinned);
+                    self.mob_block_geometry(mob, camera, alpha, packed, skin, out);
+                }
                 self.mod_layer_geometry(mob, who, parts, added, alpha as f32, camera, packed, out);
             }
             self.mod_render_post(mob, who, parts, alpha as f32, camera, packed, out);
@@ -8090,6 +8062,7 @@ impl Game<'_> {
             }
             // GuardianRenderer: the laser to the locked target.
             if let Some((time, scale)) = beam
+                && !modded
                 && let Some(target) = self.beam_target(mob.ai.target, alpha)
                 && let Some(uv) = lookup("entity/guardian/guardian_beam")
             {
@@ -8579,60 +8552,7 @@ fn mob_effect_instance(
     Some(instance)
 }
 
-impl horizon_client::mobs::MobHooks for Game<'_> {
-    fn living_change_target(
-        &self,
-        mob: &mut Mob,
-        world: &MobWorld<'_>,
-        is_brain: bool,
-        target: Option<Who>,
-    ) -> horizon_client::mobs::TargetChange {
-        self.native_mob_change_target_in_tick(mob, world, is_brain, target)
-    }
-
-    fn enderman_anger_suppressed(&self, enderman: u32, player: &PlayerView) -> bool {
-        if !mod_api::__private::listened(mod_api::HookId::EndermanAnger) {
-            return false;
-        }
-        let Some(epoch) = self.native_lifecycle.epoch() else {
-            return false;
-        };
-        let uuid = horizon_client::lan::playerdata::ints_uuid(player.uuid);
-        let Some(player) = self.player(uuid) else {
-            return false;
-        };
-        let mut cancel = false;
-        self.native_enderman_anger(
-            mod_api::EntityRef::new(epoch, enderman),
-            player,
-            &mut cancel,
-        );
-        cancel
-    }
-    fn can_grief(&self, mob: u32, rule: bool) -> bool {
-        self.entity_grief(mob, rule)
-    }
-    fn grief_hooked(&self) -> bool {
-        Game::grief_hooked(self)
-    }
-    fn can_entity_destroy(&self, mob: u32, pos: [i32; 3], vanilla: bool) -> bool {
-        self.entity_may_destroy(mob, pos, vanilla)
-    }
-    fn living_visibility(&self, player: &PlayerView, looking: u32, visibility: f64) -> f64 {
-        let uuid = horizon_client::lan::playerdata::ints_uuid(player.uuid);
-        match self.player(uuid) {
-            Some(player) => self.scaled_visibility(|_| player.entity(), looking, visibility),
-            None => visibility,
-        }
-    }
-    fn living_visibility_mob(&self, target: u32, looking: u32, visibility: f64) -> f64 {
-        self.scaled_visibility(
-            |epoch| mod_api::EntityRef::new(epoch, target),
-            looking,
-            visibility,
-        )
-    }
-}
+include!("mob_query_hooks.rs");
 
 impl Game<'_> {
     /// `EventHooks.canEntityGrief(level, entity)`: the `mob_griefing` rule,
@@ -10838,6 +10758,7 @@ mod pearl_tests {
         }
         let lid_openers = std::collections::HashMap::new();
         let w = MobWorld {
+            mob_maps: horizon_client::neoforge_mob_maps::NeoForgeMobMaps::vanilla(),
             goal_host: None,
             live_mobs: None,
             teams: Default::default(),
@@ -10894,10 +10815,11 @@ mod pearl_tests {
             asks_living_destroy_block: false,
             asks_baby_spawn: false,
             border: None,
+            section_writer: None,
         };
         let pw = ProjWorld {
             w: &w,
-            targets: Vec::new(),
+            targets: &[],
             border: None,
         };
         let pearl = |x: f64, y: f64, velocity: Vec3| {

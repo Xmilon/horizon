@@ -43,6 +43,13 @@ pub trait ConfigHost {
     #[access(WorldOnly)]
     #[static_call]
     fn config_files(&self) -> &'static dyn ConfigFiles;
+    /// Side: both. The calling mod's bulk files in
+    /// `horizon-mod-data/<mod id>/` in the game folder, never scanned as
+    /// settings or config. Paths omit the mod id; `ConfigPath::root()` names
+    /// its root. Horizon allows at most `DATA_FILE_MAX` bytes per file.
+    #[access(WorldOnly)]
+    #[static_call]
+    fn data_files(&self) -> &'static dyn ConfigFiles;
     /// Side: both.
     /// The level in place (`minecraft:overworld`), for a hook that isn't told
     /// which it runs in.
@@ -83,6 +90,40 @@ pub trait ConfigServerHost {
     #[access(WorldOnly)]
     fn tick_stats(&self) -> (f32, f64);
     /// Side: server.
+    /// The last 100 server ticks' durations in nanoseconds, as
+    /// `MinecraftServer.getTickTimesNanos` lays them out: the tick numbered `n` at index
+    /// `n % 100`, 0 where none was recorded yet. Sort a copy for percentiles; `tick_stats`
+    /// has the average.
+    #[access(WorldOnly)]
+    fn tick_times(&self) -> Vec<u64>;
+    /// Side: server.
+    /// The server's view distance in chunks (`PlayerList.getViewDistance`, `view-distance`):
+    /// how far players are sent chunks at most. None off a server open to players.
+    #[access(WorldOnly)]
+    fn server_view_distance(&self) -> Option<i32>;
+    /// Side: server.
+    /// The server's simulation distance in chunks (`PlayerList.getSimulationDistance`,
+    /// `simulation-distance`): how far around each player chunks tick. None off a server open
+    /// to players.
+    #[access(WorldOnly)]
+    fn server_simulation_distance(&self) -> Option<i32>;
+    /// Side: server.
+    /// Sets the server's view distance live, as `PlayerList.setViewDistance` (and the
+    /// management protocol's `serversettings/view_distance/set`) do: every player is sent
+    /// `ClientboundSetChunkCacheRadiusPacket` and their chunks follow, each up to what their
+    /// client asked for. `server.properties` is not written, so a restart goes back to it.
+    /// False for a distance outside 2 to 32, and off a dedicated server (an integrated
+    /// server follows its window's option).
+    #[access(WorldOnly)]
+    fn server_set_view_distance(&mut self, distance: i32) -> bool;
+    /// Side: server.
+    /// Sets the server's simulation distance live, as `PlayerList.setSimulationDistance`
+    /// does: every player is sent `ClientboundSetSimulationDistancePacket`, and the chunks
+    /// around the players tick to the new distance from the next tick. `server.properties`
+    /// is not written. False for a distance outside 2 to 32, and off a dedicated server.
+    #[access(WorldOnly)]
+    fn server_set_simulation_distance(&mut self, distance: i32) -> bool;
+    /// Side: server.
     /// Sets the server's tick rate, as `/tick rate` does (`ServerTickRateManager.setTickRate`):
     /// the game ticks `rate` times a second from the next tick on, an autosave wait already
     /// running is shortened when the new rate asks for less, and `server_tick_rate_changed`
@@ -101,6 +142,12 @@ pub trait ConfigServerHost {
     /// keeps world data in level attachments.
     #[access(WorldOnly)]
     fn world_dir(&self) -> Option<PathBuf>;
+    /// Side: server. The calling mod's bulk files in the current save's
+    /// `horizon-mod-data/<mod id>/`, copied, backed up and deleted with that
+    /// save. Paths omit the mod id. Calls refuse with `NoWorld` before a
+    /// save is open; this service never outlives its borrowed world host.
+    #[access(WorldOnly)]
+    fn world_data_files(&self) -> &dyn ConfigFiles;
     /// Side: server.
     /// Every current rule in the one server-wide store, by namespaced id.
     /// Readable from `server_about_to_start`, before any level exists.

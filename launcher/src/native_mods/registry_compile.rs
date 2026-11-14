@@ -1,4 +1,4 @@
-//! Cargo owns registry compilation and the final link; the SDK remains binary-only.
+//! Cargo builds each mod as a Rust dylib; the SDK executable remains unchanged.
 use super::{api, dependencies, internals, prebuilt, registry_plan, registry_rustc};
 use crate::{
     i18n::{tr, trf},
@@ -32,10 +32,14 @@ fn compiler_plan(
     }
 }
 
+/// `out` is the mods folder's staging folder, rewritten every build; `target_dir` is cargo's build
+/// folder, kept between builds of the same game build (see `prebuilt::compile`).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn compile(
     rust: &Toolchain,
     game: &Path,
     out: &Path,
+    target_dir: &Path,
     projects: &[api::Project<'_>],
     declared: &[Vec<dependencies::Dependency>],
     resolution: &dependencies::Resolution,
@@ -78,10 +82,17 @@ pub(super) fn compile(
     let generated = catalog
         .prepare(projects.iter().map(|project| &project.bundle.manifest))
         .map_err(|e| e.to_string())?;
+    // The last build's staging, kept aside until this one's is written: a file whose bytes didn't
+    // change gets its old modified time back, so cargo's fingerprints reuse what it built from it.
+    let previous = out.with_extension("old");
+    if previous.exists() {
+        fs::remove_dir_all(&previous).map_err(|e| e.to_string())?;
+    }
     if out.exists() {
-        fs::remove_dir_all(out).map_err(|e| e.to_string())?;
+        fs::rename(out, &previous).map_err(|e| e.to_string())?;
     }
     fs::create_dir_all(out).map_err(|e| e.to_string())?;
+    let template = api::template(&game.join(super::api_route::TEMPLATE))?;
     let mut bindings = BTreeMap::new();
     let mut members = Vec::new();
     let mut wrapper_deps = toml::Table::new();
@@ -157,13 +168,56 @@ pub(super) fn compile(
                     );
                 }
                 wrapper_deps.insert(format!("mod_{position}"), dependency.into());
+                let lib = manifest
+                    .entry("lib")
+                    .or_insert_with(|| toml::Table::new().into())
+                    .as_table_mut()
+                    .ok_or(tr("Invalid lib table"))?;
+                lib.insert(
+                    "crate-type".into(),
+                    vec![toml::Value::String("dylib".into())].into(),
+                );
+                let root = dest.join(
+                    lib.get("path")
+                        .and_then(toml::Value::as_str)
+                        .unwrap_or("src/lib.rs"),
+                );
+                let entry = root
+                    .parent()
+                    .ok_or(tr("Invalid library root"))?
+                    .join("__horizon_entry.rs");
+                fs::write(
+                    &entry,
+                    prebuilt::library_entry(
+                        &template,
+                        &[&bundle.manifest],
+                        &catalog,
+                        sdk.commit(),
+                        id,
+                        &bundle.manifest.version.to_string(),
+                        &[],
+                    ),
+                )
+                .map_err(|e| e.to_string())?;
+                let mut source = fs::read_to_string(&root).map_err(|e| e.to_string())?;
+                prebuilt::check_entry_root(&source, id)?;
+                source.push_str("\n#[allow(unsafe_code)]\n#[path = \"__horizon_entry.rs\"] mod __horizon_entry;\n");
+                fs::write(root, source).map_err(|e| e.to_string())?;
             }
             fs::write(path, manifest.to_string()).map_err(|e| e.to_string())?;
         }
-        let mut externs = BTreeMap::new();
+        let mut externs: BTreeMap<String, PathBuf> = BTreeMap::from([
+            ("mod_api".into(), prebuilt::library(&deps, "mod_api")?),
+            ("mod_vocab".into(), prebuilt::library(&deps, "mod_vocab")?),
+        ]);
+        for (name, path) in &externs {
+            prebuilt::refuse_closure_rlib(id, name, path)?;
+        }
         for (name, package) in project.api_dependencies() {
             if package != "internals" {
-                externs.insert(name, prebuilt::library(&deps, package)?);
+                let path = prebuilt::library(&deps, package)?;
+                prebuilt::refuse_closure_rlib(id, package, &path)?;
+                externs.insert(name, path);
             }
         }
         if internals::needed(&bundle.manifest)
@@ -188,10 +242,9 @@ pub(super) fn compile(
                 .map(String::as_str)
                 .chain(["horizon_client"])
             {
-                facade_externs.insert(
-                    name.to_owned(),
-                    prebuilt::facade_library(&deps, name, &sdk)?,
-                );
+                let path = prebuilt::facade_library(&deps, name, &sdk)?;
+                prebuilt::refuse_closure_rlib(id, name, &path)?;
+                facade_externs.insert(name.to_owned(), path);
             }
             bindings.insert(
                 facade_dir,
@@ -225,13 +278,15 @@ pub(super) fn compile(
                 toml::toml! { path = facade_relative package = facade_package }.into(),
             );
         }
-        bindings.insert(
-            dest,
-            registry_rustc::Bindings {
-                externs,
-                link_args: Vec::new(),
-            },
-        );
+        let mut link_args = sdk.link_args.clone();
+        if cfg!(target_os = "linux") {
+            link_args.push("-Wl,--disable-new-dtags".into());
+            link_args.push("-Wl,-rpath,$ORIGIN".into());
+        }
+        if cfg!(target_os = "macos") {
+            link_args.push("-Wl,-rpath,@loader_path".into());
+        }
+        bindings.insert(dest, registry_rustc::Bindings { externs, link_args });
         members.push(relative);
     }
     // `[[native.mixin]]` rows: the patched crates join the workspace beside the mods, whose
@@ -263,10 +318,15 @@ pub(super) fn compile(
                 .collect();
             manifest.insert("features".into(), features.into());
             fs::write(dir.join("Cargo.toml"), manifest.to_string()).map_err(|e| e.to_string())?;
+            let externs: BTreeMap<_, _> =
+                super::patch::sdk_externs(game, &sdk)?.into_iter().collect();
+            for (krate, path) in &externs {
+                prebuilt::refuse_closure_rlib("horizon_patch", krate, path)?;
+            }
             bindings.insert(
                 dir,
                 registry_rustc::Bindings {
-                    externs: super::patch::sdk_externs(game, &sdk)?.into_iter().collect(),
+                    externs,
                     link_args: Vec::new(),
                 },
             );
@@ -289,24 +349,22 @@ pub(super) fn compile(
             let _ = fs::remove_file(patch.dir.join(file));
         }
     }
-    let manifests: Vec<_> = resolution
-        .order
-        .iter()
-        .map(|&index| &projects[index].bundle.manifest)
-        .collect();
     fs::create_dir_all(out.join("src")).map_err(|e| e.to_string())?;
-    let template = api::template(&game.join(prebuilt::TEMPLATE))?;
-    let mut main = api::main_rs(&template, &manifests, &catalog);
-    if let Some(patch) = &patch {
-        let installs: String = patch
-            .installs
-            .iter()
-            .map(|install| format!("        {install},\n"))
-            .collect();
-        main = main.replace("/* MOD_REDIRECTS */", installs.trim_end());
-    }
-    fs::write(out.join("src/main.rs"), main).map_err(|e| e.to_string())?;
-    let mut manifest = toml::toml! { [package] name = "horizon-native-registry-game" version = "0.0.0" edition = "2024" [workspace] resolver = "2" };
+    let installs = patch
+        .as_ref()
+        .map(|patch| patch.installs.as_slice())
+        .unwrap_or(&[]);
+    let entry = prebuilt::library_entry(
+        &template,
+        &[],
+        &catalog,
+        sdk.commit(),
+        "horizon_patch",
+        "0",
+        installs,
+    );
+    fs::write(out.join("src/lib.rs"), entry).map_err(|e| e.to_string())?;
+    let mut manifest = toml::toml! { [package] name = "horizon_patch" version = "0.0.0" edition = "2024" [lib] crate-type = ["dylib"] [workspace] resolver = "2" };
     manifest
         .get_mut("workspace")
         .and_then(toml::Value::as_table_mut)
@@ -366,8 +424,12 @@ pub(super) fn compile(
     if inventory.added_crates > 0 && !options.consent.is_some_and(|ask| ask(&inventory)) {
         return Err(crate::i18n::tr("Registry dependency compilation was not approved").into());
     }
-    let externs = prebuilt::wrapper_externs(&deps, &template)?;
-    let mut link_args = sdk.link_args;
+    let mut externs = prebuilt::wrapper_externs(&deps, &template)?;
+    externs.insert("mod_vocab".into(), prebuilt::library(&deps, "mod_vocab")?);
+    for (name, path) in &externs {
+        prebuilt::refuse_closure_rlib("horizon_patch", name, path)?;
+    }
+    let mut link_args = sdk.link_args.clone();
     if cfg!(target_os = "linux") {
         link_args.push("-Wl,--disable-new-dtags".into());
         link_args.push("-Wl,-rpath,$ORIGIN".into());
@@ -379,10 +441,15 @@ pub(super) fn compile(
         out.to_path_buf(),
         registry_rustc::Bindings { externs, link_args },
     );
-    let target_dir = out.join("target");
+    if previous.exists() {
+        keep_unchanged_times(out, &previous).map_err(|e| e.to_string())?;
+        fs::remove_dir_all(&previous).map_err(|e| e.to_string())?;
+    }
     let mut command = super::cargo(rust, out, "build");
     command
         .args([
+            "--workspace",
+            "--lib",
             "--offline",
             "--locked",
             "--release",
@@ -390,14 +457,19 @@ pub(super) fn compile(
             rust.host.target,
         ])
         .arg("--target-dir")
-        .arg(&target_dir)
+        .arg(target_dir)
         .arg("--message-format=json-render-diagnostics");
+    // Cargo's per-crate timings (`target/cargo-timings/`), for the check that measures where a
+    // registry build's time goes; a player's kept build folder doesn't collect them.
+    if std::env::var_os("HORIZON_NATIVE_CARGO_TIMINGS").is_some() {
+        command.arg("--timings");
+    }
     let wrapper = compiler_plan(rust, game, bindings);
     wrapper.configure(&mut command, &out.join("rustc-plan.json"), options.adapter)?;
     let messages = out.join("cargo-messages.jsonl");
     let result = super::run_checked(
         command,
-        "Compiling registry mods and linking the prebuilt game",
+        tr("Compiling registry mod libraries"),
         |_| {},
         Some(fs::File::create(&messages).map_err(|e| e.to_string())?),
     );
@@ -413,16 +485,31 @@ pub(super) fn compile(
         }
         return Err(error);
     }
-    let binary = target_dir
-        .join(rust.host.target)
-        .join("release")
-        .join(if cfg!(windows) {
-            "horizon-native-registry-game.exe"
-        } else {
-            "horizon-native-registry-game"
-        });
-    let mut runtime = prebuilt::runtime_libraries(rust, &game.join("deps"))?;
-    for library in outputs.runtime(&metadata.runtime_packages()?, &target_dir)? {
+    let binary = game.join("bin").join(if cfg!(windows) {
+        "horizon-client.exe"
+    } else {
+        "horizon-client"
+    });
+    let release = target_dir.join(rust.host.target).join("release");
+    let mut runtime = prebuilt::runtime_libraries(rust, &sdk, game)?;
+    for &index in &resolution.order {
+        let project = &projects[index];
+        let library = release.join(prebuilt::dylib_name(&project.crate_name()));
+        super::library_record::validate_exports(&library, &project.bundle.manifest.id)?;
+        super::library_record::stamp(
+            &library,
+            sdk.commit(),
+            &project.bundle.manifest.id,
+            &project.bundle.manifest.version.to_string(),
+            false,
+        )?;
+        runtime.push(library);
+    }
+    let library = release.join(prebuilt::dylib_name("horizon_patch"));
+    super::library_record::validate_exports(&library, "horizon_patch")?;
+    super::library_record::stamp(&library, sdk.commit(), "horizon_patch", "0", true)?;
+    runtime.push(library);
+    for library in outputs.runtime(&metadata.runtime_packages()?, target_dir)? {
         if let Some(existing) = runtime
             .iter()
             .find(|existing| existing.file_name() == library.file_name())
@@ -442,11 +529,71 @@ pub(super) fn compile(
     Ok((binary, runtime))
 }
 
+/// Gives each file under `staged` whose bytes equal the file at the same place under `previous`
+/// that file's modified time.
+fn keep_unchanged_times(staged: &Path, previous: &Path) -> std::io::Result<()> {
+    for entry in fs::read_dir(staged)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let old = previous.join(entry.file_name());
+        if kind.is_dir() {
+            if old.is_dir() {
+                keep_unchanged_times(&entry.path(), &old)?;
+            }
+        } else if kind.is_file() {
+            let Ok(meta) = fs::symlink_metadata(&old) else {
+                continue;
+            };
+            if meta.is_file()
+                && meta.len() == entry.metadata()?.len()
+                && fs::read(&old)? == fs::read(entry.path())?
+            {
+                fs::File::options()
+                    .write(true)
+                    .open(entry.path())?
+                    .set_modified(meta.modified()?)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    /// A restaged file whose bytes didn't change keeps its old modified time, so cargo reuses
+    /// what it built from it; a changed or new file keeps its new one.
+    #[test]
+    fn only_unchanged_staged_files_keep_their_old_time() {
+        let root = tempfile::tempdir().unwrap();
+        let (old, new) = (root.path().join("stage.old"), root.path().join("stage"));
+        for dir in [&old, &new] {
+            fs::create_dir_all(dir.join("src")).unwrap();
+        }
+        let then = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        for (name, text) in [("src/lib.rs", "same"), ("Cargo.toml", "old")] {
+            let path = old.join(name);
+            fs::write(&path, text).unwrap();
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(then)
+                .unwrap();
+        }
+        fs::write(new.join("src/lib.rs"), "same").unwrap();
+        fs::write(new.join("Cargo.toml"), "new").unwrap();
+        fs::write(new.join("src/added.rs"), "added").unwrap();
+        keep_unchanged_times(&new, &old).unwrap();
+        let modified = |name: &str| fs::metadata(new.join(name)).unwrap().modified().unwrap();
+        assert_eq!(modified("src/lib.rs"), then);
+        assert_ne!(modified("Cargo.toml"), then);
+        assert_ne!(modified("src/added.rs"), then);
+    }
+
     use super::*;
 
     #[test]
+    #[ignore = "daily"]
     fn registry_adapter_compiles_facade_with_transitive_host_macro_metadata() {
         use std::{ffi::OsString, process::Command};
         let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/registry-facade-tests");
@@ -573,6 +720,7 @@ mod tests {
         // the SDK-owned template calls after the layer split.
         for name in [
             "mod_api",
+            "mod_vocab",
             "mod_points",
             "horizon_mod_package",
             "horizon_mod_host",
@@ -690,6 +838,7 @@ mod tests {
             version: &bundle.manifest.version,
             dependencies: &declared[0],
             has_api: true,
+            code: true,
         }];
         let resolution = dependencies::resolve(&inputs).unwrap();
         let rust = crate::rust_toolchain::install(|_| {}).unwrap();
@@ -698,6 +847,7 @@ mod tests {
             &rust,
             &game,
             &out,
+            &out.join("target"),
             &projects,
             &declared,
             &resolution,

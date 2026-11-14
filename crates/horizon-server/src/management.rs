@@ -933,6 +933,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn notifications_go_to_every_client_as_vanilla_writes_them() {
         let shared = shared();
         let address = listen_on(shared.clone(), settings());
@@ -976,6 +977,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn the_games_events_become_the_notifications_vanilla_sends() {
         let shared = shared();
         let address = listen_on(shared.clone(), settings());
@@ -1042,6 +1044,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn a_login_is_an_activity_notification_and_the_heartbeat_carries_the_status() {
         let shared = shared();
         let address = listen_on(
@@ -1078,6 +1081,7 @@ mod tests {
     /// `serversettings/status_heartbeat_interval/set`: the heartbeat of a server that started with none begins
     /// at once, and one that was on stops, with no restart; the interval the server reports follows.
     #[test]
+    #[ignore = "daily"]
     fn the_heartbeat_interval_can_change_while_the_server_runs() {
         let shared = shared();
         let address = listen_on(shared.clone(), settings());
@@ -1153,6 +1157,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn a_websocket_client_discovers_the_methods() {
         let address = listen(settings());
         let mut refused = std::net::TcpStream::connect(address).unwrap();
@@ -1174,6 +1179,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn over_tls_with_a_generated_keystore() {
         let dir =
             std::env::temp_dir().join(format!("horizon-management-wss-{}", std::process::id()));

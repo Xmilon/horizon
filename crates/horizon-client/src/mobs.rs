@@ -1,10 +1,8 @@
-//! Mobs: entity types (dimensions and default attributes exported from
-//! vanilla), models (vanilla `LayerDefinitions` baked part trees) and the
-//! `Mob` entity with vanilla's AI framework: goal and target selectors with
-//! priorities and control flags (`goals`), A* pathfinding with walk, swim,
-//! fly and amphibious node evaluators (`path`, `nav`), move/look/jump/body
-//! controls (`control`), `LivingEntity` physics (`living`) and per-species
-//! behaviour, models, animations and sounds.
+//! Mobs: entity types (dimensions and default attributes exported from vanilla), models (vanilla
+//! `LayerDefinitions` baked part trees) and the `Mob` entity with vanilla's AI framework: goal and
+//! target selectors with priorities and control flags (`goals`), A* pathfinding with walk, swim,
+//! fly and amphibious node evaluators (`path`, `nav`), move/look/jump/body controls (`control`),
+//! `LivingEntity` physics (`living`) and per-species behaviour, models, animations and sounds.
 pub mod ai;
 pub mod allay;
 pub mod ambient;
@@ -30,6 +28,7 @@ pub mod copper_golem;
 pub mod creaking;
 pub mod creaking_heart;
 pub mod cube;
+pub mod dab;
 pub mod data;
 pub mod dolphin;
 pub mod doors;
@@ -58,11 +57,14 @@ pub mod landing;
 pub mod leash;
 pub mod living;
 pub mod llama;
+mod mob_slot;
 pub mod mod_behaviors;
 pub mod model_layers;
 pub mod monster_brain;
 pub mod nautilus;
 pub mod neutral_anger;
+pub use mob_slot::MobSlot;
+mod push;
 mod type_attributes;
 pub use neutral_anger::{
     adopt_anger_end, anger_left, persistent_anger, resume_anger, settle_anger_end,
@@ -204,6 +206,8 @@ mod powder_snow_move_tests;
 
 #[derive(Clone, Debug)]
 pub struct MobType {
+    /// Resolved content renderer shadow; vanilla uses its normal table.
+    pub shadow: Option<(f32, f32)>,
     pub id: String,
     pub species: Species,
     pub width: f64,
@@ -274,18 +278,6 @@ impl MobType {
 
     pub fn layer(&self, key: &str) -> Option<&Arc<Part>> {
         self.layers.get(key)
-    }
-
-    /// The vanilla entity type whose class this type's mobs are: the type
-    /// itself, or the template a content mod's living type copies. What a
-    /// class saves and syncs of its own (`Zombie.addAdditionalSaveData`, its
-    /// entity data) follows it; the saved and sent id stays [`Self::id`].
-    pub fn class_id(&self) -> &str {
-        if self.id.starts_with("minecraft:") {
-            &self.id
-        } else {
-            species::vanilla_id(self.species)
-        }
     }
 }
 /// Each type's default attribute values, parsed exactly (serde_json's
@@ -503,6 +495,7 @@ impl MobTypes {
             out.insert(
                 id.clone(),
                 MobType {
+                    shadow: crate::shadows::content_shadow(t),
                     species: def.species,
                     item_stack_limits: item_stack_limits.clone(),
                     attribute_bounds,
@@ -1479,6 +1472,8 @@ pub struct Mob {
     /// `Entity.needsSync`: knocked back, pushed or jumped since its server
     /// last sent it, so the next update goes out at once.
     pub needs_sync: bool,
+    /// The mobs it pushed this turn, kept while the collision cap is on (`push::Cap`).
+    pub pushed: Vec<u32>,
     /// `Entity.syncPosition`: it bounced this tick (`restituteMovementAfterCollisions`),
     /// so its tracker keeps this position as a step of the next move it sends.
     pub sync_position: bool,
@@ -1535,6 +1530,10 @@ pub struct Mob {
     /// `Entity.firstTick`: no splash for a mob that appears in water.
     pub first_tick: bool,
     pub no_gravity: bool,
+    /// `Entity.noPhysics`: its moves pass through blocks. No save writes it
+    /// (`Entity.saveWithoutId` omits it) and no mob tick rewrites it except a
+    /// vex, which sets it only for the length of its own tick.
+    pub no_physics: bool,
     /// `Entity.mainSupportingBlockPos`: the block it stood on after its last
     /// move.
     pub supporting: Option<[i32; 3]>,
@@ -1616,11 +1615,6 @@ pub struct Mob {
     /// What `entity_size` answered for its pose and vanilla size (`EntityEvent.Size`):
     /// `dims` uses it while it holds.
     pub size_answer: Option<crate::pose::SizeAnswer>,
-}
-impl crate::entity_rules::EntityRules for Mob {
-    fn is_no_gravity(&self) -> bool {
-        self.no_gravity
-    }
 }
 /// A mannequin's `description` and `hide_description` (`Mannequin.updateDescription`):
 /// the default `entity.minecraft.mannequin.label`, none at all, or a component.
@@ -2611,148 +2605,8 @@ pub struct SpawnSetup {
     /// Whether to skip `finalizeSpawn`'s rolls (e.g. conversions or EntityType.create).
     pub skip_finalize: bool,
 }
-/// A snapshot of another entity mobs can see this tick.
-#[derive(Clone, Debug)]
-pub struct Seen {
-    pub in_water: bool,
-    pub playing_dead: bool,
-    pub last_damage: Option<Damage>,
-    pub id: u32,
-    pub species: Species,
-    pub position: Vec3,
-    pub bounds: Aabb,
-    pub eye_y: f64,
-    pub alive: bool,
-    /// `Entity.isInvulnerable` (the ability flag or the temporary window,
-    /// #916), which `asValidTarget` refuses a target by (#1175): a
-    /// valid-target rule the tick's view asks.
-    pub invulnerable: bool,
-    pub baby: bool,
-    pub in_love: bool,
-    pub tame: bool,
-    /// `AbstractHorse.isBred`: the `Bred` flag (`followMommy` reads it).
-    pub bred: bool,
-    /// A tamed animal's owner (`getOwner`).
-    pub owner: Option<[i32; 4]>,
-    /// `instanceof Enemy` (what the golems' target predicates test).
-    pub hostile: bool,
-    pub target: Option<Who>,
-    pub health: f32,
-    pub variant: u8,
-    /// A slime's or magma cube's size.
-    pub size: i32,
-    /// Dye colour (sheep).
-    pub color: u8,
-    /// A villager's claimed job site and bed.
-    pub job: Option<[i32; 3]>,
-    pub bed: Option<[i32; 3]>,
-    pub yaw: f32,
-    pub velocity: Vec3,
-    /// `Entity.getKnownSpeed`: what it moved in its last tick.
-    pub known_speed: Vec3,
-    /// Who holds this mob's lead.
-    pub leash: Option<leash::Holder>,
-    /// A llama's caravan head (its id plus one, 0 when not in a caravan).
-    pub caravan: u32,
-    /// A schooling fish's leader and how many fish follow it.
-    pub school: (Option<u32>, i32),
-    /// `MobExtra::section` and `section_seq`.
-    pub section: ([i32; 3], u64),
-    /// A wandering trader's despawn delay.
-    pub delay: i32,
-    /// `getLastHurtByMob` and its timestamp.
-    pub hurt_by: Option<(Who, i32)>,
-    /// `Entity.isInvisible`: the flag, or the invisibility effect.
-    pub invisible: bool,
-    /// What decides how visible it is to a mob that looks for it.
-    pub cover: visibility::Cover,
-    /// `PathfinderMob.isPanicking`: a running panic goal or the brain's
-    /// `IS_PANICKING` memory.
-    pub panicking: bool,
-    /// A raider in an active raid.
-    pub active_raid: bool,
-    /// A copper golem's `openedChestPos` (`ContainerUser.hasContainerOpen`).
-    pub opened_chest: Option<[i32; 3]>,
-    /// `isPassenger`.
-    pub passenger: bool,
-    /// The vehicle it rides (`getVehicle`): a mob's or a boat's id.
-    pub vehicle: Option<u32>,
-    /// `LivingEntity.getHitbox`: the box, cut below the seat when riding.
-    pub hitbox: Aabb,
-    /// `isPushable` and pushed by others (`Entity.push(Entity)` moves it).
-    pub pushable: bool,
-    /// A sleeping villager, wandering trader or fox vetoes its own `push(Entity)`.
-    pub sleeping: bool,
-    /// A cold strider (`Strider.isSuffocating`).
-    pub cold_strider: bool,
-    /// `MobCategory` (`monster`, `creature`, ...).
-    pub category: &'static str,
-    /// A villager's `POTENTIAL_JOB_SITE` and `MEETING_POINT`.
-    pub potential_job: Option<[i32; 3]>,
-    pub meeting: Option<[i32; 3]>,
-    /// A villager's vanilla profession projection, absent for unknown IDs.
-    pub profession: Option<u8>,
-    pub custom_profession: Option<Arc<str>>,
-    /// A llama's strength or a horse's markings.
-    pub secondary_variant: u8,
-    /// A villager's experience.
-    pub xp: i32,
-    /// What other villagers read of a villager's state and brain.
-    pub villager: Option<Arc<villager::Seen>>,
-    /// `MAX_HEALTH`, `JUMP_STRENGTH` and `MOVEMENT_SPEED` base values (a
-    /// horse's breeding stock).
-    pub stats: [f64; 3],
-    /// `Wolf.isInSittingPose`.
-    pub sitting: bool,
-    /// `Entity.isSilent`.
-    pub silent: bool,
-    /// `Cat.isLying` or `isRelaxStateOne`.
-    pub lying: bool,
-    /// `Entity.isVehicle` or `isPassenger`.
-    pub ridden: bool,
-    pub is_vehicle: bool,
-    /// `Attributes.KNOCKBACK_RESISTANCE`.
-    pub knockback_resistance: f64,
-    /// The active effects, without namespace (`slowness`, `poison`...).
-    pub effects: Vec<&'static str>,
-    /// A piglin's `HUNTED_RECENTLY` memory.
-    pub hunted_recently: bool,
-    /// A piglin's `HURT_BY` memory.
-    pub hurt_recently: bool,
-    /// `Hoglin.canBeHunted`: an adult hoglin without `CannotBeHunted`.
-    pub huntable: bool,
-    /// A happy ghast's `isOnStillTimeout` (a player on its back holds it).
-    pub still: bool,
-    /// `Entity.isVehicle`: something rides it.
-    pub carrying: bool,
-}
-impl Seen {
-    /// Whether `canBeCollidedWith` can ever hold for this kind: the slots
-    /// [`MobWorld::others_solid`] lists.
-    pub fn may_block_mobs(&self) -> bool {
-        matches!(self.species, Species::Shulker | Species::HappyGhast)
-    }
-    /// `canBeCollidedWith(mover)` for a mob of species `mover` moving into
-    /// it (`EntityGetter.getEntityCollisions`): a living shulker
-    /// (`Shulker`), or an adult happy ghast held still, or carrying someone
-    /// when the mover is a happy ghast too (`HappyGhast`). Every other mob
-    /// keeps `Entity`'s false.
-    pub fn blocks_mob(&self, mover: Species) -> bool {
-        match self.species {
-            Species::Shulker => self.alive,
-            Species::HappyGhast => {
-                self.alive
-                    && !self.baby
-                    && (self.still || (self.carrying && mover == Species::HappyGhast))
-            }
-            _ => false,
-        }
-    }
-    /// `LivingEntity.hasEffect`, by id without namespace.
-    pub fn has_effect(&self, effect: &str) -> bool {
-        self.effects.contains(&effect)
-    }
-}
+include!("mobs/seen.rs");
+
 impl Mob {
     /// The name used by command replies: CustomName takes precedence over the type.
     pub fn command_name(&self) -> crate::text::Text {
@@ -2862,6 +2716,7 @@ impl Mob {
         let m = self;
         let villager = m.species() == Species::Villager;
         Seen {
+            kind: Arc::clone(&m.kind),
             in_water: self.fluids.in_water,
             playing_dead: axolotl::is_playing_dead(self),
             last_damage: self.last_damage.map(|(d, _)| d),
@@ -2931,6 +2786,7 @@ impl Mob {
             is_vehicle: equine::is_vehicle(m),
             still: m.species() == Species::HappyGhast && happy_ghast::on_still_timeout(m),
             carrying: m.rider.is_some() || m.extra.rider.is_some(),
+            collisions: 0,
             knockback_resistance: m.attrs.knockback_resistance,
             effects: m
                 .extra
@@ -3328,9 +3184,9 @@ pub trait LiveMobs {
     /// Visit each mob in the disjoint loan, without allocating a snapshot.
     fn for_each(&self, visitor: &mut dyn FnMut(&Mob));
 }
-
 #[derive(Clone)]
 pub struct MobWorld<'a> {
+    pub mob_maps: &'a crate::neoforge_mob_maps::NeoForgeMobMaps,
     pub professions: &'a villager::ResolvedProfessions,
     /// What the motion value hooks are given: the loop context of the side that
     /// ticks these mobs.
@@ -3442,6 +3298,7 @@ pub struct MobWorld<'a> {
     /// The level's world border, whose walls stop a mob's moves
     /// (`Entity.collectColliders`); None: nothing stops them there.
     pub border: Option<&'a horizon_core::geometry::border::BorderGeometry>,
+    pub section_writer: Option<living::section_writes::Observer>,
 }
 /// `MobEffectInstance.tickServer` for a content mod's effect: its
 /// `shouldApplyEffectTickThisTick` and `applyEffectTick`, which the game's
@@ -3719,6 +3576,7 @@ impl Mob {
             horizontal_collision: false,
             vertical_collision_below: false,
             needs_sync: false,
+            pushed: Vec::new(),
             sync_position: false,
             gear_knockback_resistance: None,
             hurt_time: 0,
@@ -3746,6 +3604,7 @@ impl Mob {
             was_eye_in_water: false,
             first_tick: true,
             no_gravity: false,
+            no_physics: false,
             supporting: None,
             standing_on: None,
             no_ai: false,
@@ -4267,10 +4126,7 @@ impl Mob {
         if !absorbed && dealt != 0.0 {
             self.record_damage(source, dealt);
         }
-        if through != 0.0 {
-            container.record_health_damage(through);
-            level.damage_post(crate::health::Hurting::Mob(self, &source), &container);
-        }
+        container.record_health_damage(through);
         // LivingEntity.hurtArmor: `Horse` is the only mob that overrides it, and
         // it hands `doHurtEquipment` the body slot alone. A wolf's armour has
         // its own rule (`Wolf.actuallyHurt`, `hurt_wolf_armor`) and a player's
@@ -4379,6 +4235,8 @@ impl Mob {
                 self.outbox.push(MobEvent::Infested { at, velocities });
             }
         }
+        // The last of `LivingEntity.hurtServer`: `LivingDamageEvent.Post`, health taken or not.
+        level.damage_post(crate::health::Hurting::Mob(self, &source), &container);
         // Shulker.hurtServer: the low-health teleport roll after `super.hurtServer`.
         if success && self.species() == Species::Shulker {
             shulker::after_hurt(self);
@@ -5409,6 +5267,7 @@ pub(crate) mod sensor_scan_tests {
 
     pub(crate) fn kind() -> Arc<MobType> {
         Arc::new(MobType {
+            shadow: None,
             id: "minecraft:cow".into(),
             species: Species::Cow,
             width: 0.9,

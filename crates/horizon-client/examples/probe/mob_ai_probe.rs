@@ -1196,6 +1196,7 @@ pub fn main() -> horizon_client::Result<()> {
             };
             ($snapshot:expr, $grid:expr) => {
                 MobWorld {
+                    mob_maps: horizon_client::neoforge_mob_maps::NeoForgeMobMaps::vanilla(),
                     goal_host: None,
                     teams: Default::default(),
                     professions: horizon_client::mobs::villager::profession_table(),
@@ -1253,6 +1254,7 @@ pub fn main() -> horizon_client::Result<()> {
                     asks_living_destroy_block: false,
                     asks_baby_spawn: false,
                     border: None,
+                    section_writer: None,
                 }
             };
         }

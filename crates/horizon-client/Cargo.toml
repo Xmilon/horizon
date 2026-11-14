@@ -98,6 +98,9 @@ ureq = { version = "2", default-features = false, features = ["tls"] }
 unicode-bidi = "0.3.18"
 # `LevelStorageAccess.estimateDiskSpace`: usable disk space, without unsafe code on Windows.
 fs4 = { version = "1.1.0", default-features = false, features = ["sync"] }
+# Mod file roots are descriptor-bound: no symlink race can leave a mod's area.
+cap-std = "3"
+cap-fs-ext = "3"
 
 [target.'cfg(unix)'.dependencies]
 # The server thread's CPU time per tick (`HORIZON_SPIKES`, spans.rs).
@@ -146,8 +149,8 @@ friends = ["dep:horizon-friends"]
 # Records the call sites of mob random draws (`mob_ai_probe` traces).
 rng-trace = ["horizon-core/rng-trace", "horizon-client-lib/rng-trace"]
 # Rust's allocations go to the system heap instead of mimalloc, where heap profilers that replace
-# malloc (heaptrack, valgrind's massif) see them. Also the Windows prebuilt archive's allocator
-# (tools/prebuilt_game.py, #2394): there std's DLL keeps its own allocator. Otherwise mimalloc is faster.
+# malloc (heaptrack, valgrind's massif) see them. Also the Windows and macOS prebuilt archives' allocator
+# (tools/prebuilt_game.py, #2394, #3877): there std's shared library keeps its own allocator. Otherwise mimalloc is faster.
 system-allocator = ["horizon-threads/system-allocator"]
 # mimalloc that counts each thread's allocations and frees (`stats` replies with `alloc`).
 alloc-count = ["horizon-threads/alloc-count"]
@@ -187,6 +190,7 @@ tempfile = "3"
 horizon-mod-runtime = { path = "../horizon-mod-runtime", features = ["test-work-count"] }
 horizon-threads = { path = "../horizon-threads", features = ["test-allocation-count"] }
 mod_platform = { package = "horizon-mod-api", path = "../horizon-mod-api", features = ["testing"] }
+mod_api = { package = "horizon-mod-vocab", path = "../horizon-mod-vocab", features = ["testing"] }
 horizon-client-render = { path = "../horizon-client-render", features = ["test-support"] }
 horizon-items = { path = "../horizon-items", features = ["test-support"] }
 horizon-perf = { path = "../horizon-perf" }

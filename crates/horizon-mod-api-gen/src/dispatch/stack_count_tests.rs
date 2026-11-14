@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+#[ignore = "daily"]
 fn only_container_loot_filled_changes_when_stack_count_marker_is_removed() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)

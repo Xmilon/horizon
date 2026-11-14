@@ -12,7 +12,7 @@ pub(in crate::game) use fire::{
     BlockDropsCall, BlockScreenEffectDrawCall, ConnectsToCall, EntityChangeBlockPreCall,
     ItemAfterVerticalCollisionCall, UpdateShapeCall,
 };
-use mod_api::{BlockEntityDataSource, BlockEntityRef};
+use mod_api::{BlockEntityDataSource, BlockEntityRef, ClockAdjustment};
 
 use super::native_data_maps::DataMapType;
 use super::{
@@ -80,7 +80,8 @@ use mod_api::{
     LayerDefinition, LifecycleContext, LivingRef, LoadConditions, NoteBlockChange,
     ParticleProviders, PathComputationType, Placement, PlayerRef, PoiTypeExtensions,
     RecipeBookCategory, ScreenId, ScreenOpening, ScreenshotImage, ServerReloadListeners,
-    ServerTickPhase, TicketController, ToolUse, VillagerProfessions, WorldPhase,
+    ServerTickPhase, SpecialModelRenderers, TicketController, ToolUse, VillagerProfessions,
+    WorldPhase,
 };
 use mod_api::{
     ActiveEffect, AttachmentStore, BlockClick, BlockUpdateFlags, BonemealSource, ChunkRef,

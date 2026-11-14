@@ -100,6 +100,9 @@ impl Game<'_> {
         if self.screen == screen && owner.is_none() {
             return;
         }
+        if self.screen == Screen::Options {
+            self.ui.options.discard_draw();
+        }
         self.apply_screen_with_mod_book(screen, owner);
     }
     /// Whether a change of screen asks the screen hooks: a mod listens to
@@ -510,7 +513,7 @@ impl OpenNativeScreen {
     /// block its slots are under (a server without `horizon:menu_extra`).
     fn pos(&self) -> Option<[i32; 3]> {
         match &self.extra {
-            Some(extra) => Some(extra.pos),
+            Some(extra) => extra.pos,
             None if self.key.0 != i32::MIN => Some([self.key.0, self.key.1, self.key.2]),
             None => None,
         }
@@ -833,26 +836,14 @@ impl Game<'_> {
         .into_iter()
         .any(mod_api::__private::listened)
     }
-    /// `Render.Pre`, then `Render.Background` unless it cancelled: whether the
-    /// screen draws.
+    /// `Render.Pre`: whether the screen draws. The screen owns its later phases.
     pub(super) fn screen_render_begin(&self, draw: &mut HudBatch, screen: &ScreenView<'_>) -> bool {
         let mut canceled = false;
         self.native_screen_render_pre(draw, screen, &mut canceled);
-        if !canceled {
-            self.native_screen_render_background(draw, screen);
-        }
         !canceled
     }
-    /// `Render.Foreground` when the screen `drawn`, then `Render.Post`.
-    pub(super) fn screen_render_end(
-        &self,
-        draw: &mut HudBatch,
-        screen: &ScreenView<'_>,
-        drawn: bool,
-    ) {
-        if drawn {
-            self.native_screen_render_foreground(draw, screen);
-        }
+    /// `Render.Post`, including when Pre cancelled the screen's drawing.
+    pub(super) fn screen_render_end(&self, draw: &mut HudBatch, screen: &ScreenView<'_>) {
         self.native_screen_render_post(draw, screen);
     }
     /// The open screen as a native mod sees it (`ScreenView`): its id,
@@ -2324,7 +2315,7 @@ impl Game<'_> {
 
 /// A mob's kind as the hook points name it (`minecraft:zombie`).
 pub(super) fn mob_kind(mob: &horizon_client::mobs::Mob) -> String {
-    ["minecraft:", mob.kind.id.trim_start_matches("minecraft:")].concat()
+    crate::game::native_namespaced_id::namespaced(&mob.kind.id)
 }
 
 /// The level behaviour's answer, or `None` to try `useWithoutItem`.
@@ -3075,6 +3066,7 @@ impl Game<'_> {
             }
         }
         self.native_screen_draw(&s.block, &s.data, batch, [ox, oy]);
+        self.draw_screen_phase(batch, horizon_client::screen_draw::RenderPhase::Background);
         if s.screen.own_labels {
             return true;
         }
@@ -4184,10 +4176,7 @@ mod tests {
                 jars: Vec::new(),
             }],
             &root,
-            &horizon_mod_package::enabled::EnabledMods::new([(
-                "ruby".into(),
-                horizon_mod_package::Side::Both,
-            )]),
+            &horizon_mod_package::enabled::EnabledMods::new([("ruby".into(), mod_api::Side::Both)]),
         )
         .unwrap();
         let settings = Settings::default();

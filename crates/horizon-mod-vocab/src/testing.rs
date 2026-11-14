@@ -200,13 +200,19 @@ pub struct FakeHost {
     pub commands: FakeCommands,
     /// The message service.
     pub messages: FakeMessages,
-    /// The transaction journal over the players and the level.
-    pub journal: FakeJournal<(FakePlayers, FakeLevel)>,
+    /// The transaction journal over the players, the level and the holders' attachments.
+    pub journal: FakeJournal<(
+        FakePlayers,
+        FakeLevel,
+        horizon_mod_runtime::attachments::Attachments,
+    )>,
     /// The sounds played in the level, in order. Like the game's, they are sent as they are
     /// played: an aborted transaction does not take them back.
     pub sounds: Vec<FakeSound>,
     /// The game events sent in the level, in order, kept as the sounds are.
     pub game_events: Vec<FakeGameEvent>,
+    /// The holders' attachments: a lone map answers for any holder.
+    pub attachments: horizon_mod_runtime::attachments::Attachments,
 }
 
 impl FakeHost {
@@ -337,6 +343,7 @@ crate::impl_host_areas!(
         entities,
         items,
         levels,
+        mod_state,
         players,
         tags
     )
@@ -347,14 +354,22 @@ impl ServerHost for FakeHost {
         Some(BackendMutRef::of(self))
     }
 }
+impl crate::host::mod_state::ModStateHost for FakeHost {
+    fn attachments(&mut self) -> &mut dyn mod_api::AttachmentStore {
+        &mut self.attachments
+    }
+}
 impl crate::prelude::ModStateServerHost for FakeHost {
     fn transaction_open(&mut self) -> TransactionSeal {
-        self.journal
-            .open((self.players.clone(), self.level.clone()))
+        self.journal.open((
+            self.players.clone(),
+            self.level.clone(),
+            self.attachments.clone(),
+        ))
     }
     fn transaction_close(&mut self, seal: &TransactionSeal, commit: bool) {
-        if let Some((players, level)) = self.journal.close(seal, commit) {
-            (self.players, self.level) = (players, level);
+        if let Some((players, level, attachments)) = self.journal.close(seal, commit) {
+            (self.players, self.level, self.attachments) = (players, level, attachments);
         }
         // The outermost commit plays what waited for it.
         if self.journal.depth() == 0 {
@@ -487,6 +502,10 @@ impl crate::prelude::ItemsBackend for FakeHost {
     fn entity_equipment_size(&self, _: u32) -> Option<usize> {
         None
     }
+    fn item_bundle_slots(&self, _: &ItemStack) -> Option<Vec<Option<ItemStack>>> {
+        // The fake registry models declared containers, not game bundle components.
+        None
+    }
     fn item_container_slots(&self, stack: &ItemStack) -> Option<Vec<Option<ItemStack>>> {
         self.registries.container_slots(stack)
     }
@@ -551,6 +570,13 @@ impl crate::prelude::PlayersBackend for FakeHost {
     fn player_dimension(&self, player: PlayerRef) -> Option<crate::Identifier> {
         let level = self.player_level(player)?;
         crate::Identifier::parse(level.dimension_id()).ok()
+    }
+    fn player_has_infinite_materials(&self, player: PlayerRef) -> Option<bool> {
+        Some(self.players.get(player.uuid())?.infinite_materials)
+    }
+    fn player_inventory(&self, player: PlayerRef) -> Option<Vec<ItemStack>> {
+        let slots = &self.players.get(player.uuid())?.slots;
+        Some(slots.range(0..36).map(|(_, stack)| stack.clone()).collect())
     }
 }
 crate::impl_backend_areas!(

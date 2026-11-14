@@ -129,7 +129,7 @@ class Visibility(unittest.TestCase):
         self.assertNotIn("private unexpected payload", log.getvalue())
 
     def test_data_end_memory_telemetry_is_bounded_best_effort(self):
-        steps = yaml.safe_load((ROOT / '.github/workflows/dyna-ci.yml').read_text())["jobs"]["ignored-tests-shards"]["steps"]
+        steps = yaml.safe_load((ROOT / '.github/workflows/ignored-tests.yml').read_text())["jobs"]["ignored-tests-shards"]["steps"]
         step = next(s for s in steps if s.get("name") == "Record data-leg end and compiler cache")
         self.assertEqual(step["if"], "always()")
         script = step["run"]
@@ -157,24 +157,19 @@ class Visibility(unittest.TestCase):
         steps = yaml.safe_load((ROOT / '.github/workflows/dyna-ci.yml').read_text())["jobs"]["lint"]["steps"]
         fmt = next(s for s in steps if s.get("id") == "formatting")
         native = next(s for s in steps if s.get("id") == "native-lint")
-        final = next(s for s in steps if s.get("name") == "Propagate formatting failure")
-        self.assertTrue(fmt["continue-on-error"])
+        final = next(s for s in steps if s.get("name") == "Summarize failed gate steps")
+        self.assertNotIn("continue-on-error", fmt)
         self.assertNotIn("clippy", fmt["run"])
         self.assertIn("clippy", native["run"])
         self.assertNotIn("continue-on-error", native)
-        for name in ("Lint native targets", "Lint the server build without sound or controllers", "The machine sample builds against this API", "The mod API builds for wasm32"):
+        for name in ("Lint native targets", "Lint the server build without sound or controllers", "The mod API builds for wasm32"):
             step = next(s for s in steps if s.get("name") == name)
             self.assertLess(steps.index(fmt), steps.index(step))
             self.assertLess(steps.index(step), steps.index(final))
             self.assertNotIn("formatting", step.get("if", ""))
-        self.assertIn("always()", final["if"])
-        self.assertIn("steps.formatting.outcome == 'failure'", final["if"])
-        self.assertIn("exit 1", final["run"])
-        # Actions treats continue-on-error failure as a successful conclusion for
-        # subsequent default success() steps, but retains the original outcome.
-        for format_outcome in ("success", "failure"):
-            conclusion = "success" if fmt["continue-on-error"] else format_outcome
-            later_builds_run = conclusion == "success"
-            final_runs = format_outcome == "failure"  # parsed always()/outcome predicate above
-            self.assertTrue(later_builds_run)
-            self.assertEqual(final_runs, format_outcome == "failure")
+        self.assertIn("failure()", final["if"])
+        self.assertIn("!cancelled()", final["if"])
+        for name in ("native-lint", "server-lint"):
+            step = next(s for s in steps if s.get("id") == name)
+            self.assertIn("!cancelled()", step["if"])
+            self.assertNotIn("success()", step["if"])

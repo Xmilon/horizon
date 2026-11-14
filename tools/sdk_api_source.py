@@ -4,6 +4,7 @@ a mod builds against them with no game source and no generator run.
 
     python3 tools/sdk_api_source.py build OUT    # write the API source for this checkout's commit into OUT
     python3 tools/sdk_api_source.py check OUT    # check the starter mod against OUT alone, host and wasm32
+    python3 tools/sdk_api_source.py archive OUT ARCHIVE  # OUT as the SDK's api-source.tar.xz (its root is OUT's)
 
 `build` takes the generated files from the in-tree build scripts' own output (`cargo check` for the host, for
 wasm32 and with every feature the API source keeps) and refuses when they differ between those builds. Each crate
@@ -451,11 +452,12 @@ def build(out: Path) -> dict[str, bytes]:
     game = target_features(tree(workspace_root, prebuilt_game.GAME))
     files = collect(crates, features, workspace_root)
     tracked = set(filter(None, run(["git", "ls-files", "-z"], cwd=workspace_root).split("\0")))
+    # The whole source tree, so no file a build on another host or profile reads is left behind: the commit's own
+    # bytes, the same on every OS whatever line endings the working tree has.
+    commit = run(["git", "rev-parse", "HEAD"], cwd=workspace_root).strip()
+    sources = tuple(f"{crate.directory}/src" for crate in crates)
+    files.update(prebuilt_game.tracked_blobs(workspace_root, commit, sources))
     for crate in crates:
-        # The whole source tree, so no file a build on another host or profile reads is left behind.
-        for path in sorted(tracked):
-            if path.startswith(f"{crate.directory}/src/"):
-                files[path] = (workspace_root / path).read_bytes()
         files[f"{crate.directory}/Cargo.toml"] = normalise_manifest(
             manifests[crate.name], workspace, crate, by_name, features[crate.name],
             requested_features(metadata, crate, manifests[crate.name], game)).encode()
@@ -592,6 +594,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("build").add_argument("out", type=Path)
+    archive_parser = commands.add_parser("archive")
+    archive_parser.add_argument("out", type=Path)
+    archive_parser.add_argument("archive", type=Path)
     check_parser = commands.add_parser("check")
     check_parser.add_argument("out", type=Path)
     check_parser.add_argument("--scratch", type=Path, help="default: the target folder's sdk-api-source-check")
@@ -599,6 +604,9 @@ def main() -> None:
     try:
         if args.command == "build":
             build(args.out.resolve())
+        elif args.command == "archive":
+            # The package's own archive form: a mod's `.horizon/sdk/api` is this folder unpacked.
+            prebuilt_game.tar_xz(args.out, prebuilt_game.tree(args.out), args.archive)
         else:
             target = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target"))
             check(args.out.resolve(), (args.scratch or target / "sdk-api-source-check").resolve())

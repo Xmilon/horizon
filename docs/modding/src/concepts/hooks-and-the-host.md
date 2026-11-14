@@ -23,6 +23,22 @@ What a hook's return value means depends on its kind:
 
 A hook with no receiver gets no `Host`.
 
+## Explosion membership
+
+`explosion_detonate` version 2 exposes mutable `blocks` and `entities` lists
+before an explosion applies its effects. The initial entity query excludes the
+exploding source. Remove entries to spare them, or add live handles to make them
+eligible; additions still obey normal distance, exposure and immunity checks.
+Stale or invalid handles are dropped and repeated IDs are visited once. A mod
+can explicitly add a valid source handle back; per-kind immunity still applies.
+
+The final list controls membership, not global effect ordering. Its order is
+used for ordinary storage targets. Crystals/dragon and players retain their
+earlier separate passes, while frames and other decorations run last in storage
+order. Block positions are shuffled before destruction. An empty entity list
+spares direct entity effects, not indirect consequences of destroying support
+blocks. With no subscriber the game does not build a target list.
+
 ## Saving and game events
 
 To save from inside a hook, use `level.request_save(host)` so the save runs at the next settled
@@ -130,6 +146,13 @@ so check `is_loaded` first. It also answers tag and fluid questions without a `H
 `state_fluid_state(state)` and `fluid_in_tag(fluid_name, tag)`. Fluid reads return `FluidState` with a
 `FluidKey`, amount, falling flag and engine-derived source flag; `is_empty()` and `is_source()` report
 those states without a registry lookup. `block_state_id(name)` parses a block and properties, and `block_state_default(block)` gives a block's default state, as on `Host`; both return `None` for invalid input or unavailable context. Tag reads are `None` when authoritative tags are unavailable, including on a client before its server's tags are applied. For item membership and member lists, use `Host::tags()`: resolve a `TagKey` with `Tags::key`, then call `Tags::is_in_tag`, `Tags::items` or `Tags::fluids`. Membership reads return `None` on clients until server-sent tags are applied, which `tags_updated` announces; they never substitute local resource-pack tags.
+`default_components_bound` precedes `tags_updated` after item defaults are published and readable.
+Both notices carry `TagsUpdateCause`: `ServerDataLoad { reload }` for the server's initial data
+load or reload, and `ClientPacketReceived { integrated_server }` for a client's applied tags.
+`should_update_static_data()` is true on the server and a remote client, but false on an
+integrated client, whose server already updated the shared static data. Installing client tags
+announces the bound defaults; it does not rebind those defaults.
+
 `LevelHost` has no random access: a draw from a read-only hook inside a level write would shift the level's random sequence away from vanilla's order. A hook that may draw is given a `LevelRandomHost`.
 `LevelRandomHost` provides vanilla's `Level.random` so
 mod draws come in vanilla's order. `LevelTicksHost` adds scheduling through

@@ -24,6 +24,23 @@ has no such rule: Horizon adds it.
 
 The `ClientHost::camera()` helper returns the most recently extracted world frame's camera, or none before one exists. Its position, interpolated eye height, partial tick, angles, final FOV, near/far planes and dimension accompany column-major view and projection matrices. The view is camera-relative and includes bob and spin; projection uses reversed Z. Earlier callbacks in a frame can see the previous frame. `block_collision(pos)` returns block-local `[min_x, min_y, min_z, max_x, max_y, max_z]` boxes with an empty collision context; unloaded blocks and collision errors give no boxes.
 
+`ClientHost::project(at)` places a world point on this frame's screen, as vanilla's
+`GameRenderer.projectPointToScreen`: normalised device x and y (-1 to 1, x right, y up) and a
+reversed depth z. A HUD or screen hook turns it into GUI pixels with the `DrawContext`'s size
+`[w, h]`: `((x + 1) / 2 * w, (1 - y) / 2 * h)`. It is `None` for a point behind the camera or a
+non-finite one (vanilla returns a mirrored point there), outside a world, before extraction and between render frames. It is supported in GUI, screen
+and world drawing callbacks after camera extraction, not setup or tick callbacks.
+
+`ClientHost::set_local_rotation(yaw, pitch)` turns the local player's view, as vanilla's `setYRot`
+and `setXRot` store it: yaw as given (not wrapped; the server wraps it), pitch `% 360` then clamped to
+-90..90. The previous-frame angles move by the same amount, so the view doesn't jump. The call sends no
+packet. The game's own player sync at the end of the client tick sends the look in its one move packet,
+of the kind vanilla picks, and only while the camera is the player (a rider sends the rotation-only
+packet). Several calls in one tick send the last values once, and a call after the sync goes out the
+next tick. NaN or infinity returns `NotFinite` and changes nothing; outside a world the call returns
+`NoWorld`. The server sees an ordinary client look, at tick granularity, as from a mouse.
+`calculate_player_turn` changes how far the mouse turns the view; `set_local_rotation` sets it directly.
+
 `ClientHost::set_camera_type(type)` is a queued client-only effect and takes `&self`, so
 shared callbacks such as `camera_pose` can request a perspective. `camera_type()` reports
 the latest request immediately; several requests coalesce to the last one. Requests before
@@ -32,6 +49,26 @@ The pose hook runs only once: its explicit position or angle overrides survive a
 vanilla camera. Requests from later render callbacks apply at the next frame's extraction.
 Setting a type never emits `camera_type_cycle`; F5 alone cycles, and its final event choice
 wins over requests made inside the cycle callback.
+
+## Viewed levels
+
+A server can open other levels for a client to view besides the one the player is in (`horizon:levels`,
+as Immersive Portals' `ClientWorldLoader` keeps a `ClientLevel` per dimension). On a client,
+`host.level("minecraft:the_nether")` also returns a handle for each such level while the server keeps it
+open. Its block reads read the viewed level's own world, never the player's: `block_state`, `block`,
+`block_property`, `clip`, `collision_boxes`, `has_collisions`, and the fluid reads built on
+`block_state` (`fluid_shape`, `fluid_height`, `fluid_height_for_camera`, `fluid_can_be_replaced_with`).
+So a mod can aim a ray or collide a box through a portal. They never write and never load a column: a
+column the client doesn't hold is `None`, for a collision box as soon as its walk reaches one. `clip`
+keeps its traversal limit and `collision_boxes` its cell cap.
+
+The handle is `None` while the server has the level closed. If the server closes the level and opens it
+again within the same client level, the old handle reads again. A login, a reconfiguration or a respawn
+into another level replaces the client level: the old handle stays stale for good, and the mod calls
+`host.level` again once the server reopens the level. A respawn in the same level drops the viewed
+levels too, but keeps the client level, so the old handle reads again after the reopen. Writes,
+server-only reads, the other level reads and the entity reads (`entities_in`) refuse a viewed level.
+Native and wasm mods use the same handle methods.
 
 ## Crosshair reads
 
@@ -47,6 +84,25 @@ when the client level is replaced or the client disconnects; a same-level respaw
 keeps its epoch. This supplies identity, not client entity reads: the server-only
 entity data methods reject client handles. Unlike `view_hit` and `raycast`, this does not find blocks
 in distant terrain or return a block behind a targeted entity.
+
+## Local player reads
+
+These read the local player as the client sees it. They take no mod-controlled numbers and send nothing.
+
+- `ClientHost::client_session().client_latency()` is the player's latency in milliseconds as the
+  tab list draws it (`PlayerInfo.getLatency`): the server's smoothed keep-alive average, refreshed by
+  the server's own broadcast. It reads 0 before the server's first measurement, as vanilla does, and
+  `None` outside a world.
+- `ClientHost::local_item_use()` is the item in use: `ItemUse { hand, ticks_used, ticks_remaining }`
+  (`isUsingItem`, `getUsedItemHand`, `getTicksUsingItem`, `getUseItemRemainingTicks`).
+  `ticks_used + ticks_remaining` is the use duration. It is `None` when no item is in use or no world
+  is open.
+- `ClientHost::hover_name(&stack)` is `ItemStack.getHoverName()` as plain text: the custom name, else
+  a written book's non-blank title, else the item's name in the client's language, without rarity
+  colour or italics. An invalid stack reads an empty string.
+- Reach is `targeting()` (below), which comes from the interaction-range attributes with the server's
+  and equipment's modifiers. Menu slot numbers are `Slot.index`, the position in the menu's slot list
+  that `menu_slot` and `menu_slot_count` take; `menu_slot_backing` gives the index in the backing container.
 
 ## Combat targeting
 

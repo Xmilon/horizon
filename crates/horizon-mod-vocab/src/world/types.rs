@@ -290,6 +290,9 @@ pub struct PlayerRespawnConfig {
 pub struct LevelRef {
     pub(crate) epoch: WorldEpoch,
     pub(crate) dimension: DimensionKey,
+    /// Which open of a runtime level this names: 0 for a level every world has, the number the
+    /// host gave one open of a level a mod created at run time.
+    pub(crate) generation: u32,
 }
 
 impl LevelRef {
@@ -297,7 +300,27 @@ impl LevelRef {
     // hidden: a game-side helper, not part of the mod surface
     #[doc(hidden)]
     pub fn new(epoch: WorldEpoch, dimension: DimensionKey) -> Self {
-        Self { epoch, dimension }
+        Self {
+            epoch,
+            dimension,
+            generation: 0,
+        }
+    }
+    /// Create a handle for one open of a runtime level.
+    // hidden: a game-side helper, not part of the mod surface
+    #[doc(hidden)]
+    pub fn with_generation(epoch: WorldEpoch, dimension: DimensionKey, generation: u32) -> Self {
+        Self {
+            epoch,
+            dimension,
+            generation,
+        }
+    }
+    /// The open of a runtime level the handle names; 0 for a level every world has.
+    // hidden: a game-side helper; a handle of an earlier open reads as stale
+    #[doc(hidden)]
+    pub fn generation(self) -> u32 {
+        self.generation
     }
     /// The level's dimension. `level.dimension().id(host)` gives its name.
     pub fn dimension(self) -> DimensionKey {
@@ -533,8 +556,15 @@ pub enum ExplosionInteraction {
     /// Blocks break and drop by the `block_explosion_drop_decay` rule (`BLOCK`).
     #[default]
     Block,
+    /// Blocks break and drop by the `mob_explosion_drop_decay` rule when the
+    /// source may grief (its `entity_mob_griefing` answer; with no source, the
+    /// `mob_griefing` rule), and stay when it may not (`MOB`).
+    Mob,
     /// Blocks break and drop by the `tnt_explosion_drop_decay` rule (`TNT`).
     Tnt,
+    /// No block breaks; buttons, levers, doors, trapdoors, fence gates, bells
+    /// and candles react as to a wind charge's burst (`TRIGGER`).
+    Trigger,
 }
 
 /// What made a `tags_updated` notice fire (`TagsUpdatedEvent`'s two subclasses).

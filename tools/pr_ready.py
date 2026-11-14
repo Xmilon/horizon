@@ -72,9 +72,6 @@ state="$HOME/.cache/pr-ready/$(basename "$PWD")"
 mkdir -p "$state/parity-runner" "$state/parity-target"
 ln -sfn "$state/parity-runner" .local/parity-runner && ln -sfn "$state/parity-target" .local/parity-target""",
 }
-DISCOVERED_RUST = ("crates/horizon-mod-wasm/wire-loopback/tests/wire_loopback/*.rs",
-                   "crates/horizon-mod-api-gen/dispatch-tests/src/fixtures/*.rs",
-                   "crates/horizon-mod-api-gen/dispatch-tests/src/fixtures/*/*.rs")
 ROOT_RUST = {"Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "rustfmt.toml", "clippy.toml"}
 LAUNCHER_FEATURES = """export features=""
 if [ "$(uname)" = Darwin ] && ! xcrun metal --version > /dev/null 2>&1; then features="--features gpui_platform/runtime_shaders"; fi
@@ -211,6 +208,12 @@ def git(*arguments):
     return subprocess.run(["git", *arguments], cwd=ROOT, capture_output=True, check=True).stdout.decode("utf-8")
 
 
+def shallow_clone():
+    """A checkout without full history (outside a repository, `git` fails and this says no)."""
+    return subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=ROOT, capture_output=True,
+                          text=True).stdout.strip() == "true"
+
+
 def line_counts(base, changed):
     """Lines added and removed in each changed path since base, untracked files included: {path: (added, removed)}."""
     counts = {}
@@ -305,10 +308,9 @@ def parity_summary(output):
     return text
 
 
-# CI's verify job (.github/workflows/ci.yml): clippy over the whole workspace, and over the server build (the game
-# without sound or controllers).
-CI_CLIPPY = "cargo clippy --workspace --all-targets --locked -- -D warnings"
-CI_CLIPPY_SERVER = "cargo clippy -p horizon-client -p horizon-game -p horizon-mod-host --all-targets --locked --no-default-features -- -D warnings"
+# CI's lint job (.github/workflows/dyna-ci.yml): collect warnings across the whole graph before rejecting them.
+CI_CLIPPY = "python3 tools/ci/check_warnings.py cargo clippy --keep-going --workspace --all-targets --locked"
+CI_CLIPPY_SERVER = "python3 tools/ci/check_warnings.py cargo clippy --keep-going -p horizon-client -p horizon-game -p horizon-mod-host --all-targets --locked --no-default-features"
 
 
 # CI installs the current stable each run (rustup toolchain install stable), and Rust ships one every six weeks
@@ -386,7 +388,7 @@ def plan(args, base, changed, crates_of, libraries, dependencies):
     clippy_crates = dependent_crates(crates, dependencies)
     clippy = CI_CLIPPY
     if clippy_crates is None or "horizon-client" in clippy_crates:
-        clippy += f" && {CI_CLIPPY_SERVER}"
+        clippy = f'status=0\n{CI_CLIPPY} || status=$?\n{CI_CLIPPY_SERVER} || status=$?\nexit "$status"'
     test_skip = None if crates is None or crates else "no crate touched"
     doc_crates = sorted(libraries if crates is None else libraries.intersection(crates))
     doc_selection = "--workspace" if crates is None else " ".join(f"-p {shlex.quote(c)}" for c in doc_crates)
@@ -398,16 +400,17 @@ def plan(args, base, changed, crates_of, libraries, dependencies):
         # docs/layers.md: a crate depends only on its own layer or a lower one, and the exceptions only shrink.
         Step("Layers", f"python3 tools/check_layers.py --base {shlex.quote(base)}", where="here"),
         Step("Addresses", f"python3 tools/check_addresses.py --base {shlex.quote(base)}", where="here"),
-        Step("File size", f"python3 tools/check_file_size.py --base {shlex.quote(base)}", where="here"),
+        # The provenance check needs full history and fails closed on a shallow clone; CI checks a full one.
+        Step("File size", f"python3 tools/check_file_size.py --base {shlex.quote(base)}", where="here",
+             skip="not checked on a shallow clone" if shallow_clone() else None),
         # tools/hotspots/README.md: export brace lists stay at 12 names or under; longer ones only shrink.
         Step("Export lists", "python3 tools/hotspots/check_lists.py", where="here"),
         # tools/hotspots/check_stand_ins.py: test stand-ins keep up with the hooks and traits they mirror.
         Step("Test stand-ins", "python3 tools/hotspots/check_stand_ins.py", where="here"),
         # Always, as in CI: some read the crates, the roadmap or the workflows.
         Step("Python tests", "python3 -m unittest discover -s tests", where="here", summary=unittest_passed),
-        Step("rustfmt", "cargo fmt --all -- --check", skip=None if rust else no_rust),
-        # Discovered by a build script, so no mod line leads cargo fmt to them (CI checks them by path too).
-        Step("rustfmt by path", "rustfmt --edition 2024 --check " + " ".join(DISCOVERED_RUST), skip=None if rust else no_rust),
+        # CI's own scan (tools/ci/format_scan.py): cargo fmt, then the files no `mod` line reaches, by path.
+        Step("rustfmt", "python3 tools/ci/format_scan.py", skip=None if rust else no_rust),
         Step("clippy", clippy, skip=None if rust else no_rust),
         Step("holder actor", HOLDER_ACTOR,
              skip=None if crates is None or "horizon-mod-package" in crates or launcher
@@ -432,15 +435,15 @@ def plan(args, base, changed, crates_of, libraries, dependencies):
                                  ("mod registry tests", MOD_REGISTRY, registry_skip)):
         steps.extend([
             Step(f"{name} clippy",
-                 f"CARGO_BUILD_JOBS=${{CARGO_BUILD_JOBS:-4}} cargo clippy --manifest-path {manifest}"
-                 " --all-targets --locked -- -D warnings", skip=skip),
+                 f"CARGO_BUILD_JOBS=${{CARGO_BUILD_JOBS:-4}} python3 tools/ci/check_warnings.py cargo clippy --keep-going --manifest-path {manifest}"
+                 " --all-targets --locked", skip=skip),
             Step(f"{name} tests",
                  f"CARGO_BUILD_JOBS=${{CARGO_BUILD_JOBS:-4}} cargo test --manifest-path {manifest}"
                  " --locked -- --test-threads=4", skip=skip, summary=tests_passed),
         ])
     launcher_skip = None if launcher else "launcher untouched"
     for name, command in [("launcher rustfmt", "cargo fmt --check"),
-                          ("launcher clippy", "cargo clippy --all-targets --locked $features -- -D warnings"),
+                          ("launcher clippy", "python3 ../tools/ci/check_warnings.py cargo clippy --keep-going --all-targets --locked $features"),
                           ("launcher tests", "cargo test --locked --lib --bins $features")]:
         steps.append(Step(name, f"cd launcher && {LAUNCHER_FEATURES}\nin_shell {shlex.quote(command)}", skip=launcher_skip,
                           summary=tests_passed if name == "launcher tests" else None))
@@ -489,6 +492,12 @@ PARITY_HOSTS= python3 tools/parity.py --changed-files "$RUNNER_TEMP/changed" --t
     return steps
 
 
+CLIPPY_CACHE_HINT = (
+    "pr_ready: the first clippy run builds the whole workspace once (cold, can take 20+ min); later runs are warm. "
+    "Set RUSTC_WRAPPER=sccache with CARGO_INCREMENTAL=0 to reuse dependency builds across branches and checkouts."
+)
+
+
 def run_script(steps, host, verbose):
     """Runs the steps in one shell on host (here for "local"), each between markers, reading results as they come."""
     if not steps:
@@ -503,7 +512,12 @@ def run_script(steps, host, verbose):
         run_windows(steps, verbose, environment)
         return
     parts = [HOST_SETUP.get(host, ""), "set +e"]
+    first_clippy = True
     for index, step in enumerate(steps):
+        if step.name.endswith("clippy") and first_clippy:
+            first_clippy = False
+            parts.append('case "${RUSTC_WRAPPER:-}" in sccache|*/sccache|sccache.exe|*/sccache.exe) ;; '
+                         f'*) printf \'%s\\n\' {shlex.quote("@@pr_ready:hint:" + CLIPPY_CACHE_HINT)} ;; esac')
         parts.append(f"echo '@@pr_ready:begin:{index}'; started=$(date +%s)\n( {step.command}\n) 2>&1 < /dev/null\n"
                      f"status=$?; echo; echo \"@@pr_ready:end:{index}:$status:$(( $(date +%s) - started ))\"")
     script = "\n".join(parts)
@@ -525,6 +539,8 @@ def run_script(steps, host, verbose):
                 step.seconds = int(marker.group(4))
                 finish(step, verbose)
                 current = None
+            elif line.startswith("@@pr_ready:hint:"):
+                print(line.removeprefix("@@pr_ready:hint:"), end="", file=sys.stderr, flush=True)
             elif current is not None:
                 current.output += line
                 if verbose:
@@ -540,6 +556,7 @@ def run_script(steps, host, verbose):
 def run_windows(steps, verbose, environment=None):
     """Run local checks directly on Windows without requiring a Unix shell. Each runs in its own job
     (tools/process_tree.py): what a check starts, a harness's game say, ends with it, or with this process."""
+    first_clippy = True
     for step in steps:
         command = shlex.split(step.command)
         cwd = ROOT
@@ -563,11 +580,9 @@ def run_windows(steps, verbose, environment=None):
         elif step.name == "Python tests":
             command = [sys.executable, "-m", "unittest", "discover", "-s", "tests"]
         elif step.name == "rustfmt":
-            command = ["cargo", "fmt", "--all", "--", "--check"]
-        elif step.name == "rustfmt by path":
-            command = ["rustfmt", "--edition", "2024", "--check", *sorted(str(p) for g in DISCOVERED_RUST for p in ROOT.glob(g))]
+            command = [sys.executable, "tools/ci/format_scan.py"]
         elif step.name == "clippy":
-            command = shlex.split(CI_CLIPPY)  # the server build's clippy runs in CI (Linux)
+            command = [sys.executable, *shlex.split(CI_CLIPPY)[1:]]  # server clippy runs in CI (Linux)
         elif step.name.startswith("tests"):
             command = shlex.split(step.command)
         elif step.name == "tokens.css up to date":
@@ -576,7 +591,8 @@ def run_windows(steps, verbose, environment=None):
             command = ["cargo", "fmt", "--check"]
             cwd = ROOT / "launcher"
         elif step.name == "launcher clippy":
-            command = ["cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings"]
+            command = [sys.executable, "../tools/ci/check_warnings.py", "cargo", "clippy", "--keep-going",
+                       "--all-targets", "--locked"]
             cwd = ROOT / "launcher"
         elif step.name == "launcher tests":
             command = ["cargo", "test", "--locked", "--lib", "--bins"]
@@ -591,6 +607,10 @@ def run_windows(steps, verbose, environment=None):
         elif command and command[0] == "python3":
             command[0] = sys.executable
 
+        if step.name.endswith("clippy") and first_clippy:
+            first_clippy = False
+            if Path(env.get("RUSTC_WRAPPER", "")).name not in ("sccache", "sccache.exe"):
+                print(CLIPPY_CACHE_HINT, file=sys.stderr, flush=True)
         print(f"  {step.name}...", file=sys.stderr, flush=True)
         started = time.monotonic()
         try:

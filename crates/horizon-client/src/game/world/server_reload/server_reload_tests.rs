@@ -333,7 +333,7 @@ fn missing_original_at_reload_preserves_the_published_data_and_reports_its_owner
         &resources,
         &horizon_mod_package::enabled::EnabledMods::new([(
             "reload_test".into(),
-            horizon_mod_package::Side::Both,
+            mod_api::Side::Both,
         )]),
     );
     let world = root.join("world");
@@ -415,7 +415,7 @@ fn server_reload_delivers_mod_files_overrides_and_preserves_all_data_on_failure(
         &resources,
         &horizon_mod_package::enabled::EnabledMods::new([(
             "reload_test".into(),
-            horizon_mod_package::Side::Both,
+            mod_api::Side::Both,
         )]),
     );
     let world = root.join("world");
@@ -597,7 +597,7 @@ fn server_reload_skips_unparsable_files_and_delivers_the_rest() {
         &resources,
         &horizon_mod_package::enabled::EnabledMods::new([(
             "reload_test".into(),
-            horizon_mod_package::Side::Both,
+            mod_api::Side::Both,
         )]),
     );
     let world = root.join("world");
@@ -801,7 +801,7 @@ fn server_reload_retains_listeners_for_other_hooks() {
         &resources,
         &horizon_mod_package::enabled::EnabledMods::new([(
             "reload_test".into(),
-            horizon_mod_package::Side::Both,
+            mod_api::Side::Both,
         )]),
     );
     let world = root.join("world");
@@ -1035,7 +1035,8 @@ fn data_maps_updated_fires_for_each_registry_on_first_open_and_every_reload() {
                 std::env::temp_dir().join(format!("data-maps-updated-{}", std::process::id()));
             game.load_world(request(&root)).unwrap();
             let both = |count: usize| -> Vec<(String, DataMapsUpdateCause)> {
-                ["minecraft:item", "minecraft:block"]
+                // In registry id order.
+                ["minecraft:block", "minecraft:item"]
                     .into_iter()
                     .cycle()
                     .take(count)
@@ -1057,9 +1058,8 @@ fn data_maps_updated_fires_for_each_registry_on_first_open_and_every_reload() {
             // A game that isn't a server holds no maps it may answer, even with
             // tables built.
             game.options.dedicated = None;
-            let coal = mod_api::__private::item_key("minecraft:coal").unwrap();
             assert_eq!(
-                game.item_data_map_value(coal, "probe:fuel"),
+                game.data_map_value("minecraft:item", "minecraft:coal", "probe:fuel"),
                 Err(DataMapError::Unavailable)
             );
             let _ = std::fs::remove_dir_all(root);

@@ -630,6 +630,9 @@ impl Game<'_> {
             // `/summon ender_dragon` outside the End: no fight, but the dragon flies.
             self.tick_fight();
         }
+        if let Some((id, from, to)) = self.dragon.as_ref().map(|d| (d.id, d.previous, d.position)) {
+            self.entity_section_step(id, [from.x, from.y, from.z], [to.x, to.y, to.z]);
+        }
         // The spikes' crystals (placed above) join before they light a fire:
         // a mod that cancels one keeps its fire out too.
         self.native_joins_flush(false, 0);
@@ -639,7 +642,6 @@ impl Game<'_> {
         if self.dimension_type().has_ender_dragon_fight {
             self.ensure_exit_portal()?;
         }
-        self.entity_sections_stepped(super::entity_sections::Family::Dragon);
         Ok(())
     }
 
@@ -1866,7 +1868,7 @@ mod tests {
 
     #[test]
     #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
-    fn a_pearl_reads_the_portal_cooldown_its_end_gateway_gave_it() {
+    fn a_pearl_reads_its_end_gateway_cooldown_and_refuses_the_write() {
         use super::super::native_entity_refs::tests::with_game;
 
         with_game(|game| {
@@ -1878,9 +1880,15 @@ mod tests {
             let id = game.creatures.projectiles[0].id;
             let pearl = game.entity(id).unwrap();
             assert_eq!(pearl.portal_cooldown(game), Some(0));
+            // The write refuses a pearl by name: its cooldown is the End
+            // gateway traveller's, not the level's portal state.
+            assert!(!pearl.set_portal_cooldown(game, 40));
+            assert_eq!(pearl.portal_cooldown(game), Some(0));
             let traveller = game.end.gateways.entry(id).or_default();
             traveller.enter(BlockPos::new(0, 64, 0));
             assert!(traveller.travel(true).is_some());
+            assert_eq!(pearl.portal_cooldown(game), Some(300));
+            assert!(!pearl.set_portal_cooldown(game, 40));
             assert_eq!(pearl.portal_cooldown(game), Some(300));
         });
     }

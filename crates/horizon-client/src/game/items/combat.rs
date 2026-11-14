@@ -149,6 +149,14 @@ pub(super) struct CombatTracker {
     /// blast leaves it out (`getEntities(source, box)`). A source guessed
     /// from the mobs near the centre is still hurt: it may be a bystander.
     pub(super) explosion_source_named: bool,
+    /// The entity list a listening `explosion_detonate` left behind, in the
+    /// order the blast visits it: the listeners took the spared entities out
+    /// and may have added others. `None` when no mod listened, and the walks
+    /// visit every entity as before (`explosion_detonate.rs`).
+    pub(super) blast_hit_list: Option<Vec<u32>>,
+    /// `blast_hit_list`'s ids as a set, so a walk's membership check stays
+    /// constant time however large the list is.
+    pub(super) blast_hit_ids: std::collections::HashSet<u32>,
     /// The blast's direct source is in water (`Explosion.getDirectSourceEntity`
     /// `.isInWater`): paintings, item frames and cushions ignore it
     /// (`BlockAttachedEntity.ignoreExplosion`).
@@ -167,6 +175,9 @@ pub(super) struct CombatTracker {
     /// `WitherSkull.getBlockExplosionResistance`: a dangerous skull's blast
     /// caps every destroyable block's resistance at this value.
     pub(super) blast_resistance_cap: Option<f32>,
+    /// A mod blast's own damage type, calculator and effects
+    /// (`level_explode`'s settings), while it goes off.
+    pub(super) blast_settings: super::explosion_settings::BlastSettings,
     /// Charged creepers whose blast just went off and that have not dropped
     /// a head yet (`Creeper.droppedSkulls`): they are gone from the mob list,
     /// but the mobs they killed still ask for their loot.
@@ -183,6 +194,13 @@ pub(super) struct CombatTracker {
     fall_before: f64,
 }
 impl CombatTracker {
+    /// Whether the blast now hurting entities visits `id`: the storages are
+    /// the walk, unless a listening `explosion_detonate` left a list, and
+    /// then only what that list names is.
+    pub(super) fn visits(&self, id: u32) -> bool {
+        self.blast_hit_list.is_none() || self.blast_hit_ids.contains(&id)
+    }
+
     /// The attack lent by the enclosing [`Game::with_attack`] (`damage_level_of!(game, scoped)`).
     pub(super) fn attack(&self) -> &Attack {
         &self.attack
@@ -402,7 +420,8 @@ impl Game<'_> {
                     self.combat.note_hurt_by_player(PlayerCredit(uuid), now);
                 }
             }
-            Some(m) if m.extra.tame && &*m.kind.id == "minecraft:wolf" => {
+            // `instanceof Wolf`: a content mod's type copying the wolf is one.
+            Some(m) if m.extra.tame && m.species() == Species::Wolf => {
                 self.combat.last_hurt_by_player = m.extra.owner.map(|o| {
                     let owner = horizon_client::lan::playerdata::ints_uuid(o);
                     (PlayerCredit(owner), now)
@@ -1090,6 +1109,42 @@ mod kill_credit_tests {
         assert_eq!(hurt_at(1_000).kill_credit(1_099), Some(7));
         assert_eq!(hurt_at(1_000).kill_credit(1_100), Some(7));
         assert_eq!(hurt_at(1_000).kill_credit(1_101), None);
+    }
+}
+
+#[cfg(test)]
+mod pet_credit_tests {
+    use horizon_client::lan::playerdata::uuid_ints;
+    use horizon_client::mobs::Mob;
+    use horizon_core::geometry::Vec3;
+    use std::sync::Arc;
+
+    /// A tame wolf's hit on the player in place is its owner's
+    /// (`resolvePlayerResponsibleForDamage` asks `instanceof Wolf`), so a
+    /// content mod's type copying the wolf (#4031) names its owner too, and
+    /// an untamed one names no one.
+    #[test]
+    #[ignore = "needs prepared resources in HORIZON_TEST_RESOURCES"]
+    fn a_tame_mod_wolf_types_hit_is_its_owners() {
+        crate::game::native_entity_refs::tests::with_game(|game| {
+            let wolf = game.res.mob_types().get("minecraft:wolf").cloned().unwrap();
+            let mut hound = (*wolf).clone();
+            hound.id = "ruby:hound".into();
+            for (kind, tame, credit) in [
+                (wolf.clone(), true, Some(12)),
+                (Arc::new(hound.clone()), true, Some(12)),
+                (Arc::new(hound), false, None),
+            ] {
+                game.combat.last_hurt_by_player = None;
+                game.mobs.clear();
+                let mut pet = Mob::new(7, kind, Vec3::ZERO, 0.0);
+                pet.extra.tame = tame;
+                pet.extra.owner = Some(uuid_ints(12));
+                game.mobs.push(pet);
+                game.resolve_player_responsible_for_player(7);
+                assert_eq!(game.combat.last_hurt_by_player.map(|(c, _)| c.0), credit);
+            }
+        });
     }
 }
 

@@ -17,6 +17,8 @@ pub(in crate::game) struct GuestMenus {
     pub(in crate::game) crafting: GuestCrafting,
     /// The workstation menu the guest has open (game/network/lan_stations.rs).
     pub(in crate::game) station: MenuOwner<Option<GuestStation>>,
+    /// The successful open already announced to mods, retained through a loan of `GuestPlay`.
+    pub(in crate::game) menu_heard: Option<super::native_menus::HeardMenu>,
 }
 
 impl LanHost {

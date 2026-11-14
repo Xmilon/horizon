@@ -10,6 +10,7 @@ impl AttributesRegistrar for PartRegistrar {
         max: f64,
         syncable: bool,
         sentiment: Sentiment,
+        tooltip: crate::AttributeTooltip,
     ) -> Result<(), crate::AttributeRegistrationError> {
         let id = match self.owned_declaration_id(path) {
             Ok(id) => id,
@@ -34,6 +35,13 @@ impl AttributesRegistrar for PartRegistrar {
             if min > max || default < min || default > max {
                 return Err(crate::AttributeRegistrationError::InvalidBounds);
             }
+            if tooltip
+                .base_modifier
+                .as_deref()
+                .is_some_and(|id| !id.contains(':') || crate::Identifier::parse(id).is_err())
+            {
+                return Err(crate::AttributeRegistrationError::InvalidId);
+            }
             self.attributes.push(AttributeDeclaration {
                 mod_id: self.mod_id.to_owned(),
                 id,
@@ -42,6 +50,7 @@ impl AttributesRegistrar for PartRegistrar {
                 max,
                 syncable,
                 sentiment,
+                tooltip,
             });
             Ok(())
         })();
@@ -101,52 +110,162 @@ mod tests {
     pub(crate) fn attribute_declarations_validate() {
         let mut registrar = PartRegistrar::new("mymod");
         registrar
-            .declare_attribute("mana", 10.0, 0.0, 100.0, true, Sentiment::Neutral)
+            .declare_attribute(
+                "mana",
+                10.0,
+                0.0,
+                100.0,
+                true,
+                Sentiment::Neutral,
+                Default::default(),
+            )
             .unwrap();
         // The path stays in the declaring mod's namespace.
         assert_eq!(
-            registrar.declare_attribute("minecraft:armor", 0.0, 0.0, 30.0, true, positive()),
+            registrar.declare_attribute(
+                "minecraft:armor",
+                0.0,
+                0.0,
+                30.0,
+                true,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::InvalidId)
         );
         assert_eq!(
-            registrar.declare_attribute("foreign:mana", 0.0, 0.0, 1.0, false, positive()),
+            registrar.declare_attribute(
+                "foreign:mana",
+                0.0,
+                0.0,
+                1.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::InvalidId)
         );
         assert_eq!(
-            registrar.declare_attribute("Not An Id", 0.0, 0.0, 1.0, false, positive()),
+            registrar.declare_attribute(
+                "Not An Id",
+                0.0,
+                0.0,
+                1.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::InvalidId)
         );
         // The same attribute twice, whatever declared it, is a duplicate.
         assert_eq!(
-            registrar.declare_attribute("mana", 1.0, 0.0, 1.0, false, positive()),
+            registrar.declare_attribute(
+                "mana",
+                1.0,
+                0.0,
+                1.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::Duplicate)
         );
         // RangedAttribute's own bounds checks.
         assert_eq!(
-            registrar.declare_attribute("rage", 5.0, 10.0, 0.0, false, positive()),
+            registrar.declare_attribute(
+                "rage",
+                5.0,
+                10.0,
+                0.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::InvalidBounds)
         );
         assert_eq!(
-            registrar.declare_attribute("rage", 0.0, 1.0, 10.0, false, positive()),
+            registrar.declare_attribute(
+                "rage",
+                0.0,
+                1.0,
+                10.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::InvalidBounds)
         );
         assert_eq!(
-            registrar.declare_attribute("rage", 20.0, 1.0, 10.0, false, positive()),
+            registrar.declare_attribute(
+                "rage",
+                20.0,
+                1.0,
+                10.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::InvalidBounds)
         );
         // A non-finite default or bound.
         assert_eq!(
-            registrar.declare_attribute("rage", f64::NAN, 0.0, 1.0, false, positive()),
+            registrar.declare_attribute(
+                "rage",
+                f64::NAN,
+                0.0,
+                1.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::NotFinite)
         );
         assert_eq!(
-            registrar.declare_attribute("rage", 0.5, f64::NEG_INFINITY, 1.0, false, positive()),
+            registrar.declare_attribute(
+                "rage",
+                0.5,
+                f64::NEG_INFINITY,
+                1.0,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::NotFinite)
         );
         assert_eq!(
-            registrar.declare_attribute("rage", 0.5, 0.0, f64::INFINITY, false, positive()),
+            registrar.declare_attribute(
+                "rage",
+                0.5,
+                0.0,
+                f64::INFINITY,
+                false,
+                positive(),
+                Default::default()
+            ),
             Err(AttributeRegistrationError::NotFinite)
         );
+        // A base modifier must be a namespaced id; a good one is kept with the display.
+        let tooltip = |base: &str| crate::AttributeTooltip {
+            display: crate::AttributeDisplay::Percentage,
+            base_modifier: Some(base.to_owned()),
+        };
+        assert_eq!(
+            registrar.declare_attribute("swim", 0.0, 0.0, 1.0, true, positive(), tooltip("base")),
+            Err(AttributeRegistrationError::InvalidId)
+        );
+        registrar
+            .declare_attribute(
+                "swim",
+                0.0,
+                0.0,
+                1.0,
+                true,
+                positive(),
+                tooltip("mymod:base_swim"),
+            )
+            .unwrap();
+        assert_eq!(registrar.attributes[1].tooltip, tooltip("mymod:base_swim"));
+        registrar.attributes.truncate(1);
         // The refusals name the mod; the good declaration stands.
         assert_eq!(registrar.attributes.len(), 1);
         let declared = &registrar.attributes[0];
@@ -160,6 +279,7 @@ mod tests {
         );
         assert!(declared.syncable);
         assert_eq!(declared.sentiment, Sentiment::Neutral);
+        assert_eq!(declared.tooltip, crate::AttributeTooltip::default());
         assert!(
             registrar
                 .refused

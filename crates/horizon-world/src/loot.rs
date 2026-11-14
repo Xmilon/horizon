@@ -9,6 +9,9 @@
 //! need an entity, tool or damage source fail when the context has none, as
 //! they do for containers.
 mod fill;
+pub mod query;
+#[path = "loot_query.rs"]
+mod query_context;
 pub use fill::ContainerLootContext;
 #[path = "loot/tags.rs"]
 mod loot_tags;
@@ -117,6 +120,7 @@ pub fn native_invoke_loot_condition(
 }
 
 /// The tool a loot context names: its item id and enchantments.
+#[derive(Clone)]
 pub struct LootTool {
     pub item: String,
     pub enchantments: Vec<(String, i32)>,
@@ -130,6 +134,11 @@ pub struct LootTool {
 /// loot engine; each is None in the other. A table without a mod's kinds
 /// draws nothing and stays bit-for-bit the same.
 pub struct LootContext<'a> {
+    /// First id wins; written after the root and all nested rolls, before #1270's modifier pass.
+    /// Unset reads as `UNKNOWN_LOOT_TABLE`; nested rolls never write it.
+    pub queried_table_id: Option<String>,
+    /// Stack whose data is queried; unchanged through nested rolls, absent in existing callers.
+    pub queried_stack: Option<LootStack>,
     /// The entity the table names (`this`), if any.
     pub entity: Option<&'a LootEntity>,
     /// The damage that killed it, if any.
@@ -322,16 +331,20 @@ impl Enchantment {
     }
 }
 
+#[path = "loot/holder_sets.rs"]
+mod holder_sets;
+
 /// Loot tables, items, enchantments and the tags they reference.
 pub struct LootData {
+    holder_sets: holder_sets::Binding,
     tables: Arc<LootTables>,
     modifiers: HashMap<String, Value>,
     predicates: HashMap<String, Value>,
     items: HashMap<String, ItemFacts>,
     /// Enchantments in registry (identifier) order.
     enchantments: Vec<Enchantment>,
-    /// Raw tag files by (registry, tag id).
-    tags: HashMap<(String, String), Vec<Value>>,
+    /// Tag files' layers by (registry, tag id).
+    tags: HashMap<(String, String), crate::tag_layers::TagLayers>,
     /// Smelting recipes in recipe id order: (ingredient, result, result count).
     smelting: Vec<(Value, String, i32)>,
 }
@@ -746,63 +759,10 @@ pub fn native_loot_table_load(context: &LoadContext, id: &str, table: &mut Value
     crate::native_load_hooks::loot_table_load(context, id, table);
 }
 
-fn load_kind(data: &Path, kind: &str, out: &mut HashMap<String, Value>) -> io::Result<()> {
-    let Ok(entries) = fs::read_dir(data) else {
-        return Ok(());
-    };
-    let mut namespaces: Vec<String> = entries
-        .flatten()
-        .filter(|e| e.path().is_dir())
-        .filter_map(|e| e.file_name().to_str().map(str::to_owned))
-        .collect();
-    namespaces.sort();
-    for ns in namespaces {
-        load_dir(&data.join(&ns).join(kind), &ns, "", out)?;
-    }
-    Ok(())
-}
+#[path = "loot/load_resources.rs"]
+mod load_resources;
+use load_resources::{hash_files, load_kind};
 
-/// Every file's path, size and modification time under `dir`, in name order.
-fn hash_files(dir: &Path, hasher: &mut impl std::hash::Hasher) {
-    use std::hash::Hash;
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    let mut entries: Vec<_> = entries.flatten().collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
-        let path = entry.path();
-        let Ok(meta) = entry.metadata() else {
-            continue;
-        };
-        if meta.is_dir() {
-            hash_files(&path, hasher);
-        } else {
-            path.hash(hasher);
-            meta.len().hash(hasher);
-            meta.modified().ok().hash(hasher);
-        }
-    }
-}
-
-fn load_dir(
-    dir: &Path,
-    namespace: &str,
-    prefix: &str,
-    out: &mut HashMap<String, Value>,
-) -> io::Result<()> {
-    // Through `json_folder`: a load holding the folder (the recipes, read by
-    // the item tables, the recipe book and the server's sync too) shares one
-    // read of it.
-    let Ok(folder) = crate::json_folder::read(dir) else {
-        return Ok(());
-    };
-    for file in &folder.files {
-        let value = serde_json::from_slice(file.bytes()?)?;
-        out.insert(format!("{namespace}:{prefix}{}", file.name), value);
-    }
-    Ok(())
-}
 fn cost(v: &Value) -> (i32, i32) {
     (
         v["base"].as_i64().unwrap_or(0) as i32,
@@ -820,7 +780,6 @@ impl LootData {
         defaults: &crate::item_defaults::ItemDefaults,
     ) -> io::Result<Self> {
         let all = root.join("data");
-        let data = all.join("minecraft");
         let tables = shared_tables(root, overlay)?;
         let mut modifiers = HashMap::new();
         load_kind(&all, "item_modifier", &mut modifiers)?;
@@ -845,16 +804,11 @@ impl LootData {
             })
             .collect();
         let mut raw_enchantments = HashMap::new();
-        load_dir(
-            &data.join("enchantment"),
-            "minecraft",
-            "",
-            &mut raw_enchantments,
-        )?;
+        load_kind(&all, "enchantment", &mut raw_enchantments)?;
         overlay_map(overlay, "enchantment", &mut raw_enchantments);
         let mut names: Vec<&String> = raw_enchantments.keys().collect();
         names.sort();
-        let enchantments = names
+        let enchantments: Vec<Enchantment> = names
             .into_iter()
             .map(|name| {
                 let e = &raw_enchantments[name];
@@ -893,28 +847,19 @@ impl LootData {
             let mut raw = HashMap::new();
             load_kind(&all, &format!("tags/{registry}"), &mut raw)?;
             for (name, value) in raw {
-                if !overlay.conditions.allows_tag(&value, registry, &name) {
-                    continue;
-                }
-                let values = value["values"].as_array().cloned().unwrap_or_default();
-                tags.insert((registry.to_owned(), name), values);
+                let layers = crate::tag_layers::TagLayers::from_file(&value);
+                tags.insert((registry.to_owned(), name), layers);
             }
             // The packs' entries join the game's own, in pack order; a
-            // `replace` file drops what the lower sources put in
-            // (`TagLoader.load` walks the resource stack the same way).
+            // `replace` file drops what the lower sources put in and `remove`
+            // takes entries out (`TagLoader.load` walks the stack the same way).
             for (id, files) in overlay.tag_kind(registry) {
                 for bytes in files {
                     let Ok(v) = serde_json::from_slice::<Value>(bytes) else {
                         continue;
                     };
-                    if !overlay.conditions.allows_tag(&v, registry, &id) {
-                        continue;
-                    }
                     let slot = tags.entry((registry.to_owned(), id.clone())).or_default();
-                    if v["replace"].as_bool() == Some(true) {
-                        slot.clear();
-                    }
-                    slot.extend(v["values"].as_array().cloned().unwrap_or_default());
+                    slot.push(&v);
                 }
             }
         }
@@ -933,7 +878,9 @@ impl LootData {
                 Some((r["ingredient"].clone(), result, count))
             })
             .collect();
-        Ok(Self {
+        let binding = holder_sets::Binding::load(root, overlay, &items, &enchantments)?;
+        let mut loaded = Self {
+            holder_sets: Default::default(),
             tables,
             modifiers,
             predicates,
@@ -941,7 +888,10 @@ impl LootData {
             enchantments,
             tags,
             smelting,
-        })
+        };
+        binding.snapshot(&mut loaded)?;
+        loaded.holder_sets = binding;
+        Ok(loaded)
     }
     /// The table snapshot used by this loot data.
     pub fn tables(&self) -> &Arc<LootTables> {
@@ -949,8 +899,9 @@ impl LootData {
     }
 
     /// Apply native load hooks to a private server snapshot, leaving shared raw tables unchanged.
-    /// `context` is the owning server data load's.
-    pub fn apply_native_table_loads(&mut self, context: &LoadContext) {
+    /// `context` is the owning server data load's. Invalid holder-set objects refuse
+    /// the replacement snapshot with a table and field-qualified error.
+    pub fn apply_native_table_loads(&mut self, context: &LoadContext) -> io::Result<()> {
         let mut ids: Vec<_> = self.tables.0.keys().collect();
         ids.sort();
         self.tables = Arc::new(
@@ -958,10 +909,16 @@ impl LootData {
                 .map(|id| {
                     let mut table = self.tables[id.as_str()].clone();
                     native_loot_table_load(context, id, &mut table);
-                    (id.clone(), table)
+                    self.holder_sets.walk(
+                        &format!("native loot_table {id}"),
+                        &mut table,
+                        &self.tags,
+                    )?;
+                    Ok((id.clone(), table))
                 })
-                .collect(),
+                .collect::<io::Result<LootTables>>()?,
         );
+        Ok(())
     }
 
     pub fn has_table(&self, table: &str) -> bool {
@@ -1017,6 +974,7 @@ impl LootData {
             luck: 0.0,
         };
         let mut c = Context {
+            query: query::current_query(),
             data: self,
             random: LegacyRandom::new(0),
             biome: None,
@@ -1043,7 +1001,7 @@ impl LootData {
     fn tag(&self, registry: &str, name: &str) -> Vec<String> {
         loot_tags::members(&self.tags, registry, name)
     }
-    /// A HolderSet: "#tag", "id" or a list of ids.
+    /// A published HolderSet: "#tag", "id" or resolved IDs. Objects bind at load.
     fn holder_set(&self, registry: &str, v: &Value) -> Vec<String> {
         match v {
             Value::String(s) => match s.strip_prefix('#') {
@@ -1068,34 +1026,6 @@ impl LootData {
         })
     }
 
-    /// LootTable.getRandomItems with the given random (its state is
-    /// advanced), luck and, for fishing, whether the hook is in open water.
-    pub fn roll<R: RandomSource + Clone>(
-        &self,
-        table: &str,
-        random: &mut R,
-        luck: f32,
-        biome: Option<&str>,
-        open_water: Option<bool>,
-    ) -> Vec<LootStack> {
-        let Some(json) = self.tables.get(table) else {
-            return Vec::new();
-        };
-        let mut c = Context {
-            data: self,
-            random: random.clone(),
-            biome,
-            visited: Vec::new(),
-            luck,
-            open_water,
-            entity: None,
-            enchanted_level: None,
-        };
-        let mut items = Vec::new();
-        c.table_raw(table, json, &mut |c, stack| c.data.split(stack, &mut items));
-        *random = c.random;
-        items
-    }
     /// LootTable.getRandomItems for an entity context: the generated stacks
     /// after the stack splitter, in order. `random` is the table's random
     /// sequence (or the level random) and is advanced.
@@ -1130,6 +1060,7 @@ impl LootData {
             return Vec::new();
         };
         let mut c = Context {
+            query: query::current_query(),
             data: self,
             random: random.clone(),
             biome: None,
@@ -1141,6 +1072,7 @@ impl LootData {
         };
         let mut items = Vec::new();
         c.table_raw(table, json, &mut |c, stack| c.data.split(stack, &mut items));
+        c.query.finish(Some(table));
         *random = c.random;
         items
     }
@@ -1272,6 +1204,7 @@ fn shuffle_and_split(result: &mut Vec<LootStack>, slots: usize, random: &mut imp
 }
 
 struct Context<'a, R> {
+    query: std::rc::Rc<query::LootQuery>,
     data: &'a LootData,
     random: R,
     biome: Option<&'a str>,
@@ -1404,6 +1337,13 @@ impl<R: RandomSource> Context<'_, R> {
         }
     }
     fn condition(&mut self, c: &Value) -> bool {
+        if let Some(holds) =
+            query::condition(c, &self.query, self.query.tool.as_ref(), |item, ability| {
+                crate::native_load_hooks::item_ability_default(item, ability, self.data)
+            })
+        {
+            return holds;
+        }
         let data = self.data;
         match c {
             Value::Null => true,
@@ -1528,22 +1468,6 @@ impl<R: RandomSource> Context<'_, R> {
                 self.run(m, stack)
             }
             _ => stack,
-        }
-    }
-    /// The context a mod's own loot kinds see: drawn lazily, only when
-    /// the table has a mod's kind, so the random stays untouched without.
-    fn native_ctx(&mut self) -> LootContext<'_> {
-        let seed = self.random.next_long();
-        LootContext {
-            entity: self.entity.map(|e| &e.this),
-            damage: self.entity.and_then(|e| e.damage.as_ref()),
-            player: self.entity.and_then(|e| e.player.as_ref()),
-            tool: None, // The tool is not in this engine's context.
-            block: None,
-            luck: self.luck,
-            biome: self.biome,
-            seed,
-            place: current_native_loot_place(),
         }
     }
     fn run(&mut self, f: &Value, mut stack: LootStack) -> LootStack {
@@ -2314,11 +2238,12 @@ mod namespace_tests {
         let loot = LootData::load(&root, &off, &defaults).unwrap();
         assert_eq!(
             loot.tags[&("item".into(), "demo:food".into())],
-            vec![serde_json::json!("minecraft:bread")]
+            crate::tag_layers::TagLayers::from_file(
+                &serde_json::json!({"values": ["minecraft:stone"]})
+            )
         );
         assert!(
-            !loot
-                .tags
+            loot.tags
                 .contains_key(&("item".into(), "demo:absent".into()))
         );
         fs::remove_dir_all(root).unwrap();

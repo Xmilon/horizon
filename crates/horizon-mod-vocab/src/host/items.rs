@@ -49,6 +49,19 @@ pub trait ItemsHost {
     /// type tag `tag` (`minecraft:cannot_be_pushed_onto_boats`).
     #[access(Metadata)]
     fn entity_type_in_tag(&self, entity_type: &str, tag: &str) -> bool;
+    /// Side: both.
+    /// The stack an SNBT item compound stands for, read as `ItemStack.CODEC` reads a saved
+    /// item: `{id:"minecraft:diamond_sword",count:1,components:{"minecraft:damage":5}}`
+    /// (`count` 1 when missing, `stone` is `minecraft:stone`). This API refuses with None:
+    /// text that is no SNBT compound or has anything but whitespace after it, a `count`
+    /// outside 1 to 99 (the codec's range; it is not clamped to 1), air, and an item this
+    /// world does not have. It also refuses text over 2 MiB and nesting past 512 levels. Those
+    /// two are this API's own safety bound, the one place it differs from vanilla: vanilla's
+    /// SNBT parser has no size or depth limit (very deep text ends in a stack overflow), and
+    /// 2 MiB and 512 are binary NBT's limits, taken here so text a mod supplies cannot
+    /// overflow the parser.
+    #[access(WorldOnly)]
+    fn item_from_snbt(&self, snbt: &str) -> Option<ItemStack>;
 }
 /// The server host's methods of the `items` area, implemented by the game and reached through [`ServerHost`].
 #[horizon_mod_api_macros::host_area]
@@ -66,6 +79,22 @@ pub trait ItemsServerHost {
         facing: Direction,
         stack: ItemStack,
     ) -> Result<Option<ItemStack>, StackWriteError>;
+    /// Side: server.
+    /// Holds `stack` outside the world, in the open transaction `tx` (`ItemAccess.forStack`):
+    /// the [`ItemPlace::Scratch`] to run item capabilities against. It lives until the
+    /// outermost transaction closes, and an abort of the one that made it drops it. None
+    /// where `tx` is not open.
+    #[access(WorldOnly)]
+    fn scratch_stack(
+        &mut self,
+        tx: &Transaction,
+        stack: ItemStack,
+    ) -> Result<Option<ItemPlace>, StackWriteError>;
+    /// Side: server.
+    /// Takes the stack out of scratch place `place`, in `tx`, ending the place: none where it
+    /// is empty, no longer held, or not a scratch place.
+    #[access(WorldOnly)]
+    fn scratch_take(&mut self, tx: &Transaction, place: &ItemPlace) -> Option<ItemStack>;
 }
 /// The client host's methods of the `items` area, implemented by the game and reached through [`crate::ClientHost`].
 #[horizon_mod_api_macros::host_area]
@@ -77,6 +106,13 @@ pub trait ItemsClientHost {
     /// hotbar, then the inventory. The count is cut to one stack.
     #[access(WorldOnly)]
     fn give(&mut self, item: ItemKey, count: u32) -> Result<(), String>;
+    /// Side: client.
+    /// `ItemStack.getHoverName()` as plain text: the custom name, else a written book's non-blank
+    /// title, else the item's name in the client's language (potion contents, a head's owner and
+    /// the `item_name` component as vanilla). No rarity colour or italics. An invalid stack reads
+    /// an empty string.
+    #[access(ClientSetup)]
+    fn hover_name(&self, stack: &ItemStack) -> String;
     /// Side: client.
     /// Registered enchantments, in registry order.
     #[access(ClientSetup)]
@@ -153,13 +189,14 @@ pub trait ItemsBackend {
         creative: bool,
     ) -> Option<Vec<TooltipElement>>;
     /// Side: server.
-    /// How many slots of the block entity at `at` its side reaches (none: every slot), by its
-    /// `WorldlyContainer` rules: a furnace's top reaches its input only. None where no block
-    /// entity has slots, in a level not in place, and on a client's copy of the world.
+    /// How many container slots `at`'s side reaches (none: every slot), by its
+    /// `WorldlyContainer` rules: a furnace's top reaches its input only. A composter's up,
+    /// down and unsided ports each expose one state-backed slot. None without a supported
+    /// container/port, in a level not in place, and on a client's copy of the world.
     #[access(WorldOnly)]
     fn container_size(&self, at: BlockSide) -> Option<usize>;
     /// Side: server.
-    /// The stack in slot `slot` of those `at`'s side reaches (`native_container_size`).
+    /// The stack in slot `slot` of those `at`'s side reaches (`container_size`).
     #[access(WorldOnly)]
     fn container_stack(&self, at: BlockSide, slot: usize) -> Option<ItemStack>;
     /// Side: server.
@@ -170,8 +207,8 @@ pub trait ItemsBackend {
     fn container_capacity(&self, at: BlockSide, slot: usize, stack: &ItemStack) -> u32;
     /// Side: server.
     /// How much of `resource` the slots `at`'s side reaches hold in all: [`STORAGE`]'s
-    /// amount for a block entity with slots, in one pass over them. None where the total does
-    /// not fit in 64 bits; 0 where no block entity has slots.
+    /// amount for a container or composter port, in one pass. None where the total does
+    /// not fit in 64 bits; 0 where no supported container or port exists.
     ///
     /// [`STORAGE`]: crate::STORAGE
     #[access(WorldOnly)]
@@ -186,7 +223,7 @@ pub trait ItemsBackend {
     /// What the slots `at`'s side reaches hold, from its `from`th to before its
     /// `from + limit`th (fewer at the end), empty ones included, never more than
     /// [`MAX_STORAGE_PAGE`](crate::MAX_STORAGE_PAGE) slots whatever `limit` asks. None where no
-    /// block entity has slots.
+    /// supported container or composter port exists.
     #[access(WorldOnly)]
     fn container_listing(
         &self,
@@ -258,6 +295,39 @@ pub trait ItemsBackend {
     /// box, nor into a slot past the item's slots.
     #[access(WorldOnly)]
     fn item_container_capacity(&self, stack: &ItemStack, slot: usize, item: &ItemStack) -> u32;
+    /// Side: both.
+    /// The stacks in one item of `stack`'s `minecraft:bundle_contents`, front first (the
+    /// stack the bundle gives back next is slot 0). None for an item without the component.
+    #[access(WorldOnly)]
+    fn item_bundle_slots(&self, stack: &ItemStack) -> Option<Vec<Option<ItemStack>>>;
+    /// Side: both.
+    /// `ResourceHandler.isValid` and `getCapacityAsLong` for a bundle: how many of `item` one
+    /// item of `stack` still takes, by `BundleContents.getMaxAmountToAdd` (weight left, nested
+    /// bundles' weight); 0 for an item the bundle refuses, or without the component.
+    #[access(WorldOnly)]
+    fn item_bundle_capacity(&self, stack: &ItemStack, slot: usize, item: &ItemStack) -> u32;
+    /// Side: both.
+    /// `ResourceHandler.insert` for a bundle: as much of `item` as the bundle takes goes in at
+    /// the front, as the bundle screen inserts. Gives how many went in and the changed bundle;
+    /// None without the component.
+    #[access(WorldOnly)]
+    fn item_bundle_insert_slot(
+        &self,
+        stack: &ItemStack,
+        slot: usize,
+        item: &ItemStack,
+    ) -> Option<(u32, ItemStack)>;
+    /// Side: both.
+    /// `ResourceHandler.extract` for a bundle: up to `max` of the front stack (slot 0 only), as
+    /// the bundle screen takes out. Gives the taken stack, if any, and the changed bundle; None
+    /// without the component.
+    #[access(WorldOnly)]
+    fn item_bundle_extract(
+        &self,
+        stack: &ItemStack,
+        slot: usize,
+        max: u32,
+    ) -> Option<(Option<ItemStack>, ItemStack)>;
     /// Side: server.
     /// How many slots the inventory of entity `entity` in the level in place has, as
     /// `entity_slots` reaches them: none for an entity without one, and on a client.

@@ -333,6 +333,7 @@ impl WorldRequest {
             level.seed,
             &level.enabled_features,
             biomes.clone(),
+            None,
         )?;
         drop(streaming_step);
         streaming.radius = settings.render_distance;
@@ -497,8 +498,8 @@ pub(super) fn preload_world_data(
             if left.elapsed() >= PRELOAD_KEPT && thread.is_finished() {
                 horizon_client::vanillagen::forget_shared_data();
                 horizon_client::structure_blocks::forget_loot_data();
-                super::lan::forget_sync_data();
-                super::lan::forget_server_sources();
+                super::lan::sync::forget_sync_data();
+                super::lan::sync::forget_server_sources();
                 horizon_threads::release_free_memory();
                 *preload = Preload::Idle;
                 log::info!("Horizon: preloaded world data dropped, no world opened");
@@ -872,6 +873,7 @@ fn shapes_of(
                 id: level.to_owned().leak(),
                 dimension_type: dimension_type.to_owned().leak(),
                 shape: shape?,
+                seed: None,
             })
         })
         .collect();
@@ -945,6 +947,7 @@ fn mod_terrain(
     shape: horizon_client::chunk::LevelShape,
     seed: i64,
     structures: bool,
+    runtime_stem: Option<&serde_json::Value>,
 ) -> Option<std::result::Result<ModLevel, String>> {
     use horizon_world::worldgen::{
         mod_biome_sources::mod_biome_sources, mod_generators::mod_chunk_generators,
@@ -956,15 +959,17 @@ fn mod_terrain(
     }
     let (overrides, _) =
         worldgen_overrides_of(world_root, resources, biomes, enabled_features, additional);
-    let stem = overrides
-        .entries(DIMENSIONS)
-        .find(|(level, _)| *level == dim.id())
-        .and_then(|(_, stem)| serde_json::from_str(stem).ok())
-        .or_else(|| {
-            horizon_client::save::world_gen_settings(world_root)
-                .and_then(|s| s.get("dimensions")?.get(dim.id()).cloned())
-                .map(|stem| horizon_client::scoreboard::tag_to_json(&stem))
-        })?;
+    let stem = runtime_stem.cloned().or_else(|| {
+        overrides
+            .entries(DIMENSIONS)
+            .find(|(level, _)| *level == dim.id())
+            .and_then(|(_, stem)| serde_json::from_str(stem).ok())
+            .or_else(|| {
+                horizon_client::save::world_gen_settings(world_root)
+                    .and_then(|s| s.get("dimensions")?.get(dim.id()).cloned())
+                    .map(|stem| horizon_client::scoreboard::tag_to_json(&stem))
+            })
+    })?;
     if let Some(generator) = stem["generator"]["type"]
         .as_str()
         .and_then(|id| generators.get(id))
@@ -998,6 +1003,18 @@ fn mod_terrain(
     .map(|terrain| terrain.map(ModLevel::Terrain))
 }
 
+/// The file beside the world that keeps the structure references of the level `id`. An id with a
+/// `/` puts it in a folder of `data/`.
+pub(super) fn structure_references_file(
+    world_root: &std::path::Path,
+    id: &str,
+) -> std::path::PathBuf {
+    world_root.join("data").join(format!(
+        "horizon_structure_references_{}.json",
+        id.replace(':', "_")
+    ))
+}
+
 /// Where `inner` keeps the structure references an explorer map skips, and how it reads a
 /// saved chunk's.
 fn keep_structure_references(
@@ -1006,10 +1023,7 @@ fn keep_structure_references(
     dim: Dim,
     save: &Arc<SaveDir>,
 ) {
-    inner.set_reference_file(world_root.join("data").join(format!(
-        "horizon_structure_references_{}.json",
-        dim.id().replace(':', "_")
-    )));
+    inner.set_reference_file(structure_references_file(world_root, dim.id()));
     let save = save.clone();
     inner.set_saved_references(Arc::new(move |name, x, z| {
         save.start_references(x, z, name)
@@ -1027,6 +1041,7 @@ pub(super) fn make_streaming(
     seed: i64,
     enabled_features: &[String],
     biomes: Arc<Biomes>,
+    runtime: Option<&super::runtime_levels::Generate>,
 ) -> Result<(Streaming, Arc<SaveDir>, Option<Arc<VanillaTerrain>>)> {
     let mut save = SaveDir::new(
         horizon_client::save::dimension_dir(world_root, dim.id()),
@@ -1125,7 +1140,30 @@ pub(super) fn make_streaming(
     if flat.is_some() || flat_vanilla.is_some() {
         register_sea_level(-63);
     }
-    let mut streaming = if let Some(inner) = debug {
+    let mut streaming = if let Some(generate) =
+        runtime.filter(|generate| !matches!(generate, super::runtime_levels::Generate::Stem(_)))
+    {
+        // A level a mod opened with the default layers or with air alone.
+        let flat = matches!(generate, super::runtime_levels::Generate::Flat);
+        let inner = horizon_client::flatgen::FlatTerrain::of_layers(
+            pack.assets.registry,
+            res.biomes(),
+            shape,
+            flat,
+        )
+        .ok_or("a runtime level's layers use a block the game lacks")?;
+        register_sea_level(-63);
+        Streaming::new(
+            Arc::new(Persistent {
+                inner: Arc::new(inner),
+                save: save.clone(),
+                registry: pack.assets.clone(),
+                biomes: biomes.clone(),
+            }),
+            pack.context_with(biomes.clone()),
+            res.threads(),
+        )
+    } else if let Some(inner) = debug {
         Streaming::new(
             Arc::new(Persistent {
                 inner: Arc::new(inner),
@@ -1193,6 +1231,10 @@ pub(super) fn make_streaming(
         shape,
         seed,
         automatic_structures,
+        match runtime {
+            Some(super::runtime_levels::Generate::Stem(stem)) => Some(stem),
+            _ => None,
+        },
     )
     .transpose()?
     {
@@ -1227,6 +1269,9 @@ pub(super) fn make_streaming(
             }
         }
     } else {
+        if runtime.is_some() {
+            return Err(format!("{}: no generator builds this runtime level", dim.id()).into());
+        }
         // WorldOptions.generateStructures, from the world's settings.
         let structures =
             horizon_client::save::WorldGen::read(world_root).is_none_or(|w| w.structures);
@@ -1803,6 +1848,7 @@ mod tests {
                 shape,
                 0,
                 true,
+                None,
             )
         };
         let pocket = Dim::Extra(mod_api::__private::dimension_key("test:pocket"));

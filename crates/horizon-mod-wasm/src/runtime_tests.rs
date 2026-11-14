@@ -523,7 +523,7 @@ fn unresolved_namespaced_functions_are_not_stubbed() {
     crate::test_stack::on_guest_stack(|| {
         let bytes = wat::parse_str(r#"(module (@custom "dylink.0" "\01\04\00\00\00\00") (import "env" "fixture:missing" (func)))"#).unwrap();
         let error = Group::link(
-            &wasmtime::Engine::default(),
+            &crate::runtime::test_engine(),
             &[Member {
                 name: "test",
                 module: &bytes,
@@ -552,7 +552,7 @@ fn linker_heap_symbols_follow_all_members_static_data() {
         (func (export "limit") (result i32) global.get $limit))"#,
         )
         .unwrap();
-        let engine = wasmtime::Engine::default();
+        let engine = crate::runtime::test_engine();
         let mut group = Group::link(
             &engine,
             &[
@@ -972,6 +972,7 @@ fn contended_calls_wait_for_the_group_and_workers_ignore_lending() {
 }
 
 #[test]
+#[ignore = "daily"]
 fn contended_hook_times_out_without_poisoning_the_group() {
     crate::test_stack::on_guest_stack(|| {
         let module = module("i64.const 2199023255556");
@@ -1436,6 +1437,31 @@ fn growth_limits_return_failure_without_stopping_the_group() {
     })
 }
 
+/// A refused growth the guest handled is forgotten when its call ends: a later trap's reason
+/// does not blame it.
+#[test]
+fn a_handled_refused_growth_does_not_explain_a_later_trap() {
+    crate::test_stack::on_guest_stack(|| {
+        // First call: memory.grow past 1 GiB answers -1, the guest drops it and replies 42.
+        // Second call: an unrelated trap.
+        let module = module(
+            r#"
+            i32.const 100 i32.const 100 i32.load i32.const 1 i32.add i32.store
+            i32.const 100 i32.load i32.const 1 i32.eq
+            if (result i64)
+                i32.const 16384 memory.grow i32.const -1 i32.ne if unreachable end
+                i64.const 2199023255556
+            else unreachable end"#,
+        );
+        assert_eq!(call(&module), Some(42));
+        assert_eq!(call(&module), None);
+        assert_eq!(
+            take_refusal(),
+            "wasm trap: wasm `unreachable` instruction executed"
+        );
+    })
+}
+
 /// Normal guest returns cannot poison shared memory, even with unusable replies.
 #[test]
 fn refusal_replies_survive_and_report_once() {
@@ -1785,7 +1811,7 @@ fn rss() -> Option<u64> {
 #[test]
 fn sixty_thousand_frames_exceed_wasmtime_default() {
     crate::test_stack::on_guest_stack(|| {
-        let engine = Engine::default();
+        let engine = crate::runtime::test_engine();
         let bytes = wat::parse_str(
             r#"(module
           (func $recurse (export "recurse") (param i32) (result i32)
@@ -2023,6 +2049,24 @@ fn a_guest_call_that_answers_nothing_names_why() {
         ),
         "wasm trap: wasm `unreachable` instruction executed"
     );
+    // Allowed by the limit but refused by the system: the reason says so, with the size asked.
+    let mut limits = Limits::new("a+b".into(), 64);
+    assert!(
+        wasmtime::ResourceLimiter::memory_growing(&mut limits, 32 << 20, 48 << 20, None).unwrap()
+    );
+    wasmtime::ResourceLimiter::memory_grow_failed(
+        &mut limits,
+        wasmtime::Error::msg("out of memory"),
+    )
+    .unwrap();
+    assert_eq!(
+        fault_reason(
+            &wasmtime::Error::new(wasmtime::Trap::UnreachableCodeReached),
+            100,
+            &mut limits
+        ),
+        "wasm trap: wasm `unreachable` instruction executed, after memory.grow to 48 MiB was refused by the system below group a+b's limit of 64 MiB"
+    );
     note("its group has stopped after an earlier fault".into());
     assert_eq!(
         take_refusal(),
@@ -2133,7 +2177,7 @@ fn grow_until_refused(memory_mib: u32) -> i32 {
     let pages = grow.call(&mut store, ()).unwrap();
     assert_eq!(
         store.data().limits.refused_growth,
-        Some(((pages as usize) + 1) << 16)
+        Some((((pages as usize) + 1) << 16, false))
     );
     pages
 }
@@ -2292,4 +2336,54 @@ fn contended_prepared_release_at_capacity_cleans_up_before_slot_reuse() {
             token.1
         );
     });
+}
+
+/// A member as the production engine links it, alone in its group; the refusal if there is one.
+fn link_alone(text: &str) -> Option<crate::link::LinkError> {
+    let bytes = wat::parse_str(text).unwrap();
+    let engine = crate::runtime::engine().unwrap();
+    crate::test_stack::on_guest_stack(|| {
+        Group::link(
+            &engine,
+            &[Member {
+                name: "threads",
+                module: &bytes,
+            }],
+        )
+        .err()
+    })
+}
+
+fn refused_with(text: &str, fragment: &str) {
+    match link_alone(text) {
+        Some(crate::link::LinkError::Malformed { member, why }) => {
+            assert_eq!(member, "threads");
+            assert!(why.contains(fragment), "{why}");
+        }
+        other => panic!("expected a malformed refusal containing {fragment:?}, got {other:?}"),
+    }
+}
+
+#[test]
+#[ignore = "daily"]
+fn shared_memory_and_atomics_are_refused_and_an_ordinary_member_links() {
+    refused_with(
+        r#"(module (@custom "dylink.0" "\01\04\00\00\00\00")
+        (import "env" "memory" (memory 1 1 shared)))"#,
+        "threads must be enabled for shared memories",
+    );
+    refused_with(
+        r#"(module (@custom "dylink.0" "\01\04\00\00\00\00")
+        (import "env" "memory" (memory 1))
+        (func (export "read") (result i32) i32.const 0 i32.atomic.load))"#,
+        "threads support is not enabled",
+    );
+    assert!(
+        link_alone(
+            r#"(module (@custom "dylink.0" "\01\04\00\00\00\00")
+            (import "env" "memory" (memory 1))
+            (func (export "read") (result i32) i32.const 0 i32.load))"#
+        )
+        .is_none()
+    );
 }

@@ -33,6 +33,15 @@ and fireballs a chunk saves, fireworks and tridents; an ender pearl's comes from
 cooldown; `None` means a kind with no portal cooldown (armor stands, wind charges, the separately modelled dragon and
 others), a client, or a stale, parked or otherwise unavailable handle. The read does not load levels.
 
+`EntityRef::set_portal_cooldown` takes `&mut dyn ServerHost` and writes the value the read returns, for the kinds
+whose cooldown the level's portal walk owns: mobs, items, experience orbs, boats, minecarts, primed TNT, fireworks,
+tridents, arrows and the thrown items and fireballs a chunk saves. A positive value blocks portal entry on the next
+tick (and is refilled while the entity stands in a portal), and `0` lets it enter at once. A negative value, a
+client-side write and a stale handle are refused (`false`). The write also refuses a player, an acting guest, a
+falling block and an ender pearl by name: each keeps its cooldown in a store of its own (the player and guest portal
+states, the falling block's saved field, an End gateway traveller) that this write does not own, so a write can only
+reach them once that kind has its own owner decision.
+
 `MobRef::can_use_portal` reads the existing server portal decision for a mob in the current level, including mounts and player riders. It takes `&dyn Host`: `Some(false)` means the mob is ineligible, while `None` means a client, stale or unavailable handle, parked mob, or the separately modelled dragon. It does not load a level.
 
 `EntityRef::leash_holder` takes `&dyn Host` and reads the live lead of a mob or boat. `LeashHolder::Unleashed`
@@ -44,6 +53,20 @@ level is parked, or that a saved holder has not resolved; this read neither load
 fence as `Leashable.setLeashedTo` does: the entity lets go of any other holder and gets off its vehicle, and neither
 `canBeLeashed` nor the distance is asked, so a holder too far away snaps the lead on the next tick. `detach_leash`
 drops the lead as an item or removes it; a mob's removal fires `entity_unleash`.
+
+## Physics
+
+`EntityRef::no_physics` takes `&dyn Host` and reads `Entity.noPhysics`: whether the entity's moves pass
+through blocks. A player's is its spectator state; a mob's and an unsimulated kind's is the value a mod
+wrote, `Some(false)` until then; an armor stand's is `Marker || NoGravity` until a mod writes it; an item
+entity reads `None`, because its own tick recomputes the flag from the blocks it is in. The ender dragon, an
+area-effect cloud, an ominous item spawner and a shulker bullet start at `Some(true)`, the value their
+constructors set, and answer it until a mod writes another.
+`set_no_physics` takes `&mut dyn ServerHost` and writes it on the server only.
+It is refused for a player, an item entity and a vex, whose own tick rewrites the flag. An arrow's or a
+trident's write also updates the synced flag clients read. An armor stand recomputes the flag as
+`Marker || NoGravity` when it is loaded, so its write is not persisted; an unsimulated kind keeps the value
+in its saved compound.
 
 ## Mob flags
 

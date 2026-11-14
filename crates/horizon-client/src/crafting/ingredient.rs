@@ -188,6 +188,47 @@ impl Ingredient {
             _ => false,
         }
     }
+    /// Every mod kind named in `v`, nested ones included, with whether
+    /// `resolve` already left an empty answer for it. Walks the same shapes
+    /// `resolve` does.
+    pub fn custom_kinds(v: &Value) -> Vec<(String, bool)> {
+        let mut found = Vec::new();
+        Self::collect_custom_kinds(v, &mut found);
+        found
+    }
+    fn collect_custom_kinds(v: &Value, found: &mut Vec<(String, bool)>) {
+        match v {
+            Value::Array(entries) => entries
+                .iter()
+                .for_each(|e| Self::collect_custom_kinds(e, found)),
+            Value::Object(o) => {
+                let parts: &[&str] = match ingredient_kind(o) {
+                    Some("neoforge:compound" | "neoforge:intersection") => {
+                        &["children", "ingredients"]
+                    }
+                    Some("neoforge:difference") => &["base", "subtracted"],
+                    Some("neoforge:custom_display") => &["base"],
+                    Some("neoforge:components" | "neoforge:block_tag") => &[],
+                    Some(k) if is_custom(k) => {
+                        let empty = o
+                            .get(RESOLVED_ITEMS)
+                            .and_then(Value::as_array)
+                            .is_some_and(Vec::is_empty);
+                        found.push((k.to_owned(), empty));
+                        &[]
+                    }
+                    Some(_) => &[],
+                    None => &["item"],
+                };
+                for key in parts {
+                    if let Some(part) = o.get(*key) {
+                        Self::collect_custom_kinds(part, found);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
     /// Drops every answer `resolve` left anywhere in `v`: what a load sends
     /// or shows is the files' own JSON. `true`: `v` changed.
     // hidden: the load's half of the ingredient hook, not part of the mod surface
@@ -233,13 +274,14 @@ impl Ingredient {
                 )
             },
             &resolved_items,
-            &|data| crate::json_nbt::json_to_compound(data).ok(),
+            &components::json_patch,
         );
         let Some(walked) = walked else {
             log::error!("recipes: invalid ingredient (unresolved tag or malformed input): {v}");
             return None;
         };
-        if walked.order.is_empty() {
+        // A mod kind's empty answer is warned about at load, with its recipe file.
+        if walked.order.is_empty() && walked.custom.is_none() {
             log::warn!(
                 "recipes: ingredient has no placement candidates; recipe cannot be placed: {v}"
             );
@@ -306,7 +348,7 @@ impl Ingredient {
 mod custom_data_tests;
 
 #[cfg(test)]
-#[path = "ingredient/builtin_kinds_tests.rs"]
+#[path = "ingredient/builtin_kinds_tests/mod.rs"]
 mod builtin_kinds_tests;
 
 #[cfg(test)]

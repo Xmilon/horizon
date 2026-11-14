@@ -93,6 +93,36 @@ pub struct ColumnBlocks {
     pub blocks: Vec<u16>,
     pub tints: Vec<u32>,
 }
+/// Why `upgrade_block_entity_nbt` or `upgrade_entity_nbt` gave no upgraded value. Depth is counted as the data is
+/// encoded (the root compound at 0): the compound the NBT writer puts around an element of a mixed list is a level
+/// of its own. There is no size refusal.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+#[derive(horizon_mod_api_macros::Wire)]
+pub enum NbtUpgradeError {
+    /// The data version is below zero. Refused before any fix runs.
+    NegativeVersion(i32),
+    /// The data version is newer than the game's: the fixes only go forward. Refused before any fix runs.
+    FutureVersion(i32),
+    /// The data given has a list or compound 512 levels deep or more, the depth cap of every NBT read. Refused
+    /// before any fix runs.
+    TooDeep,
+    /// The data given was within the cap, but the fixes made it deeper (1.9's `Riding` to `Passengers` doubles a
+    /// chain's depth) and the upgraded data has a list or compound 512 levels deep or more: no NBT read, vanilla's
+    /// included, could take it back. Nothing is returned.
+    UpgradedTooDeep,
+}
+impl std::fmt::Display for NbtUpgradeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NegativeVersion(v) => write!(f, "data version {v} is negative"),
+            Self::FutureVersion(v) => write!(f, "data version {v} is newer than the game's"),
+            Self::TooDeep => f.write_str("the data nests 512 levels deep or more"),
+            Self::UpgradedTooDeep => f.write_str("the upgraded data nests 512 levels deep or more"),
+        }
+    }
+}
+impl std::error::Error for NbtUpgradeError {}
 /// Which side reads a config and when (NeoForge's `ModConfig.Type`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -165,9 +195,11 @@ pub struct ConfigFile {
 #[derive(horizon_mod_api_macros::Wire)]
 pub struct DataMapType {
     /// `mod_id:name`: not in the `minecraft` namespace. Its files are
-    /// `data/<mod_id>/data_maps/<registry path>/<name>.json`.
+    /// `data/<mod_id>/data_maps/<registry folder>/<name>.json`, the
+    /// registry's own path for a `minecraft` registry, `<namespace>/<path>`
+    /// otherwise.
     pub id: String,
-    /// The registry it is for: `minecraft:item` or `minecraft:block`.
+    /// The registry it is for: any the game names (`minecraft:item`, `minecraft:entity_type`...).
     pub registry: String,
 }
 /// A mod the world was saved with that differs from the loaded mods

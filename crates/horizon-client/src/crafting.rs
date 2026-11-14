@@ -1478,9 +1478,10 @@ impl ResolvedSources {
     ) -> Self {
         // Every consumer keeps vanilla's resource-file registration order.
         sources.sort_by_cached_key(|(name, _)| registration_key(name));
+        let listened = mod_api::__private::listened(mod_api::HookId::Ingredient);
         let recipes = sources
             .into_iter()
-            .map(|(name, file)| {
+            .filter_map(|(name, file)| {
                 let mut resolved = file.clone();
                 let parsed_here = resolved["type"]
                     .as_str()
@@ -1505,17 +1506,43 @@ impl ResolvedSources {
                         }
                     }
                 }
+                if parsed_here {
+                    let kinds: Vec<_> = INGREDIENT_KEYS
+                        .iter()
+                        .filter_map(|key| resolved.get(*key))
+                        .chain(
+                            INGREDIENT_MAPS
+                                .iter()
+                                .filter_map(|key| resolved.get(*key)?.as_object())
+                                .flat_map(|map| map.values()),
+                        )
+                        .flat_map(Ingredient::custom_kinds)
+                        .collect();
+                    if !listened && let Some((kind, _)) = kinds.first() {
+                        // No mod answers the `ingredient` hook: the kind is
+                        // unregistered, and the whole file fails.
+                        log::error!(
+                            "recipes: {name} refused: ingredient kind {kind} is not registered by any mod"
+                        );
+                        return None;
+                    }
+                    for (kind, _) in kinds.iter().filter(|(_, empty)| *empty) {
+                        log::warn!(
+                            "recipes: {name}: ingredient kind {kind} matched no items; the recipe cannot be placed"
+                        );
+                    }
+                }
                 let file = Arc::new(file);
                 let resolved = if changed {
                     Arc::new(resolved)
                 } else {
                     Arc::clone(&file)
                 };
-                ResolvedRecipe {
+                Some(ResolvedRecipe {
                     name,
                     file,
                     resolved,
-                }
+                })
             })
             .collect();
         Self {

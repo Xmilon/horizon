@@ -1,6 +1,14 @@
 //! Item stack components beyond count and damage: enchantments, stored
 //! (book) enchantments, `repair_cost`, `custom_name`, `potion_contents` and
 //! `trim`, with their NBT form in vanilla's `components` compound.
+#[path = "item_data/brewing_fuel.rs"]
+pub mod brewing_fuel;
+#[path = "item_data/component_values.rs"]
+pub mod component_values;
+#[path = "item_data/cooking_fuel.rs"]
+pub mod cooking_fuel;
+#[path = "item_data/custom_model_data.rs"]
+pub mod custom_model_data;
 #[path = "item_data/ingredient_components.rs"]
 pub mod ingredient_components;
 use crate::items::{ItemInfo, ItemStack};
@@ -471,6 +479,38 @@ pub fn component_bool(value: &Tag) -> Option<bool> {
     })
 }
 
+/// `FoodProperties.DIRECT_CODEC`: required numeric nutrition/saturation and an
+/// optional NbtOps boolean. Unknown fields are ignored; floats are unrestricted.
+/// Reads borrowed NBT into the existing copyable value without allocating.
+pub fn food_properties(
+    value: &Tag,
+) -> Result<horizon_world::food_properties::FoodProperties, &'static str> {
+    if !matches!(value, Tag::Compound(_)) {
+        return Err("food must be a map");
+    }
+    let nutrition = value
+        .get("nutrition")
+        .and_then(crate::properties::component_int)
+        .ok_or("nutrition must be a number")?;
+    if nutrition < 0 {
+        return Err("nutrition must be non-negative");
+    }
+    let saturation = value
+        .get("saturation")
+        .and_then(crate::properties::component_float)
+        .ok_or("saturation must be a number")?;
+    let can_always_eat = value
+        .get("can_always_eat")
+        .map(component_bool)
+        .unwrap_or(Some(false))
+        .ok_or("can_always_eat must be a number")?;
+    Ok(horizon_world::food_properties::FoodProperties {
+        nutrition,
+        saturation,
+        can_always_eat,
+    })
+}
+
 impl ItemStack {
     pub fn new(item: &str, count: u32) -> Self {
         Self {
@@ -479,6 +519,12 @@ impl ItemStack {
             damage: 0,
             extra: None,
         }
+    }
+    /// The stack `ItemStack.CODEC` reads from `tag` (`id`, `count`,
+    /// `components`), as `item_nbt::item_from_nbt` does; None for air or an
+    /// id that is no valid identifier. The id is not looked up in a registry.
+    pub fn from_nbt(tag: &horizon_core::nbt::Compound) -> Option<Self> {
+        crate::item_nbt::item_from_nbt(&Tag::Compound(tag.clone()))
     }
     pub fn data(&self) -> Option<&StackData> {
         self.extra.as_deref()
@@ -1643,7 +1689,7 @@ pub fn decode_components(components: Option<&Tag>) -> (u32, Option<Box<StackData
             .get("minecraft:kinetic_weapon")
             .cloned()
             .map(crate::kinetic_weapon::KineticComponent::new),
-        map_id: c.get("minecraft:map_id").and_then(int).map(|v| v as i32),
+        map_id: seen.map_id.and_then(crate::properties::component_int),
         banner_patterns: crate::banner_layer::layers_from_nbt(c.get("minecraft:banner_patterns")),
         base_color: c
             .get("minecraft:base_color")
@@ -1670,7 +1716,9 @@ pub fn decode_components(components: Option<&Tag>) -> (u32, Option<Box<StackData
             })
             .filter(|(flight, explosions)| !(*flight == 1 && explosions.is_empty())),
         firework_explosion: seen.firework_explosion.map(explosion_from),
-        dyed_color: seen.dyed_color.and_then(int).map(|v| v as i32),
+        dyed_color: seen
+            .dyed_color
+            .and_then(horizon_core::color::rgb_color_from_tag),
         pot_decorations: seen
             .pot_decorations
             .map(|p| {
@@ -1727,7 +1775,11 @@ pub fn decode_components(components: Option<&Tag>) -> (u32, Option<Box<StackData
             && matches!(
                 seen.banner_patterns,
                 Some(Tag::List(layers)) if layers.len() == OMINOUS_LAYERS.len()),
-        ominous_amplifier: seen.amplifier.and_then(int).map(|v| v.clamp(0, 4) as u8),
+        ominous_amplifier: seen
+            .amplifier
+            .and_then(crate::properties::component_int)
+            .filter(|v| (0..=4).contains(v))
+            .map(|v| v as u8),
         trim: seen.trim.and_then(trim::from_nbt),
         bundle_selected: BundleSelected::default(),
         other: Vec::new(),
@@ -3028,8 +3080,7 @@ mod tests {
             firework_explosion: c.get("minecraft:firework_explosion").map(explosion_from),
             dyed_color: c
                 .get("minecraft:dyed_color")
-                .and_then(int)
-                .map(|v| v as i32),
+                .and_then(horizon_core::color::rgb_color_from_tag),
             pot_decorations: c
                 .get("minecraft:pot_decorations")
                 .map(|p| {

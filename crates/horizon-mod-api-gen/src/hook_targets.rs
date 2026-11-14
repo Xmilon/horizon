@@ -79,6 +79,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "daily"]
     fn every_catalog_target_resolves_and_missing_function_is_rejected() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut catalog = Catalog::load(&root).unwrap();

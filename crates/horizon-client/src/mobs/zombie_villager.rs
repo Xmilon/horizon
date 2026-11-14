@@ -332,6 +332,7 @@ mod tests {
         let world = crate::world::World::new(air, 0);
         let lid_openers = std::collections::HashMap::new();
         let w = MobWorld {
+            mob_maps: horizon_client::neoforge_mob_maps::NeoForgeMobMaps::vanilla(),
             goal_host: None,
             live_mobs: None,
             teams: Default::default(),
@@ -387,6 +388,7 @@ mod tests {
             asks_living_destroy_block: false,
             asks_baby_spawn: false,
             border: None,
+            section_writer: None,
         };
         for no_ai in [false, true] {
             let kind = std::sync::Arc::new(types.types["minecraft:zombie_villager"].clone());

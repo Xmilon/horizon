@@ -186,6 +186,7 @@ pub(super) fn player_type_with_document(
 fn load_player_type(models: &horizon_client::mobs::EntityModelDocument) -> Option<Arc<MobType>> {
     models.model("minecraft:player#main").map(|model| {
         Arc::new(MobType {
+            shadow: None,
             id: "minecraft:player".into(),
             // Players render as a humanoid; the species only drives local AI.
             species: horizon_client::mobs::Species::Zombie,
@@ -2006,7 +2007,7 @@ mod preview_tests {
             pois: Default::default(),
             species_placements: Default::default(),
             mod_spawns: Default::default(),
-            pathfindable_overrides: Default::default(),
+            resolved: Default::default(),
         };
         let draw = |body: bool| {
             let mut out = Vec::new();

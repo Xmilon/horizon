@@ -15,6 +15,7 @@ use std::sync::Arc;
 /// tick 11999 and discarded at 12000, while an ordinary drop beside it is
 /// discarded at 6000.
 #[test]
+#[ignore = "daily"]
 fn a_withers_nether_star_lives_12000_ticks() {
     if std::env::var_os("HORIZON_TEST_RESOURCES").is_none() {
         return; // CI has no prepared resources.

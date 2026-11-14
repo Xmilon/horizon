@@ -13,7 +13,8 @@
 //! admits, and each function marked with `#[horizon_mod_api_macros::replaceable]` in the crates below it. The source tree
 //! carries none of this: only a staged copy does, and everything the pass writes stays on the
 //! line it annotates, so the staged source's line numbers are the pinned source's.
-use crate::source::{self, GameFile};
+use crate::source::{self};
+use mod_source::modules::ModuleFile;
 use quote::quote;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -690,9 +691,9 @@ fn functions<'a>(
     let foreign = foreign_imports(items);
     for item in items {
         match item {
-            Item::Mod(inline) if !source::gated(&inline.attrs) => {
+            Item::Mod(inline) if !mod_source::modules::gated(&inline.attrs) => {
                 if let Some((_, inner)) = &inline.content
-                    && !source::test_only(&inline.attrs)
+                    && !mod_source::modules::test_only(&inline.attrs)
                 {
                     functions(
                         &format!("{module}::{}", inline.ident),
@@ -704,7 +705,8 @@ fn functions<'a>(
                 }
             }
             Item::Fn(function)
-                if !source::gated(&function.attrs) && eligible(&function.attrs, &function.sig) =>
+                if !mod_source::modules::gated(&function.attrs)
+                    && eligible(&function.attrs, &function.sig) =>
             {
                 out.push(Found {
                     module: module.to_owned(),
@@ -717,7 +719,7 @@ fn functions<'a>(
                 });
             }
             Item::Impl(block)
-                if !source::gated(&block.attrs)
+                if !mod_source::modules::gated(&block.attrs)
                     && lifetimes_only(&block.generics)
                     && matches!(&*block.self_ty, Type::Path(ty) if ty.qself.is_none()) =>
             {
@@ -776,8 +778,9 @@ fn inventory(
             Item::Mod(inline) => {
                 if let Some((_, inner)) = &inline.content {
                     let reason = inherited.or_else(|| {
-                        (source::gated(&inline.attrs) || source::test_only(&inline.attrs))
-                            .then_some("conditional/test module")
+                        (mod_source::modules::gated(&inline.attrs)
+                            || mod_source::modules::test_only(&inline.attrs))
+                        .then_some("conditional/test module")
                     });
                     inventory(
                         &format!("{module}::{}", inline.ident),
@@ -792,7 +795,7 @@ fn inventory(
             Item::Fn(function) => record(&function.attrs, &function.sig, inherited, counts),
             Item::Impl(block) => {
                 let reason = inherited.or_else(|| {
-                    if source::gated(&block.attrs) {
+                    if mod_source::modules::gated(&block.attrs) {
                         Some("conditional impl")
                     } else if !lifetimes_only(&block.generics) {
                         Some("impl type/const generics")
@@ -869,7 +872,8 @@ pub(crate) fn marked(root: &Path) -> Result<Vec<(String, String)>, String> {
                                         .then_some("impl type/const generics")
                                 })
                                 .or_else(|| {
-                                    source::gated(&block.attrs).then_some("conditional impl")
+                                    mod_source::modules::gated(&block.attrs)
+                                        .then_some("conditional impl")
                                 });
                             if let Some(reason) = reason {
                                 return Err(format!(
@@ -945,17 +949,8 @@ pub(crate) fn marked(root: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(out)
 }
 
-/// Why `target` has no replacement slot when it names a function below the game crate that the
-/// marker is absent; none for a game-crate target or a marked one.
-pub fn refusal(root: &Path, target: &str) -> Result<Option<String>, String> {
-    let target = source::plain_path(target);
-    if target.split("::").next() == Some("horizon_client")
-        || marked(root)?.iter().any(|(_, path)| *path == target)
-    {
-        return Ok(None);
-    }
-    Ok(Some("a function below the game crate takes a replacement only when it carries #[horizon_mod_api_macros::replaceable]; ask for it in an issue or pull request on the game".to_owned()))
-}
+/// The refusal of a target below the game crate without the marker.
+pub const UNMARKED: &str = "a function below the game crate takes a replacement only when it carries #[horizon_mod_api_macros::replaceable]; ask for it in an issue or pull request on the game";
 
 /// What [`stage`] did.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -966,6 +961,8 @@ pub struct Staged {
     pub files: usize,
     /// Crates given a slot array.
     pub crates: usize,
+    /// The functions given a slot, by their key in the function index.
+    pub slots: BTreeSet<String>,
 }
 
 /// The library name of the package at `package`: its `[lib]` name, or its own with underscores.
@@ -992,7 +989,7 @@ struct Crate {
     name: String,
     /// Its library root, where its slot array goes.
     lib: PathBuf,
-    files: Vec<GameFile>,
+    files: Vec<ModuleFile>,
     /// Whether only its marked functions are replaceable.
     marked_only: bool,
     /// Its package folder.
@@ -1075,6 +1072,11 @@ pub fn stage(root: &Path) -> Result<Staged, String> {
                         .is_some()
                 });
             }
+            staged.slots.extend(
+                found
+                    .iter()
+                    .map(|function| crate::functions::key(&function.target())),
+            );
             trait_methods += found
                 .iter()
                 .filter(|function| function.trait_name.is_some())
@@ -1163,7 +1165,7 @@ fn lexical(path: &Path) -> PathBuf {
 }
 
 /// A package's manifest, parsed.
-fn manifest(package: &Path) -> Result<toml::Table, String> {
+pub(crate) fn manifest(package: &Path) -> Result<toml::Table, String> {
     let path = package.join("Cargo.toml");
     let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
@@ -1666,6 +1668,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn trait_installers_compile_with_warnings_denied() {
         let source = "pub struct Example; pub trait GameTrait { fn value(&self) -> u32; } impl GameTrait for Example { fn value(&self) -> u32 { 7 } }";
         let file = syn::parse_file(source).unwrap();
@@ -1775,25 +1778,6 @@ mod tests {
             "{out}"
         );
         syn::parse_file(&out).unwrap();
-    }
-
-    #[test]
-    fn an_unmarked_function_below_the_game_crate_is_refused_naming_the_marker() {
-        let root = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.path().join("crates/horizon-low/src")).unwrap();
-        fs::write(
-            root.path().join("crates/horizon-low/Cargo.toml"),
-            "[package]\nname = \"horizon-low\"\n",
-        )
-        .unwrap();
-        fs::write(root.path().join("crates/horizon-low/src/lib.rs"), "struct Clock; impl Clock { #[horizon_mod_api_macros::replaceable] fn advance(&self) {} }").unwrap();
-        let refusal = |target| refusal(root.path(), target).unwrap();
-        assert_eq!(refusal("horizon_client::game::Game<'_>::tick"), None);
-        assert_eq!(refusal("horizon_low::Clock::advance"), None);
-        assert_eq!(
-            refusal("horizon_low::chunk::Chunk::get").unwrap(),
-            "a function below the game crate takes a replacement only when it carries #[horizon_mod_api_macros::replaceable]; ask for it in an issue or pull request on the game"
-        );
     }
 
     #[test]
@@ -2133,7 +2117,12 @@ mod tests {
             Staged {
                 functions: 3,
                 files: 2,
-                crates: 2
+                crates: 2,
+                slots: BTreeSet::from([
+                    "horizon_client::game::Game::native_tick".to_owned(),
+                    "horizon_client::game::free".to_owned(),
+                    "horizon_low::drawn".to_owned(),
+                ]),
             }
         );
         let lib = fs::read_to_string(root.path().join("crates/horizon-client/src/lib.rs")).unwrap();

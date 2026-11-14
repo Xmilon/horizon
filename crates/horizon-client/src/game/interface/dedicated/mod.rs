@@ -1,3 +1,4 @@
+// game-module-visibility: pub(crate)
 //! The dedicated server (net.minecraft.server.Main and DedicatedServer):
 //! `horizon-client --dedicated [--nogui] [--port N] [--world NAME]
 //! [--universe DIR] [--initSettings]`. It reads server.properties and
@@ -39,6 +40,8 @@ use std::{
 };
 
 mod biome_regions;
+mod missing_mods;
+pub(crate) use missing_mods::is_missing_mods_refusal;
 pub(super) mod events;
 mod management;
 mod predicate_graph;
@@ -153,23 +156,6 @@ impl Watchdog {
     }
 }
 
-/// Double.toString for the magnitudes positions have (no exponent form
-/// between 1e-3 and 1e7).
-pub(super) fn java_double(v: f64) -> String {
-    if v == 0.0 || (1e-3..1e7).contains(&v.abs()) {
-        format!("{v:?}")
-    } else {
-        let s = format!("{v:E}");
-        let (m, e) = s.split_once('E').unwrap_or((&s, "0"));
-        let m = if m.contains('.') {
-            m.to_owned()
-        } else {
-            format!("{m}.0")
-        };
-        format!("{m}E{e}")
-    }
-}
-
 /// What the startup read before the game's resources were loaded.
 struct Setup {
     props: ServerProperties,
@@ -177,6 +163,8 @@ struct Setup {
     level_name: String,
     port: Option<u16>,
     started: Instant,
+    /// `--allowMissingMods`: open a world whose saved mods are missing (`missing_mods`).
+    allow_missing_mods: bool,
 }
 static SETUP: OnceLock<Mutex<Option<Setup>>> = OnceLock::new();
 /// usercache.json (Services.nameToIdCache): used by the server thread only.
@@ -278,6 +266,62 @@ fn load_combat() -> bool {
     }
 }
 
+/// `server.toml`'s `[entities]` (docs/server.md): `villager_lobotomize` and its check interval. Off without
+/// the file or the section, and (with an error logged) when the section is wrong.
+fn load_entities() {
+    let text = std::fs::read_to_string("server.toml").unwrap_or_default();
+    match parse_entities(&text) {
+        Ok((on, interval)) => {
+            if on {
+                log(
+                    "INFO",
+                    &format!(
+                        "villagers that cannot move skip their brain, rechecked every {interval} ticks (server.toml [entities])"
+                    ),
+                );
+            }
+            horizon_client::mobs::villager::lobotomy::configure(on, interval);
+        }
+        Err(e) => log(
+            "ERROR",
+            &format!("server.toml: {e}; villagers keep their brains"),
+        ),
+    }
+}
+
+/// The `[entities]` section of a `server.toml`: (`villager_lobotomize`, its check interval in ticks). The
+/// section's other keys (`dab`...) belong to other settings, so they are skipped here; `horizon-server` refuses
+/// typos when it reads the file.
+fn parse_entities(text: &str) -> std::result::Result<(bool, u32), String> {
+    #[derive(serde::Deserialize)]
+    #[serde(default)]
+    struct Entities {
+        villager_lobotomize: bool,
+        villager_lobotomize_check_interval: u32,
+    }
+    impl Default for Entities {
+        fn default() -> Self {
+            Self {
+                villager_lobotomize: false,
+                villager_lobotomize_check_interval:
+                    horizon_client::mobs::villager::lobotomy::DEFAULT_INTERVAL,
+            }
+        }
+    }
+    let mut table = toml::from_str::<toml::Table>(text).map_err(|e| e.to_string())?;
+    let Some(section) = table.remove("entities") else {
+        return Ok((
+            false,
+            Entities::default().villager_lobotomize_check_interval,
+        ));
+    };
+    let e: Entities = section.try_into().map_err(|e| format!("[entities]: {e}"))?;
+    if e.villager_lobotomize_check_interval == 0 {
+        return Err("[entities]: villager_lobotomize_check_interval must be at least 1".into());
+    }
+    Ok((e.villager_lobotomize, e.villager_lobotomize_check_interval))
+}
+
 /// The secret for Velocity's player information forwarding, from `forwarding.secret` beside server.properties.
 /// No file means no forwarding. A file that is empty or can't be read stops the start, because an empty secret
 /// would let anyone sign a login, and a typo must not leave a server open that was meant to be behind a proxy.
@@ -376,6 +420,7 @@ pub(super) fn preflight(options: &mut Options) -> Result<bool> {
     let mut world = None;
     let mut port = None;
     let mut init_settings = false;
+    let mut allow_missing_mods = false;
     for argument in crate::entry::dedicated_arguments::parse(&args) {
         let (name, value) = argument?;
         match name {
@@ -389,9 +434,15 @@ pub(super) fn preflight(options: &mut Options) -> Result<bool> {
             | "jfrProfile"
             | "game-tests" => {}
             "initSettings" => init_settings = true,
+            name if name == horizon_client::save::level_mods::ALLOW_FLAG => {
+                allow_missing_mods = true
+            }
             "help" => {
+                let allow = missing_mods::in_english(|| {
+                    horizon_client::lang::get("horizon.missing_mods.server.help")
+                });
                 eprintln!(
-                    "Option                Description\n------                -----------\n--help\n--game-tests          Enables test-only mod content (or HORIZON_GAME_TESTS=1/true)\n--initSettings        Initializes 'server.properties' and 'eula.txt', then quits\n--nogui\n--port <Integer>      (default: -1)\n--universe <String>   (default: .)\n--world <String>"
+                    "Option                Description\n------                -----------\n--allowMissingMods    {allow}\n--help\n--game-tests          Enables test-only mod content (or HORIZON_GAME_TESTS=1/true)\n--initSettings        Initializes 'server.properties' and 'eula.txt', then quits\n--nogui\n--port <Integer>      (default: -1)\n--universe <String>   (default: .)\n--world <String>"
                 );
                 return Ok(false);
             }
@@ -479,6 +530,7 @@ pub(super) fn preflight(options: &mut Options) -> Result<bool> {
             level_name,
             port,
             started,
+            allow_missing_mods,
         });
     Ok(true)
 }
@@ -976,6 +1028,7 @@ impl Game<'_> {
             level_name,
             port,
             started,
+            allow_missing_mods,
         } = SETUP
             .get()
             .and_then(|m| m.lock().unwrap().take())
@@ -986,6 +1039,9 @@ impl Game<'_> {
         let new_world = !world_dir.join("level.dat").exists();
         if new_world {
             self.write_world_gen(&world_dir, &props)?;
+        } else {
+            // Before anything writes the world: a refusal leaves it as it was saved.
+            self.check_missing_mods(&world_dir, allow_missing_mods)?;
         }
         // The console thread starts first, as in initServer.
         let (tx, console) = mpsc::channel();
@@ -1103,7 +1159,7 @@ impl Game<'_> {
         self.native_server_starting(true);
         self.native_lifecycle_open_started();
         // The registries the server sends are read while the world prepares.
-        let sync = super::lan::preload_sync_data(&self.res.core.item_data);
+        let sync = super::lan::sync::preload_sync_data(&self.res.core.item_data);
         self.finish_open_world(prepared)?;
         // WorldLoader: the world's packs must load before the server starts. The data store is read
         // now rather than at the first tick (reading parses functions; it runs none), and a broken
@@ -1316,6 +1372,8 @@ impl Game<'_> {
         let anticheat_on = anticheat.enabled;
         let chat_filter = load_chat_filter();
         self.set_pvp_legacy_rules(load_combat());
+        self.read_runtime_level_cap(|key| props.raw.get(key));
+        load_entities();
         // Horizon's far ring (docs/hosting.md): server.toml's `max_view_distance`.
         let far = props
             .raw
@@ -2744,6 +2802,25 @@ mod tests {
         });
     }
     #[test]
+    fn entities_section_is_off_by_default_and_keeps_the_other_settings_keys() {
+        use super::parse_entities;
+        assert_eq!(parse_entities(""), Ok((false, 100)));
+        assert_eq!(
+            parse_entities(
+                "[entities]\nvillager_lobotomize = true\nvillager_lobotomize_check_interval = 40\n"
+            ),
+            Ok((true, 40))
+        );
+        assert_eq!(
+            parse_entities(
+                "[entities]\ndab = true\nmax_collisions = 8\nvillager_lobotomize = true\n"
+            ),
+            Ok((true, 100))
+        );
+        assert!(parse_entities("[entities]\nvillager_lobotomize_check_interval = 0\n").is_err());
+    }
+
+    #[test]
     fn whitelist_bypass_file_takes_uuid_prefixes_and_refuses_junk() {
         let ok =
             parse_whitelist_bypass("# Bedrock\n00000000-0000-0000-0009-  # floodgate\n\n").unwrap();
@@ -2873,6 +2950,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "daily"]
     fn console_logging_survives_closed_stdout() {
         if let Some(home) = std::env::var_os(CHILD_HOME) {
             horizon_client::logging::init(std::path::Path::new(&home), "Server thread");
@@ -2909,6 +2987,7 @@ mod tests {
             fs::create_dir(&home).unwrap();
             let mut child = Command::new(std::env::current_exe().unwrap())
                 .args([
+                    "--include-ignored",
                     "--exact",
                     "game::dedicated::tests::console_logging_survives_closed_stdout",
                     "--nocapture",
