@@ -369,7 +369,9 @@ impl Launcher {
                 pane = pane.children(self.export_panel(cx).map(|panel| panel.ml(px(0.))));
             }
             SheetTab::Storage => {
-                pane = pane.child(self.sheet_space(&editing, cx)).child(not_selected());
+                pane = pane
+                    .child(self.sheet_space(&editing, cx))
+                    .child(not_selected());
             }
             SheetTab::Launch | SheetTab::Hooks => {
                 pane = pane.child(not_selected());
@@ -441,14 +443,7 @@ impl Launcher {
             .flex()
             .flex_col()
             .child(head)
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h_0()
-                    .child(cats)
-                    .child(pane),
-            )
+            .child(div().flex().flex_1().min_h_0().child(cats).child(pane))
             .child(foot.border_t_1().border_color(white(0.1)))
             .with_animation(
                 ElementId::named_usize("sheet-in", 0),

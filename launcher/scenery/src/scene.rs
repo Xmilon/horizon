@@ -819,6 +819,12 @@ pub struct Scene {
     fast: bool,
 }
 
+impl Default for Scene {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scene {
     pub fn new() -> Scene {
         Scene {

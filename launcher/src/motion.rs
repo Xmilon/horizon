@@ -118,14 +118,13 @@ pub fn enter(key: impl Into<ElementId>, order: usize, el: Div) -> AnyElement {
     let delay = STAGGER_MS * order.min(STAGGER_MAX) as u64;
     let total = PAGE.ms + delay;
     let start = delay as f32 / total as f32;
-    let animation =
-        Animation::new(std::time::Duration::from_millis(total)).with_easing(move |t| {
-            if t <= start {
-                0.
-            } else {
-                PAGE.ease((t - start) / (1. - start))
-            }
-        });
+    let animation = Animation::new(std::time::Duration::from_millis(total)).with_easing(move |t| {
+        if t <= start {
+            0.
+        } else {
+            PAGE.ease((t - start) / (1. - start))
+        }
+    });
     el.relative()
         .with_animation(key, animation, |d, p| {
             d.opacity(p).top(px(PAGE_RISE * (1. - p)))

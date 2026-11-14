@@ -12,11 +12,11 @@ pub mod developer_install;
 pub mod developer_offline;
 pub(crate) mod download_retry;
 pub mod export;
+pub mod folder_mods;
 #[cfg(unix)]
 pub mod game_app;
 pub mod game_log;
 pub mod github;
-pub mod folder_mods;
 pub mod github_mods;
 pub mod heads;
 pub mod i18n;

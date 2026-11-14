@@ -178,7 +178,7 @@ const STAR_PERIODS: [f32; 4] = [4., 6., 8., 10.];
 /// `HORIZON_LAUNCHER_MOTION=off`; while the window is in front (and 10 s after); or always, with
 /// `HORIZON_LAUNCHER_MOTION=always`, for recordings.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum Motion {
+pub enum Motion {
     Still,
     InFront,
     Always,
@@ -188,7 +188,7 @@ pub(crate) enum Motion {
 static PREFERENCE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Takes the player's choice: `None` follows the system, `Some(true)` holds everything still.
-pub(crate) fn set_preference(reduce: Option<bool>) {
+pub fn set_preference(reduce: Option<bool>) {
     let v = match reduce {
         None => 0,
         Some(true) => 1,
@@ -197,7 +197,7 @@ pub(crate) fn set_preference(reduce: Option<bool>) {
     PREFERENCE.store(v, std::sync::atomic::Ordering::Relaxed);
 }
 
-pub(crate) fn motion() -> Motion {
+pub fn motion() -> Motion {
     static FORCED: LazyLock<Option<Motion>> =
         LazyLock::new(
             || match std::env::var("HORIZON_LAUNCHER_MOTION").as_deref() {
@@ -287,17 +287,17 @@ fn ask_system() -> bool {
 /// The animation's own time: it runs only while the sky moves, so a window that comes back
 /// picks up where it stopped instead of jumping.
 #[derive(Default)]
-pub(crate) struct Clock {
+pub struct Clock {
     banked: Duration,
     running: Option<Instant>,
 }
 
 impl Clock {
-    pub(crate) fn at(&self, now: Instant) -> Duration {
+    pub fn at(&self, now: Instant) -> Duration {
         self.banked + self.running.map_or(Duration::ZERO, |since| now - since)
     }
 
-    pub(crate) fn set(&mut self, run: bool, now: Instant) {
+    pub fn set(&mut self, run: bool, now: Instant) {
         match (run, self.running) {
             (true, None) => self.running = Some(now),
             (false, Some(since)) => {
@@ -898,7 +898,7 @@ fn skyline_texels(line: &Skyline, art: &SkyArt, which: usize) -> (Vec<[u8; 4]>, 
 /// clouds where they start, the sun and the skylines; not the stars or a mood's drift), a colour
 /// (0 to 1) per [`TEXEL`]: what a painted theme's plates blur. Returns the colours, columns and
 /// rows.
-pub(crate) fn still_texels(n: &Night, w: f32, h: f32) -> (Vec<[f64; 3]>, usize, usize) {
+pub fn still_texels(n: &Night, w: f32, h: f32) -> (Vec<[f64; 3]>, usize, usize) {
     let cols = (w / TEXEL).ceil().max(1.) as usize;
     let rows = (h / TEXEL).ceil().max(1.) as usize;
     let rgbf = |c: u32| [16, 8, 0].map(|s| ((c >> s) & 255) as f64 / 255.);
@@ -1090,9 +1090,9 @@ impl gpui::Render for SkyView {
         let Some((n, size, scale)) = self.shown else {
             return div();
         };
-        let (sky, next) = self
-            .sky
-            .render(&n, size, scale, window.is_window_active(), Instant::now());
+        let (sky, next) =
+            self.sky
+                .render(&n, size, scale, window.is_window_active(), Instant::now());
         if let Some(next) = next {
             self.wake(next, cx);
         }

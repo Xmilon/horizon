@@ -291,7 +291,9 @@ fn category_note(category: Category) -> &'static str {
     match category {
         Category::BuildFiles => "mod tools and built mods, made again on the next build",
         Category::PrebuiltGames => "downloaded again on the next build",
-        Category::SpareGameBuilds => "games with mods for your servers, rebuilt when a server needs one",
+        Category::SpareGameBuilds => {
+            "games with mods for your servers, rebuilt when a server needs one"
+        }
         Category::RustCompiler => "needed to build mods, downloaded again when cleared",
         Category::OtherCaches => "safe to clear",
     }

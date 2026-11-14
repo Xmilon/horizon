@@ -70,9 +70,7 @@ fn colours_go_to_hsl_and_back() {
 fn every_theme_palette_reads_over_its_sky() {
     use horizon_theme::night::{over, UNCARDED_STOPS};
 
-    let palettes = THEMES
-        .iter()
-        .filter_map(|t| t.palette.map(|p| (t.id, *p)));
+    let palettes = THEMES.iter().filter_map(|t| t.palette.map(|p| (t.id, *p)));
     for (id, p) in palettes {
         let look = format!("{id} {}", if p.dark { "dark" } else { "light" });
         let texts = [

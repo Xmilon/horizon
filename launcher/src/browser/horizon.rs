@@ -84,7 +84,11 @@ pub fn requires(id: &str) -> Vec<String> {
         .map(|v| {
             v.requires
                 .iter()
-                .map(|r| index.project(&r.id).map_or_else(|| r.id.clone(), |m| m.name.clone()))
+                .map(|r| {
+                    index
+                        .project(&r.id)
+                        .map_or_else(|| r.id.clone(), |m| m.name.clone())
+                })
                 .collect()
         })
         .unwrap_or_default()

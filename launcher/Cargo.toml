@@ -49,6 +49,8 @@ horizon-prepare = { path = "../crates/horizon-prepare" }
 horizon-system = { path = "../crates/horizon-system" }
 horizon-protocol = { path = "../crates/horizon-protocol" }
 horizon-theme = { path = "../crates/horizon-theme" }
+# The sunset scene, painted skies, rain and frosted glass (`scenery/`).
+horizon-launcher-scenery = { path = "scenery" }
 # The engine, through the platform's public API (docs/layers.md): the pinned version, No AI, the preparer,
 # level.dat and servers.dat (the worlds and server lists of instances), and the official server's SRV record.
 horizon-platform = { path = "../crates/horizon-platform", features = ["prepare", "protocol", "world", "mod-build"] }

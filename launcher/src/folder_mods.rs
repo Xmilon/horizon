@@ -82,7 +82,10 @@ pub fn add(home: &Path, root: &Path) -> Result<Vec<String>, String> {
     for bundle in &found {
         install(home, bundle)?;
         let link = link_path(home, &bundle.manifest.id);
-        let folder = bundle.dir.canonicalize().unwrap_or_else(|_| bundle.dir.clone());
+        let folder = bundle
+            .dir
+            .canonicalize()
+            .unwrap_or_else(|_| bundle.dir.clone());
         fs::write(&link, folder.to_string_lossy().as_bytes())
             .map_err(|e| format!("{}: {e}", link.display()))?;
         ids.push(bundle.manifest.id.clone());
@@ -141,14 +144,18 @@ mod tests {
         let home = std::env::temp_dir().join(format!("hz-folder-add-{}", std::process::id()));
         let _ = fs::remove_dir_all(&home);
         fs::create_dir_all(&home).unwrap();
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/fixtures/paper-trace-mod");
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/fixtures/paper-trace-mod");
         let ids = add(&home, &fixture).unwrap();
         assert_eq!(ids, ["paper_trace"]);
         let hmod = home.join(INSTALLED).join("paper_trace.hmod");
         assert!(hmod.is_file());
         assert!(java::is_enabled(&home, "paper_trace"));
         assert_eq!(all(&home).len(), 1);
-        assert_eq!(linked(&home, "paper_trace"), Some(fixture.canonicalize().unwrap()));
+        assert_eq!(
+            linked(&home, "paper_trace"),
+            Some(fixture.canonicalize().unwrap())
+        );
         // Packing the same folder again gives the same file: a refresh changes nothing.
         let before = fs::read(&hmod).unwrap();
         refresh(&home).unwrap();
@@ -160,7 +167,9 @@ mod tests {
         assert!(all(&home).is_empty());
         assert!(!java::is_enabled(&home, "paper_trace"));
         fs::write(&hmod, b"x").unwrap();
-        assert!(add(&home, &fixture).unwrap_err().contains("not from a folder"));
+        assert!(add(&home, &fixture)
+            .unwrap_err()
+            .contains("not from a folder"));
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -171,8 +180,14 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("greeter.folder"), "/src/greeter\n").unwrap();
         fs::write(dir.join("greeter.hmod"), b"x").unwrap();
-        assert_eq!(linked(&home, "greeter"), Some(PathBuf::from("/src/greeter")));
-        assert_eq!(all(&home), [("greeter".to_string(), PathBuf::from("/src/greeter"))]);
+        assert_eq!(
+            linked(&home, "greeter"),
+            Some(PathBuf::from("/src/greeter"))
+        );
+        assert_eq!(
+            all(&home),
+            [("greeter".to_string(), PathBuf::from("/src/greeter"))]
+        );
         assert_eq!(linked(&home, "other"), None);
         let _ = fs::remove_dir_all(&home);
     }

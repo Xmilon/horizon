@@ -13,7 +13,11 @@ pub(super) struct Console {
     level: Level,
     /// The last `latest.log` read, shown while this run has no lines: its path, when it changed
     /// and its last lines.
-    file: Option<(std::path::PathBuf, Option<std::time::SystemTime>, Vec<String>)>,
+    file: Option<(
+        std::path::PathBuf,
+        Option<std::time::SystemTime>,
+        Vec<String>,
+    )>,
     scroll: Scrollbar,
     /// Lines and search at the last draw: a change means scroll down when following.
     seen: (usize, String),
@@ -378,7 +382,8 @@ impl Launcher {
                 "latest.log, {count} lines from the last run",
                 &[("count", &count.to_string())],
             )
-            .to_string(),            Some(_) => trf(
+            .to_string(),
+            Some(_) => trf(
                 "{count} lines, the game is running",
                 &[("count", &count.to_string())],
             ),
@@ -583,11 +588,7 @@ impl Launcher {
         let filtered = count > 0;
         // The terminal (the mockup's `logbox`): black under the glass, Geist Mono 12 on 1.7, the
         // warnings and errors in their colours, a caret after the last line while the game runs.
-        let title = if from_file {
-            "latest.log"
-        } else {
-            "horizon"
-        };
+        let title = if from_file { "latest.log" } else { "horizon" };
         let dot = |c: u32| {
             div()
                 .size(px(10.))

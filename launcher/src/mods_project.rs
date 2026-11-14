@@ -982,11 +982,11 @@ impl Launcher {
             }));
         }
         if let Some(lines) = self.mods.about.get(&p.id) {
-            facts = facts.children(
-                lines
-                    .iter()
-                    .map(|line| text(theme::CAPTION).text_color(t.muted).child(tr(line).to_string())),
-            );
+            facts = facts.children(lines.iter().map(|line| {
+                text(theme::CAPTION)
+                    .text_color(t.muted)
+                    .child(tr(line).to_string())
+            }));
         }
         let build = installed
             && native

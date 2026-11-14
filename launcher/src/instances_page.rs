@@ -305,7 +305,10 @@ impl Launcher {
             .unwrap_or_default();
         self.servers.text(Field::InstanceName).set(name);
         self.servers.text(Field::InstanceGroup).set(group);
-        let game = editing.as_ref().and_then(|i| i.java.clone()).unwrap_or_default();
+        let game = editing
+            .as_ref()
+            .and_then(|i| i.java.clone())
+            .unwrap_or_default();
         let (width, height) = game
             .window
             .map(|(w, h)| (w.to_string(), h.to_string()))
@@ -382,7 +385,14 @@ impl Launcher {
         let group = Some(self.servers.value(Field::InstanceGroup).to_string());
         // A Java instance's arguments and window (the sheet's Launch): both sizes or neither.
         let jvm_args = self.servers.value(Field::JavaArgs).trim().to_string();
-        let size = |f: Field| self.servers.value(f).trim().parse::<u32>().ok().filter(|n| *n > 0);
+        let size = |f: Field| {
+            self.servers
+                .value(f)
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|n| *n > 0)
+        };
         let window = size(Field::WindowWidth).zip(size(Field::WindowHeight));
         // A Horizon version picked but not installed downloads once the instance is saved.
         let download = self
@@ -910,7 +920,11 @@ impl Launcher {
 
 impl Launcher {
     /// Delete…, for every instance but Horizon's own (the game's home); not while a game runs.
-    pub(super) fn delete_button(&self, instance: &Instance, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+    pub(super) fn delete_button(
+        &self,
+        instance: &Instance,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
         if instance.kind == InstanceKind::Default {
             return None;
         }
@@ -930,7 +944,11 @@ impl Launcher {
     }
 
     /// "Move it to the Trash?" under the actions, once Delete… is pressed.
-    pub(super) fn delete_confirmation(&self, instance: &Instance, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn delete_confirmation(
+        &self,
+        instance: &Instance,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
         if self.instances.confirm_delete.as_ref() != Some(&instance.id) {
             return None;
         }

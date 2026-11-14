@@ -42,7 +42,10 @@ impl Launcher {
                 .await;
             let _ = this.update(cx, |this, cx| {
                 this.mods.message = Some(match added {
-                    Ok(ids) => Ok(trf("Added {mods} from its folder.", &[("mods", &ids.join(", "))])),
+                    Ok(ids) => Ok(trf(
+                        "Added {mods} from its folder.",
+                        &[("mods", &ids.join(", "))],
+                    )),
                     Err(e) => Err(e),
                 });
                 *this.dev_mods.borrow_mut() = None;
@@ -79,10 +82,7 @@ impl Launcher {
                 .items_center()
                 .gap(px(6.))
                 .pt(px(12.))
-                .child(
-                    ui::text(13., FontWeight::NORMAL, ink::NOTE)
-                        .child(tr("Making a mod?")),
-                )
+                .child(ui::text(13., FontWeight::NORMAL, ink::NOTE).child(tr("Making a mod?")))
                 .child(
                     ui::link("dev-add-folder", tr("Add its folder")).on_click(cx.listener(
                         |this, _: &ClickEvent, _, cx| {
@@ -154,7 +154,9 @@ impl Launcher {
                     .items_center()
                     .gap(px(12.))
                     .child(
-                        fact(id, crate::glass_toast::tilde(folder)).flex_1().min_w_0(),
+                        fact(id, crate::glass_toast::tilde(folder))
+                            .flex_1()
+                            .min_w_0(),
                     )
                     .child(
                         ui::link(SharedString::from(format!("dev-open-{id}")), tr("Open"))
@@ -203,30 +205,21 @@ impl Launcher {
                         .gap(px(8.))
                         .child(ui::icon("computer-terminal-01", 16., ui::white(ink::BODY)))
                         .child(
-                            ui::text(14., FontWeight::SEMIBOLD, ink::FULL)
-                                .child(tr("Developing")),
+                            ui::text(14., FontWeight::SEMIBOLD, ink::FULL).child(tr("Developing")),
                         ),
                 )
                 .child(facts)
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(8.))
-                        .child(play)
-                        .child(
-                            button("dev-add-more", "Add a mod folder", Kind::Secondary, &t)
-                                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                    this.dev_add_folder(cx);
-                                    cx.notify();
-                                })),
-                        ),
-                )
-                .child(
-                    ui::text(12., FontWeight::NORMAL, ink::NOTE).child(tr(
-                        "Build and play packs each folder again, so your latest edits are in the game.",
-                    )),
-                ),
+                .child(div().flex().flex_wrap().gap(px(8.)).child(play).child(
+                    button("dev-add-more", "Add a mod folder", Kind::Secondary, &t).on_click(
+                        cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.dev_add_folder(cx);
+                            cx.notify();
+                        }),
+                    ),
+                ))
+                .child(ui::text(12., FontWeight::NORMAL, ink::NOTE).child(tr(
+                    "Build and play packs each folder again, so your latest edits are in the game.",
+                ))),
         )
     }
 }

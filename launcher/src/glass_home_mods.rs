@@ -5,8 +5,8 @@
 use super::*;
 use crate::glass_ui::{self as ui, white};
 use build_mode::ModKind;
-use horizon_launcher::github_mods;
 use glass_home_lists::Listener;
+use horizon_launcher::github_mods;
 use horizon_theme::glass::{ink, radius};
 use instance_mods::ModRow;
 use servers_page::Field;
@@ -29,14 +29,20 @@ impl Launcher {
             return body.child(ui::empty().child(tr("Reading the mods…")));
         }
         if count == 0 {
-            return body.child(
-                ui::empty()
-                    .flex()
-                    .gap(px(4.))
-                    .child(trf("No mods in {name} yet.", &[("name", &name)]))
-                    .child(ui::link("instance-mods-find", tr("Find mods")).on_click(find_mods(cx))),
-            )
-            .children(self.dev_entry(cx).map(|entry| entry.px(px(12.)).mt(px(-28.))));
+            return body
+                .child(
+                    ui::empty()
+                        .flex()
+                        .gap(px(4.))
+                        .child(trf("No mods in {name} yet.", &[("name", &name)]))
+                        .child(
+                            ui::link("instance-mods-find", tr("Find mods")).on_click(find_mods(cx)),
+                        ),
+                )
+                .children(
+                    self.dev_entry(cx)
+                        .map(|entry| entry.px(px(12.)).mt(px(-28.))),
+                );
         }
         let note = match count {
             1 => trf("1 mod in {name}", &[("name", &name)]),
@@ -299,7 +305,11 @@ impl Launcher {
     fn mod_menu(&mut self, row: &ModRow, busy: bool, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let id = format!("mod-menu:{}", row.file);
-        let open = self.mods.route_open.as_deref().is_some_and(|o| o.starts_with(&id));
+        let open = self
+            .mods
+            .route_open
+            .as_deref()
+            .is_some_and(|o| o.starts_with(&id));
         let confirming = self.mods.route_open.as_deref() == Some(format!("{id}:remove").as_str());
         let again = format!("{id}:remove");
         let button = ui::icon_button(
@@ -372,13 +382,13 @@ impl Launcher {
             );
         }
         menu = menu.child(
-            item("file", tr("Show file").into(), row.file.clone(), false).on_click(
-                cx.listener(move |this, _: &ClickEvent, _, cx| {
+            item("file", tr("Show file").into(), row.file.clone(), false).on_click(cx.listener(
+                move |this, _: &ClickEvent, _, cx| {
                     this.mods.route_open = None;
                     cx.reveal_path(&path);
                     cx.notify();
-                }),
-            ),
+                },
+            )),
         );
         let label = if confirming {
             tr("Remove for good")

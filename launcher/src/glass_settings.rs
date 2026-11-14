@@ -797,7 +797,10 @@ impl Launcher {
             "Launcher {launcher}, game {game}",
             &[
                 ("launcher", env!("CARGO_PKG_VERSION")),
-                ("game", self.settings.selected.as_deref().unwrap_or(&nightly)),
+                (
+                    "game",
+                    self.settings.selected.as_deref().unwrap_or(&nightly),
+                ),
             ],
         )
         .to_string();
@@ -1073,7 +1076,10 @@ mod picture_tests {
 
     #[test]
     fn a_picture_is_read_as_the_format_its_bytes_say() {
-        assert_eq!(picture_format(&[0xFF, 0xD8, 0xFF, 0xE0]), Some(gpui::ImageFormat::Jpeg));
+        assert_eq!(
+            picture_format(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some(gpui::ImageFormat::Jpeg)
+        );
         assert_eq!(
             picture_format(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A]),
             Some(gpui::ImageFormat::Png)

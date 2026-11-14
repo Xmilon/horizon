@@ -41,7 +41,9 @@ pub(super) fn choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Statef
             .rounded(px(radius::POPOVER))
             .cursor_pointer()
             .bg(white(if on { fill::ACTIVE } else { 0.04 }))
-            .when(!on, |d| d.child(ui::back_tint(radius::POPOVER, white(0.03)))),
+            .when(!on, |d| {
+                d.child(ui::back_tint(radius::POPOVER, white(0.03)))
+            }),
         t,
     )
 }
@@ -97,7 +99,9 @@ pub(super) fn list_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> S
             .rounded(px(radius::ROW))
             .cursor_pointer()
             .when(on, |d| d.bg(white(0.11)))
-            .when(!on, |d| d.child(ui::back_tint(radius::ROW, white(fill::HOVER)))),
+            .when(!on, |d| {
+                d.child(ui::back_tint(radius::ROW, white(fill::HOVER)))
+            }),
         t,
     )
 }
@@ -595,7 +599,10 @@ pub(super) fn stable_builds(releases: &[Release]) -> Vec<StableBuild> {
                 && !r.prerelease
                 && horizon_launcher::backend::launcher_version(&r.tag).is_none()
         })
-        .map(|r| StableBuild { tag: r.tag.clone(), week: None })
+        .map(|r| StableBuild {
+            tag: r.tag.clone(),
+            week: None,
+        })
         .collect();
     if !real.is_empty() {
         return real;
@@ -603,15 +610,18 @@ pub(super) fn stable_builds(releases: &[Release]) -> Vec<StableBuild> {
     use chrono::Datelike;
     // (monday, date, tag): the newest date of a week wins; the first listed on a tie.
     let mut weeks: Vec<(String, String, String)> = Vec::new();
-    for r in releases.iter().filter(|r| r.nightly.is_some() && r.asset.is_some()) {
+    for r in releases
+        .iter()
+        .filter(|r| r.nightly.is_some() && r.asset.is_some())
+    {
         let Some(date) = horizon_launcher::nightly::date_of(&r.tag) else {
             continue;
         };
         let Ok(day) = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d") else {
             continue;
         };
-        let monday = (day - chrono::Duration::days(day.weekday().num_days_from_monday() as i64))
-            .to_string();
+        let monday =
+            (day - chrono::Duration::days(day.weekday().num_days_from_monday() as i64)).to_string();
         match weeks.iter_mut().find(|w| w.0 == monday) {
             Some(w) if w.1.as_str() < date => *w = (monday, date.into(), r.tag.clone()),
             Some(_) => {}
@@ -621,7 +631,10 @@ pub(super) fn stable_builds(releases: &[Release]) -> Vec<StableBuild> {
     weeks.sort_by(|a, b| b.0.cmp(&a.0));
     weeks
         .into_iter()
-        .map(|(monday, _, tag)| StableBuild { tag, week: Some(monday) })
+        .map(|(monday, _, tag)| StableBuild {
+            tag,
+            week: Some(monday),
+        })
         .collect()
 }
 
@@ -768,7 +781,10 @@ pub(super) fn version_label(tag: &str) -> String {
     // `native-…` folder.
     if native_mods::is_native(tag) {
         return match native_base(tag) {
-            Some(base) => trf("{version}, with your mods", &[("version", &version_label(&base))]),
+            Some(base) => trf(
+                "{version}, with your mods",
+                &[("version", &version_label(&base))],
+            ),
             None => tr("Your game with mods").to_string(),
         };
     }
@@ -1062,7 +1078,10 @@ impl Launcher {
             .into_iter()
             .filter(|t| !nightly(t) && !builds.contains(t))
             .collect();
-        if let Some(p) = pin.as_ref().filter(|p| !builds.contains(p) && !others.contains(p)) {
+        if let Some(p) = pin
+            .as_ref()
+            .filter(|p| !builds.contains(p) && !others.contains(p))
+        {
             others.push(p.clone());
         }
         let name = |tag: &str| match stable
@@ -1117,7 +1136,9 @@ impl Launcher {
                 .bg(white(if open { fill::ACTIVE } else { 0.06 }))
                 .cursor_pointer()
                 .relative()
-                .when(!open, |d| d.child(ui::back_edge(radius::CONTROL, 0.06, true)))
+                .when(!open, |d| {
+                    d.child(ui::back_edge(radius::CONTROL, 0.06, true))
+                })
                 .child(
                     ui::text(14., FontWeight::MEDIUM, ink::FULL)
                         .min_w_0()
@@ -1463,7 +1484,10 @@ mod tests {
         releases.insert(0, release("v0.3.0", false, true));
         assert_eq!(
             stable_builds(&releases),
-            [StableBuild { tag: "v0.3.0".into(), week: None }]
+            [StableBuild {
+                tag: "v0.3.0".into(),
+                week: None
+            }]
         );
     }
 

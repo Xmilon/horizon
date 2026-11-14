@@ -5622,7 +5622,11 @@ pub fn {f}("
         ] {
             let light = Settings::parse(text);
             assert_eq!(
-                (light.appearance, light.theme.as_deref(), light.game_args.as_str()),
+                (
+                    light.appearance,
+                    light.theme.as_deref(),
+                    light.game_args.as_str()
+                ),
                 (Appearance::Dark, Some("taiga"), "--x"),
                 "{text}"
             );
@@ -5639,7 +5643,11 @@ pub fn {f}("
         let future =
             Settings::parse(r#"{"appearance": "sepia", "theme": "nord", "game_args": "--x"}"#);
         assert_eq!(
-            (future.appearance, future.theme.as_deref(), future.game_args.as_str()),
+            (
+                future.appearance,
+                future.theme.as_deref(),
+                future.game_args.as_str()
+            ),
             (Appearance::Dark, Some("nord"), "--x")
         );
         // Saved back as dark, so a migrated light stays on Taiga only until the player picks.

@@ -346,10 +346,8 @@ impl Setup {
             }
             Stage::Done { left } => {
                 let said = match self.mode {
-                    Mode::Install => tr("Horizon Launcher is installed.")
-                    .to_string(),
-                    Mode::Uninstall => tr("Horizon Launcher was removed.")
-                    .to_string(),
+                    Mode::Install => tr("Horizon Launcher is installed.").to_string(),
+                    Mode::Uninstall => tr("Horizon Launcher was removed.").to_string(),
                 };
                 body = body.child(text(night::TITLE, c(n.ink)).child(said));
                 if !left.is_empty() {

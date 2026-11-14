@@ -135,9 +135,7 @@ impl Launcher {
     /// goes to an instance of that edition ([`Self::switch_edition`]).
     pub(super) fn edition_switch(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
         const ID: &str = "edition-switch";
-        let java = self
-            .selected_instance()
-            .is_some_and(|i| i.java.is_some());
+        let java = self.selected_instance().is_some_and(|i| i.java.is_some());
         let horizon = self.horizon_mark(20.);
         let grass = match self.grass_mark(20.) {
             Some(image) => gpui::img(image)
@@ -174,7 +172,12 @@ impl Launcher {
                 .justify_center()
                 .size(px(30.))
                 .rounded(px(radius::CONTROL - 1.))
-                .child(div().relative().opacity(if on { 1. } else { 0.5 }).child(mark))
+                .child(
+                    div()
+                        .relative()
+                        .opacity(if on { 1. } else { 0.5 })
+                        .child(mark),
+                )
                 .child(ui::pill_probe(ID, i, origin.clone()))
                 .tooltip(ui::tip(tr(label)));
             let d = if on {
@@ -783,12 +786,13 @@ impl Launcher {
     fn whats_new_link(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let tag = self.whats_new_tag()?;
         Some(
-            hero_button("home-whats-new", "sparkles", tr("What's new").into())
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+            hero_button("home-whats-new", "sparkles", tr("What's new").into()).on_click(
+                cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.whats_new_open = Some(std::iter::once(tag.clone()).collect());
                     this.go(Page::Versions);
                     cx.notify();
-                })),
+                }),
+            ),
         )
     }
 
@@ -801,10 +805,10 @@ impl Launcher {
         Some(
             hero_button("home-version", "package-01", label.into())
                 .tooltip(ui::tip(tr("Change the version in instance settings")))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
-                cx.notify();
-            })),
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
+                    cx.notify();
+                })),
         )
     }
 
@@ -835,7 +839,9 @@ impl Launcher {
                     .bg(white(fill::SELECTED))
             })
             .group_hover("folder-group", |s| s.w(px(36.)).mr(px(8.)).opacity(1.))
-            .when(!open, |d| d.child(ui::back_tint(radius::CONTROL, white(fill::SELECTED))))
+            .when(!open, |d| {
+                d.child(ui::back_tint(radius::CONTROL, white(fill::SELECTED)))
+            })
             .child(ui::icon("more-horizontal", 20., white(ink::STRONG)).relative())
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 if !this.closed_by_this_press(event) {

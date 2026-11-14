@@ -27,6 +27,12 @@ pub struct Rain {
     falling: bool,
 }
 
+impl Default for Rain {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Rain {
     pub fn new() -> Rain {
         Rain {
@@ -55,7 +61,7 @@ impl Rain {
 }
 
 /// A steady pseudo-random number in 0..1 for `i` (each drop keeps its column and phase).
-pub(crate) fn hash(i: u32) -> f32 {
+pub fn hash(i: u32) -> f32 {
     let mut x = i.wrapping_mul(0x9e37_79b9) ^ 0x85eb_ca6b;
     x ^= x >> 15;
     x = x.wrapping_mul(0x2c1b_3c6d);

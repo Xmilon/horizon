@@ -982,7 +982,7 @@ jobs:
         working-directory: launcher
         env:
           JOBS: ${{ needs.changes.outputs.self_hosted == 'true' && '-j2' || '' }}
-        run: cargo test $JOBS --no-fail-fast --locked --lib --bins
+        run: cargo test $JOBS --no-fail-fast --locked --workspace --lib --bins
       - name: Test launcher storage
         id: test_launcher_storage
         if: ${{ !cancelled() && steps.setup.outcome == 'success' }}

@@ -398,13 +398,12 @@ impl Launcher {
                                 .hover(|s| s.underline())
                                 .child(tr("Why?"))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.update_why = if this.update_why.as_deref()
-                                        == Some(toggle.as_str())
-                                    {
-                                        None
-                                    } else {
-                                        Some(toggle.clone())
-                                    };
+                                    this.update_why =
+                                        if this.update_why.as_deref() == Some(toggle.as_str()) {
+                                            None
+                                        } else {
+                                            Some(toggle.clone())
+                                        };
                                     cx.notify();
                                 })),
                         ),
@@ -478,7 +477,10 @@ impl Launcher {
     /// worlds and the mods. Not building is the primary choice; the other backs every world
     /// listed up first, then builds without the mods.
     pub(crate) fn worlds_dialog(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let stake = self.native_worlds.as_ref().filter(|_| self.native_step.is_none())?;
+        let stake = self
+            .native_worlds
+            .as_ref()
+            .filter(|_| self.native_step.is_none())?;
         let t = self.theme;
         let pal = Pal::of(&t);
         let mods = names(&stake.mods);
