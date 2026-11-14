@@ -373,7 +373,11 @@ mod tests {
             assert_eq!(theme.dark, dark, "{id}: one look");
             assert_eq!(theme.edge.is_some(), oled);
             let painted = matches!(id, "overworld" | "taiga");
-            assert_eq!(theme.look.own_sky, painted || oled, "{id}: frosts its own sky");
+            assert_eq!(
+                theme.look.own_sky,
+                painted || oled,
+                "{id}: frosts its own sky"
+            );
             assert_eq!(theme.scene, !oled && !painted, "{id}: scene");
             if oled {
                 assert_eq!(theme.night.page, 0x000000);
