@@ -54,6 +54,23 @@ pub enum Mood {
     Petals([u32; 2]),
     /// Curtains of light in three tones.
     Aurora([u32; 3]),
+    /// A glow over the horizon and a grid floor scrolling toward the viewer (glow, grid).
+    Neon([u32; 2]),
+    /// Snow falling softly: the flakes and the shade under each.
+    Snow([u32; 2]),
+}
+
+/// How the skylines and the sun are cut. Baked with the sky, so it stays in performance mode.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Land {
+    /// Plain silhouettes under a round sun sliced by the sky.
+    Plain,
+    /// A line of light along each skyline's top (far, near).
+    Neon([u32; 2]),
+    /// Grass along each skyline's top (far, near), leafy trees, and a square sun or moon.
+    Blocks { grass: [u32; 2], leaves: u32 },
+    /// Spruce woods on snowy hills: snow along each skyline's top (far, near), trees capped too.
+    Taiga { snow: [u32; 2] },
 }
 
 /// The sky's hand-drawn art (the clouds, the sun and the two skylines): the colours a launcher
@@ -71,6 +88,7 @@ pub struct SkyArt {
     pub shade: u32,
     pub star: u32,
     pub mood: Mood,
+    pub land: Land,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -136,6 +154,7 @@ pub const NIGHT: Night = Night {
         shade: 0x2a1a4c,
         star: 0xf4f2ff,
         mood: Mood::Plain,
+        land: Land::Plain,
     },
 };
 
@@ -170,6 +189,7 @@ pub const DAWN: Night = Night {
         shade: 0xd9cbe8,
         star: 0xffffff,
         mood: Mood::Plain,
+        land: Land::Plain,
     },
 };
 

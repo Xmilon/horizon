@@ -4025,28 +4025,6 @@ impl Launcher {
         };
         let mono = |s: String| div().font_family(theme::MONO).child(s).into_any_element();
         let plain = |s: &str| div().child(tr(s).to_string()).into_any_element();
-        let appearance = segments(
-            "appearance",
-            &[
-                (backend::Appearance::Dark, "Dark"),
-                (backend::Appearance::Light, "Light"),
-                (backend::Appearance::System, "System"),
-            ],
-            self.settings.appearance,
-            &t,
-            {
-                let this = cx.entity().downgrade();
-                move |choice, window, cx| {
-                    let _ = this.update(cx, |this, cx| {
-                        this.settings.appearance = choice;
-                        this.save_settings();
-                        titlebar::apply_appearance(window, choice);
-                        this.theme = this.settings_theme(window);
-                        cx.notify();
-                    });
-                }
-            },
-        );
         if t.glass {
             return self.glass_settings(
                 glass_settings::Built {
@@ -4054,7 +4032,6 @@ impl Launcher {
                     prune,
                     opening,
                     menu_entry,
-                    appearance: appearance.into_any_element(),
                     horizon,
                     horizon_action,
                     launcher,
@@ -4115,13 +4092,6 @@ impl Launcher {
                         &t,
                     ))
                     .child(group("Launcher", "monitor"))
-                    .child(index_row(
-                        n + 3,
-                        tr("Appearance"),
-                        Some(plain("Dark by default. System follows your computer's light or dark.")),
-                        Some(appearance.into_any_element()),
-                        &t,
-                    ))
                     .child(self.launcher_theme_row(cx))
                     .child(self.accent_row(cx))
                     .child(self.home_background_row(cx))
@@ -5294,6 +5264,9 @@ fn progress_bar(fraction: Option<(f32, f32)>, t: &Theme) -> Div {
                 move |d, p| d.w(relative(from + (to - from) * p)),
             ))
         }
+        // Reduced motion holds the shuttle still where it can be seen (GPUI freezes a repeating
+        // animation at its start, off the track).
+        None if motion::still() => track.child(bar.left(relative(0.35)).w(relative(0.3))),
         None => track.child(
             bar.w(relative(0.3)).with_animation(
                 "shuttle",
@@ -5701,6 +5674,10 @@ impl Launcher {
     /// Where the opening is: the reveal's progress (1 when there is no opening) and how long
     /// the wordmark has been showing, in seconds.
     fn opening_phase(&mut self, window: &mut Window) -> (f32, f32) {
+        // Reduced motion: the wordmark's arrival and the reveal are all motion, so no opening.
+        if motion::still() {
+            self.opening = None;
+        }
         let loaded = !matches!(self.releases, Load::Loading);
         let Some(opening) = &mut self.opening else {
             return (1., 10.);

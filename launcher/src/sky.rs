@@ -12,7 +12,7 @@ use gpui::{
     canvas, div, fill, img, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
     Bounds, Div, Hsla, Pixels, RenderImage, Window,
 };
-use horizon_theme::night::{Mood, Night, SkyArt};
+use horizon_theme::night::{Land, Mood, Night, SkyArt};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -94,6 +94,10 @@ struct Skyline {
 
 const TREE: &[&str] = &[".###.", "#####", "#####", ".###.", "..#..", "..#.."];
 const PINE: &[&str] = &["..#..", ".###.", "..#..", ".###.", "#####", "..#.."];
+/// A taller spruce, for the taiga's woods.
+const SPRUCE: &[&str] = &[
+    "..#..", "..#..", ".###.", "..#..", ".###.", "#####", ".###.", "#####", "..#..",
+];
 const POST: &[&str] = &[".#.", "###", ".#.", ".#.", ".#."];
 const TOWER: &[&str] = &["#.#", "###", "###", "###", "###", "###", "###"];
 
@@ -344,6 +348,11 @@ impl Sky {
         };
         self.clock.set(run, now);
         let t = self.clock.at(now).as_secs_f32();
+        // A painted theme's plates frost this sky: its blurred copy, made once per size and blur.
+        crate::glass::frost_sky(n, (w, h), || {
+            let (texels, cols, rows) = still_texels(n, w, h);
+            (texels, cols, rows, TEXEL)
+        });
         let layers = self.layers(n.art, scale);
         let snap = |v: f32| (v * scale).round() / scale;
         let art = &n.art;
@@ -401,7 +410,7 @@ impl Sky {
         }
         // The light look keeps a restrained dawn: its pale clouds read as stray lines across the
         // white panels' gutters, so only the dark skies draw them.
-        let cloud_layers = if n.dark { &layers.clouds[..] } else { &[] };
+        let cloud_layers = if clouded(n) { &layers.clouds[..] } else { &[] };
         for (layer, image) in CLOUDS.iter().zip(cloud_layers) {
             let strip = layer.period as f32 * TEXEL;
             let shift = (t * layer.speed).floor() * TEXEL % strip;
@@ -499,8 +508,8 @@ impl Sky {
                     let l = &CLOUDS[i];
                     bake(&clouds(l, art, i), l.period, CLOUD_ROWS, TEXEL, scale)
                 }),
-                far: skyline(&FAR, art.far, scale),
-                near: skyline(&NEAR, art.near, scale),
+                far: skyline(&FAR, art, 0, scale),
+                near: skyline(&NEAR, art, 1, scale),
                 sun: bake(&sun(art), SUN_RADIUS * 2, SUN_RADIUS, LAND, scale),
             };
             if let Some((_, old)) = self.baked.replace((key, layers)) {
@@ -558,6 +567,17 @@ fn paint_behind(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
                 window.paint_quad(fill(cell(b, x, 0., width, h * 0.8), fade(light, a, 0.)));
             }
         }
+        Mood::Neon([glow, _]) => {
+            // A soft glow rising off the horizon.
+            let top = h * 0.45;
+            window.paint_quad(fill(
+                Bounds::new(
+                    point(b.origin.x, b.origin.y + px(top)),
+                    size(b.size.width, px(h - top)),
+                ),
+                fade(glow, 0., 0.24),
+            ));
+        }
         Mood::Aurora(tones) => {
             // Three curtains of 16 px strips: each strip's height and place ride slow waves, and
             // its light fades in from the top and out toward the bottom.
@@ -588,8 +608,17 @@ fn paint_behind(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
 fn paint_drift(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
     use crate::rain::hash;
     let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+    if let Mood::Neon([_, grid]) = mood {
+        return paint_grid(grid, t, b, window);
+    }
     let run = h + 40.;
-    for i in 0..28u32 {
+    // Snow is many small flakes; the other drifts a few larger pieces.
+    let count = if matches!(mood, Mood::Snow(_)) {
+        72
+    } else {
+        28
+    };
+    for i in 0..count {
         let (place, pace, phase, sway) = (
             hash(i * 5 + 1),
             hash(i * 5 + 2),
@@ -631,7 +660,52 @@ fn paint_drift(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
                     window.paint_quad(fill(cell(b, x, y, TEXEL, TEXEL), tone(shine).opacity(0.8)));
                 }
             }
-            Mood::Plain | Mood::Aurora(_) => return,
+            Mood::Snow([flake, shade]) => {
+                // Flakes of one or two texels drifting down and swaying, each with a shade below
+                // it, so white snow still reads on a pale sky.
+                let y = (t * (26. + 26. * pace) + phase * run) % run - 20.;
+                let x = x + (t * 0.9 + sway * std::f32::consts::TAU).sin() * 3. * TEXEL;
+                let side = if i % 4 == 0 { TEXEL * 2. } else { TEXEL };
+                window.paint_quad(fill(
+                    cell(b, x, y + TEXEL, side, side),
+                    tone(shade).opacity(0.45),
+                ));
+                window.paint_quad(fill(cell(b, x, y, side, side), tone(flake)));
+            }
+            Mood::Plain | Mood::Aurora(_) | Mood::Neon(_) => return,
+        }
+    }
+}
+
+/// Neon's floor over the near skyline's foot: lines across, closer together toward the horizon and
+/// scrolling toward the viewer, and lines running to a point under the sun. About 80 quads, no
+/// allocation.
+fn paint_grid(grid: u32, t: f32, b: Bounds<Pixels>, window: &mut Window) {
+    const DEEP: f32 = 5. * LAND;
+    let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+    let top = h - DEEP;
+    let at = |x: f32, y: f32, w: f32, h: f32| {
+        Bounds::new(
+            point(b.origin.x + px(x), b.origin.y + px(y)),
+            size(px(w), px(h)),
+        )
+    };
+    let scroll = (t * 0.5).fract();
+    for k in 0..5 {
+        let f = (k as f32 + scroll) / 5.;
+        let y = top + DEEP * f * f;
+        window.paint_quad(fill(at(0., y, w, 1.), tone(grid).opacity(0.12 + 0.3 * f)));
+    }
+    let centre = w * SUN_X;
+    for k in -16i32..=16 {
+        let (low, high) = (k as f32 * 64., k as f32 * 22.);
+        for s in 0..3 {
+            let f = (s as f32 + 0.5) / 3.;
+            let x = centre + high + (low - high) * f;
+            if (0. ..w).contains(&x) {
+                let y = top + DEEP * s as f32 / 3.;
+                window.paint_quad(fill(at(x, y, 1., DEEP / 3.), tone(grid).opacity(0.28)));
+            }
         }
     }
 }
@@ -655,7 +729,8 @@ fn bands(n: &Night, h: f32) -> Vec<(f32, f32, u32)> {
     // The light look's sky is the dawn's washed with white, so the page reads white with a tint
     // of the dawn rather than lilac.
     let wash = |c: u32| {
-        if n.dark {
+        // A theme's own land paints its sky as given.
+        if n.dark || n.art.land != Land::Plain {
             c
         } else {
             horizon_theme::night::over(0xffffff, MORNING, c)
@@ -753,7 +828,21 @@ fn clouds(layer: &CloudLayer, art: &SkyArt, depth: usize) -> Vec<[u8; 4]> {
     out
 }
 
-fn skyline(line: &Skyline, color: u32, scale: f32) -> Arc<RenderImage> {
+/// Whether the sky draws its clouds: every dark sky, and a blocky land's day too.
+fn clouded(n: &Night) -> bool {
+    n.dark || n.art.land != Land::Plain
+}
+
+fn skyline(line: &Skyline, art: &SkyArt, which: usize, scale: f32) -> Arc<RenderImage> {
+    let (out, w) = skyline_texels(line, art, which);
+    bake(&out, w, line.rows, LAND, scale)
+}
+
+/// A skyline's texels (`which`: 0 the far one, 1 the near), cut as `art.land` says, and how many
+/// it has across.
+fn skyline_texels(line: &Skyline, art: &SkyArt, which: usize) -> (Vec<[u8; 4]>, usize) {
+    let color = if which == 0 { art.far } else { art.near };
+    let texel = |c: u32| [(c >> 16) as u8, (c >> 8) as u8, c as u8, 255];
     let w: usize = line.runs.iter().map(|r| r.0).sum();
     let mut out = vec![[0; 4]; w * line.rows];
     let mut x = 0;
@@ -766,10 +855,30 @@ fn skyline(line: &Skyline, color: u32, scale: f32) -> Arc<RenderImage> {
     }
     for (x, &top) in tops.iter().enumerate() {
         for y in top..line.rows {
-            out[y * w + x] = [(color >> 16) as u8, (color >> 8) as u8, color as u8, 255];
+            out[y * w + x] = texel(color);
+        }
+        // Grass on the land, under the trees stood on it.
+        if let Land::Blocks { grass, .. } = art.land {
+            out[top * w + x] = texel(grass[which]);
         }
     }
-    for &(x, sprite) in line.props {
+    let prop = match art.land {
+        Land::Blocks { leaves, .. } => leaves,
+        _ => color,
+    };
+    // The taiga stands woods of spruce on its land instead of the skyline's props.
+    let woods: Vec<(usize, &[&str])>;
+    let props = if let Land::Taiga { .. } = art.land {
+        let gap = if which == 0 { 4 } else { 6 };
+        woods = (0..w.saturating_sub(5))
+            .step_by(gap)
+            .map(|x| (x, SPRUCE))
+            .collect();
+        &woods[..]
+    } else {
+        line.props
+    };
+    for &(x, sprite) in props {
         let width = sprite[0].len();
         let ground = tops[x..x + width]
             .iter()
@@ -777,11 +886,101 @@ fn skyline(line: &Skyline, color: u32, scale: f32) -> Arc<RenderImage> {
             .min()
             .unwrap_or(line.rows);
         let y = ground.saturating_sub(sprite.len());
-        stamp(&mut out, w, (x, y), sprite, |m| {
-            (m == b'#').then_some(color)
-        });
+        stamp(&mut out, w, (x, y), sprite, |m| (m == b'#').then_some(prop));
     }
-    bake(&out, w, line.rows, LAND, scale)
+    // A neon line, or snow, along the whole top, towers and trees included.
+    if let Land::Neon(edge) | Land::Taiga { snow: edge } = art.land {
+        for x in 0..w {
+            if let Some(y) = (0..line.rows).find(|y| out[y * w + x][3] > 0) {
+                out[y * w + x] = texel(edge[which]);
+            }
+        }
+    }
+    (out, w)
+}
+
+/// The sky's still parts as [`Sky::render`] lays them out in a window `w` × `h` (its bands, the
+/// clouds where they start, the sun and the skylines; not the stars or a mood's drift), a colour
+/// (0 to 1) per [`TEXEL`]: what a painted theme's plates blur. Returns the colours, columns and
+/// rows.
+pub(crate) fn still_texels(n: &Night, w: f32, h: f32) -> (Vec<[f64; 3]>, usize, usize) {
+    let cols = (w / TEXEL).ceil().max(1.) as usize;
+    let rows = (h / TEXEL).ceil().max(1.) as usize;
+    let rgbf = |c: u32| [16, 8, 0].map(|s| ((c >> s) & 255) as f64 / 255.);
+    let mut out = vec![[0.; 3]; cols * rows];
+    let row_of = |y: f32| ((y / TEXEL).round().max(0.) as usize).min(rows);
+    for (top, height, c) in bands(n, h) {
+        for row in row_of(top)..row_of(top + height) {
+            out[row * cols..(row + 1) * cols].fill(rgbf(c));
+        }
+    }
+    // `texels` (`sw` across, `unit` px each) with its corner at `(left, top)`, sampled at each
+    // texel's centre; `repeat` tiles it across the window.
+    let sprite = |out: &mut [[f64; 3]],
+                  texels: &[[u8; 4]],
+                  sw: usize,
+                  unit: f32,
+                  (left, top): (f32, f32),
+                  repeat: bool| {
+        let span = sw as f32 * unit;
+        let sh = texels.len() / sw;
+        for row in 0..rows {
+            let y = (row as f32 + 0.5) * TEXEL - top;
+            if y < 0. || y >= sh as f32 * unit {
+                continue;
+            }
+            let sy = ((y / unit) as usize).min(sh - 1);
+            for col in 0..cols {
+                let mut x = (col as f32 + 0.5) * TEXEL - left;
+                if repeat {
+                    x = x.rem_euclid(span);
+                } else if x < 0. || x >= span {
+                    continue;
+                }
+                let [r, g, b, a] = texels[sy * sw + ((x / unit) as usize).min(sw - 1)];
+                if a > 0 {
+                    out[row * cols + col] = [r, g, b].map(|v| f64::from(v) / 255.);
+                }
+            }
+        }
+    };
+    let art = &n.art;
+    if clouded(n) {
+        for (i, layer) in CLOUDS.iter().enumerate() {
+            let texels = clouds(layer, art, i);
+            sprite(
+                &mut out,
+                &texels,
+                layer.period,
+                TEXEL,
+                (0., h * layer.top),
+                true,
+            );
+        }
+    }
+    let sun_w = (SUN_RADIUS * 2) as f32 * LAND;
+    let sun_top = h - (SUN_RISE + SUN_RADIUS) as f32 * LAND;
+    sprite(
+        &mut out,
+        &sun(art),
+        SUN_RADIUS * 2,
+        LAND,
+        (w * SUN_X - sun_w / 2., sun_top),
+        false,
+    );
+    for (which, line, lift) in [(0, &FAR, 2.), (1, &NEAR, 0.)] {
+        let (texels, sw) = skyline_texels(line, art, which);
+        let period = sw as f32 * LAND;
+        let top = h - (line.rows as f32 + lift) * LAND;
+        let left = if lift > 0. { -period / 2. } else { 0. };
+        sprite(&mut out, &texels, sw, LAND, (left, top), true);
+        if lift > 0. {
+            for row in row_of(h - lift * LAND)..rows {
+                out[row * cols..(row + 1) * cols].fill(rgbf(art.far));
+            }
+        }
+    }
+    (out, cols, rows)
 }
 
 /// The upper half of a sun cut by the horizon, in three bands of colour, its lower half sliced by
@@ -789,6 +988,26 @@ fn skyline(line: &Skyline, color: u32, scale: f32) -> Arc<RenderImage> {
 fn sun(art: &SkyArt) -> Vec<[u8; 4]> {
     let (r, w) = (SUN_RADIUS as f32, SUN_RADIUS * 2);
     let mut out = vec![[0; 4]; w * SUN_RADIUS];
+    // A blocky land's sun or moon is a square, rim to middle in its three colours.
+    if let Land::Blocks { .. } = art.land {
+        const HALF: usize = 7;
+        for y in SUN_RADIUS - 2 * HALF..SUN_RADIUS {
+            for x in SUN_RADIUS - HALF..SUN_RADIUS + HALF {
+                let ring = [
+                    x + HALF - SUN_RADIUS,
+                    SUN_RADIUS + HALF - 1 - x,
+                    y + 2 * HALF - SUN_RADIUS,
+                    SUN_RADIUS - 1 - y,
+                ]
+                .into_iter()
+                .min()
+                .unwrap_or(0);
+                let c = art.sun[ring.min(2)];
+                out[y * w + x] = [(c >> 16) as u8, (c >> 8) as u8, c as u8, 255];
+            }
+        }
+        return out;
+    }
     for y in 0..SUN_RADIUS {
         let dy = r - y as f32 - 0.5;
         let half = (r * r - dy * dy).sqrt().round() as usize;
@@ -824,6 +1043,20 @@ mod tests {
             .filter(|(top, _, _)| *top < limit)
             .map(|(_, _, c)| c)
             .collect()
+    }
+
+    #[test]
+    fn the_blurred_copy_holds_the_sky_sun_and_skyline() {
+        let (w, h) = (1000., 600.);
+        let (texels, cols, rows) = still_texels(&NIGHT, w, h);
+        assert_eq!((cols, rows), (250, 150));
+        let at = |x: f32, y: f32| texels[(y / TEXEL) as usize * cols + (x / TEXEL) as usize];
+        let rgbf = |c: u32| [16, 8, 0].map(|s| ((c >> s) & 255) as f64 / 255.);
+        // The top band, the near skyline at the bottom left, the sun's rim above the skyline.
+        assert_eq!(at(0., 0.), rgbf(NIGHT.sky[0]));
+        assert_eq!(at(2., h - 2.), rgbf(NIGHT.art.near));
+        let sun_top = h - (SUN_RISE + SUN_RADIUS) as f32 * LAND;
+        assert_eq!(at(w * SUN_X, sun_top + 2.), rgbf(NIGHT.art.sun[0]));
     }
 
     #[test]

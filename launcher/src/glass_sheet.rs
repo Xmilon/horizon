@@ -253,7 +253,8 @@ impl Launcher {
                             .text_color(white(if on { ink::FULL } else { ink::QUIET }))
                             .when(on, |d| d.bg(ui::color(accent).opacity(0.13)))
                             .when(!on, |d| {
-                                d.hover(|s| s.bg(white(0.04)).text_color(white(ink::FULL)))
+                                d.hover(|s| s.text_color(white(ink::FULL)))
+                                    .child(ui::back_tint(10., white(0.04)))
                             })
                             .child(ui::icon(
                                 icon,

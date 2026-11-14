@@ -92,6 +92,9 @@ pub struct Glass {
     pub plate_alpha: f32,
     pub tint: f32,
     pub blur: f32,
+    /// The plates frost the theme's own painted sky instead of the sunset (a painted theme's
+    /// night): the launcher blurs that sky for them.
+    pub own_sky: bool,
 }
 
 impl Glass {
@@ -122,6 +125,7 @@ impl Glass {
             plate_alpha: alpha,
             tint,
             blur,
+            own_sky: false,
         }
     }
 

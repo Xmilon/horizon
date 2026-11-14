@@ -1258,18 +1258,31 @@ impl Backdrop {
                 }
             }
         }
+        Backdrop::from_texels(&base, w, h, m.px, blur, fast)
+    }
+
+    /// The backdrop of any picture: `base` is `w` × `h` colours (0 to 1), `px` logical pixels
+    /// each, blurred by `blur` px (a box blur when `fast`).
+    pub fn from_texels(
+        base: &[[f64; 3]],
+        w: usize,
+        h: usize,
+        px: f64,
+        blur: f64,
+        fast: bool,
+    ) -> Backdrop {
         let blurred = |sigma: f64| -> Vec<[f32; 3]> {
             let texels = if fast {
-                box_blur_rgb(&base, w, h, sigma / m.px)
+                box_blur_rgb(base, w, h, sigma / px)
             } else {
-                gaussian_blur_rgb(&base, w, h, sigma / m.px)
+                gaussian_blur_rgb(base, w, h, sigma / px)
             };
             texels.into_iter().map(|c| c.map(|v| v as f32)).collect()
         };
         Backdrop {
             w,
             h,
-            px: m.px,
+            px,
             glass: blurred(blur),
             float: blurred(if blur <= 0. { 0. } else { blur + 24. }),
             tint: None,

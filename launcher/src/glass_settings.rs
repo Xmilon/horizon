@@ -107,7 +107,6 @@ pub(super) struct Built {
     pub prune: Stateful<Div>,
     pub opening: Stateful<Div>,
     pub menu_entry: Stateful<Div>,
-    pub appearance: AnyElement,
     pub horizon: String,
     pub horizon_action: Option<AnyElement>,
     pub launcher: String,
@@ -641,14 +640,8 @@ impl Launcher {
                 Some(b.prune.into_any_element()),
                 &t,
             ));
+        // No light or dark to pick: each theme is one look.
         let appearance = section(1)
-            .child(index_row(
-                0,
-                tr("Appearance"),
-                note("Dark by default. System follows your computer's light or dark."),
-                Some(b.appearance),
-                &t,
-            ))
             .child(self.launcher_theme_row(cx))
             .child(self.glass_accent_row(cx))
             .child(self.look_slider_row(themes_page::LookKnob::Glass, cx))
@@ -743,10 +736,11 @@ impl Launcher {
             cx.spawn(async move |this, cx| {
                 if let Ok(bytes) = picture.await {
                     let _ = this.update(cx, |this, cx| {
-                        this.credit_picture = Some(std::sync::Arc::new(gpui::Image::from_bytes(
-                            gpui::ImageFormat::Png,
-                            bytes,
-                        )));
+                        // GitHub answers with a JPEG (or PNG for some accounts): decode what came.
+                        if let Some(format) = picture_format(&bytes) {
+                            this.credit_picture =
+                                Some(std::sync::Arc::new(gpui::Image::from_bytes(format, bytes)));
+                        }
                         cx.notify();
                     });
                 }
@@ -924,7 +918,7 @@ impl Launcher {
             } else {
                 white(ui::edge::REST)
             })
-            .hover(|s| s.border_color(white(ui::edge::HOVER)))
+            .child(ui::back_edge(radius::ROW, 0., true))
             .cursor_text()
             .font_family(horizon_theme::glass::FONT)
             .text_size(px(14.))
@@ -1056,5 +1050,34 @@ mod tests {
     fn a_pane_that_does_not_scroll_marks_the_first() {
         assert_eq!(spy(&[0., 200.], 600., 0., 0.), 0);
         assert_eq!(spy(&[], 600., 0., 0.), 0);
+    }
+}
+
+/// A downloaded picture's format, by its first bytes; `None` for anything else (an HTML error
+/// page), which leaves the GitHub mark in its place.
+fn picture_format(bytes: &[u8]) -> Option<gpui::ImageFormat> {
+    match bytes {
+        [0xFF, 0xD8, 0xFF, ..] => Some(gpui::ImageFormat::Jpeg),
+        [0x89, b'P', b'N', b'G', ..] => Some(gpui::ImageFormat::Png),
+        [b'G', b'I', b'F', b'8', ..] => Some(gpui::ImageFormat::Gif),
+        [b'R', b'I', b'F', b'F', _, _, _, _, b'W', b'E', b'B', b'P', ..] => {
+            Some(gpui::ImageFormat::Webp)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod picture_tests {
+    use super::picture_format;
+
+    #[test]
+    fn a_picture_is_read_as_the_format_its_bytes_say() {
+        assert_eq!(picture_format(&[0xFF, 0xD8, 0xFF, 0xE0]), Some(gpui::ImageFormat::Jpeg));
+        assert_eq!(
+            picture_format(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A]),
+            Some(gpui::ImageFormat::Png)
+        );
+        assert_eq!(picture_format(b"<html>"), None);
     }
 }

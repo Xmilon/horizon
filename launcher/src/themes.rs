@@ -6,7 +6,7 @@
 //! accent and the main action's face, bevel and lip) to it, keeping their saturation and
 //! lightness, then darkens or lightens each just enough to read as well as the violet does: white
 //! on the face at 4.5:1, the accent at 3:1 on every background.
-use horizon_theme::night::{Mood, Night, SkyArt};
+use horizon_theme::night::{Land, Mood, Night, SkyArt};
 use horizon_theme::{contrast, Blocks};
 use std::path::{Path, PathBuf};
 
@@ -40,33 +40,34 @@ impl ThemeAccent {
 /// How a theme with its own palette draws the launcher.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Look {
-    /// The same glass pages as Horizon's own, over the theme's skies: the dark one is the pixel
-    /// sunset in the accent's hue, the light one the theme's light sky.
+    /// The same glass pages as Horizon's own, over the pixel sunset in the accent's hue.
     Glass,
     /// The glass pages with solid plates and a thin edge over the theme's own dark sky (true black
-    /// for OLED screens) instead of the sunset; the light appearance as [`Look::Glass`].
+    /// for OLED screens) instead of the sunset.
     Oled,
     /// The glass pages over the theme's own painted sky (`sky.rs`, with its drifting
-    /// [`Mood`](horizon_theme::night::Mood)) instead of the sunset, on solid plates; the light
-    /// appearance as [`Look::Glass`].
+    /// [`Mood`](horizon_theme::night::Mood)) instead of the sunset, its plates frosting it.
     Painted,
     /// The square, solid Blocks look (Nord, kept as it was).
     Solid,
 }
 
 /// A launcher theme: free for everyone in Settings › Appearance, never sold or claimed. Each
-/// has a sky (six stops, top to bottom, behind the light appearance) and the accent it brings.
-/// A theme that brings a whole palette carries its dark and light [`Night`] and paints with it
+/// has a sky (six stops, top to bottom) and the accent it brings. A theme that brings a whole
+/// palette carries its one [`Night`] (there is no light and dark of a theme) and paints with it
 /// as its [`Look`] says; the other themes only change the sky.
 pub struct Theme {
     /// Its name in `Settings::theme`.
     pub id: &'static str,
     /// Its name in Settings, in English (through `tr`).
     pub name: &'static str,
+    /// A short line under its name in Settings, in English (through `tr`; kept short, as it is
+    /// translated into every language).
+    pub description: &'static str,
     pub sky: [u32; 6],
     pub accent: ThemeAccent,
-    /// The theme's own palette (dark, light), for a theme that is more than a sky.
-    pub palette: Option<(&'static Night, &'static Night)>,
+    /// The theme's own palette, for a theme that is more than a sky: every theme is one look.
+    pub palette: Option<&'static Night>,
     /// How the palette is drawn; unused without one.
     pub look: Look,
 }
@@ -102,59 +103,36 @@ pub const NORD_DARK: Night = Night {
         shade: 0x272c36,
         star: 0xeceff4,
         mood: Mood::Plain,
+        land: Land::Plain,
     },
 };
 
-pub const NORD_LIGHT: Night = Night {
-    sky: [0xeceff4, 0xeceff4, 0xe5e9f0, 0xe5e9f0, 0xd8dee9, 0xc8d2e0],
-    page: 0xeceff4,
-    side: 0xe5e9f0,
-    card: 0xf8f9fb,
-    card_alpha: 0.90,
-    card_hi: 0xffffff,
-    card_hi_alpha: 0.95,
-    stroke: 0x4c566a,
-    stroke_alpha: 0.14,
-    rule_alpha: 0.10,
-    ink: 0x2e3440,
-    ink_soft: 0x434c5e,
-    muted: 0x536070,
-    accent: 0x4c6a92,
-    accent_hi: 0x4c6a92,
-    on_accent: 0xffffff,
-    success: 0x3f6b2e,
-    warn: 0x7a5d00,
-    danger: 0xa8323f,
-    dark: false,
-    art: SkyArt {
-        sun: [0xffffff, 0xeceff4, 0xd8dee9],
-        far: 0xd8dee9,
-        near: 0xc8d2e0,
-        cloud: [0xf8f9fb, 0xeceff4, 0xe5e9f0],
-        lit: [0xffffff; 3],
-        shade: 0xd8dee9,
-        star: 0xffffff,
-        mood: Mood::Plain,
-    },
+/// Old School's sky: the night tokens under the sky just before sunrise.
+pub const OLD_SCHOOL_NIGHT: Night = Night {
+    sky: [0x0b1030, 0x18225a, 0x232c66, 0x6f6ab4, 0xe2a0b0, 0xffd6a0],
+    ..horizon_theme::night::NIGHT
 };
 
-/// First Light: the sky just before sunrise, with a harbour skyline.
+/// Old School (once First Light, the launcher's first theme; its id is kept for saved settings):
+/// the sky just before sunrise, with a harbour skyline, painted as it was rather than the sunset.
 pub const FIRST_LIGHT: Theme = Theme {
     id: "first_light",
-    name: "First Light",
-    sky: [0x0b1030, 0x1d2a63, 0x3d4c94, 0x7f78c0, 0xe2a0b0, 0xffd6a0],
+    name: "Old School",
+    description: "The launcher's first sky",
+    sky: OLD_SCHOOL_NIGHT.sky,
     accent: ThemeAccent::Hue(246.),
-    palette: None,
-    look: Look::Glass,
+    palette: Some(&OLD_SCHOOL_NIGHT),
+    look: Look::Painted,
 };
 
 /// Nord: the Nord palette's polar night, snow storm and frost.
 pub const NORD: Theme = Theme {
     id: "nord",
     name: "Nord",
+    description: "Polar night and frost",
     sky: NORD_DARK.sky,
     accent: ThemeAccent::Colour(0x88c0d0),
-    palette: Some((&NORD_DARK, &NORD_LIGHT)),
+    palette: Some(&NORD_DARK),
     look: Look::Solid,
 };
 
@@ -189,109 +167,44 @@ pub const SUNRISE_DARK: Night = Night {
         shade: 0x2a1228,
         star: 0xfff1f6,
         mood: Mood::Plain,
+        land: Land::Plain,
     },
 };
 
-/// Sunrise's day: warm off-white and blush, dark plum text, a deeper rose.
-pub const SUNRISE_LIGHT: Night = Night {
-    sky: [0xf6e9f2, 0xfbe7ec, 0xffe6e2, 0xffe2d6, 0xffdcc6, 0xffe9d2],
-    page: 0xfff7f5,
-    side: 0xfbeff0,
-    card: 0xffffff,
-    card_alpha: 0.88,
-    card_hi: 0xffffff,
-    card_hi_alpha: 0.95,
-    stroke: 0x5a2348,
-    stroke_alpha: 0.14,
-    rule_alpha: 0.10,
-    ink: 0x32182e,
-    ink_soft: 0x4f2a48,
-    muted: 0x6e4a66,
-    accent: 0x9d285b,
-    accent_hi: 0x8f2252,
-    on_accent: 0xffffff,
-    success: 0x1f6a3a,
-    warn: 0x7a4a00,
-    danger: 0xa3262c,
-    dark: false,
-    art: SkyArt {
-        sun: [0xfffaf0, 0xffeacc, 0xffd2b0],
-        far: 0xf0d6e2,
-        near: 0xdcb8cc,
-        cloud: [0xfdf0f4, 0xffeef0, 0xfff3e6],
-        lit: [0xffffff; 3],
-        shade: 0xecd3df,
-        star: 0xffffff,
-        mood: Mood::Plain,
-    },
-};
-
-/// Hypr Neon's night: true black, lavender, blue and pink, thin visible edges (after the
-/// player's Hypr OLED NEON Discord theme; its colours only, nothing of its CSS).
+/// Hypr Neon's night: true black over a magenta horizon, a cyan accent and magenta edges, neon
+/// lines along the skylines and a grid floor (after the player's Hypr OLED NEON Discord theme;
+/// its colours only, nothing of its CSS).
 pub const HYPR_DARK: Night = Night {
-    sky: [0x000000, 0x000000, 0x020205, 0x05050c, 0x0a0a16, 0x120f22],
+    sky: [0x000000, 0x010007, 0x04020f, 0x0b041c, 0x1c0630, 0x3a0a48],
     page: 0x000000,
     side: 0x000000,
-    card: 0x09090e,
+    card: 0x07060d,
     card_alpha: 0.96,
-    card_hi: 0x12121b,
+    card_hi: 0x110f1c,
     card_hi_alpha: 0.97,
-    stroke: 0xcba6f7,
-    stroke_alpha: 0.22,
+    stroke: 0xff4fd8,
+    stroke_alpha: 0.24,
     rule_alpha: 0.12,
-    ink: 0xe6e9f8,
-    ink_soft: 0xc8cce0,
-    muted: 0x9aa0bd,
-    accent: 0xcba6f7,
-    accent_hi: 0xcba6f7,
-    on_accent: 0x100a1f,
+    ink: 0xe9f6ff,
+    ink_soft: 0xc6d6ea,
+    muted: 0x97a6c2,
+    accent: 0x3fe0ff,
+    accent_hi: 0x7cecff,
+    on_accent: 0x02141c,
     success: 0xa6e3a1,
     warn: 0xf9e2af,
-    danger: 0xf38ba8,
+    danger: 0xff8fb0,
     dark: true,
     art: SkyArt {
-        sun: [0xf5c2e7, 0xcba6f7, 0x89b4fa],
-        far: 0x0d0d18,
-        near: 0x050508,
-        cloud: [0x0b0b14, 0x10101c, 0x161626],
-        lit: [0x1a1a2e, 0x22223a, 0x2c2c4a],
-        shade: 0x08080f,
-        star: 0xcdd6f4,
-        mood: Mood::Plain,
-    },
-};
-
-/// Hypr Neon's day ("paper"): pale lavender-white, dark ink, deeper lavender. Not OLED.
-pub const HYPR_LIGHT: Night = Night {
-    sky: [0xf6f3fb, 0xf3effa, 0xefeaf8, 0xebe5f6, 0xe6e0f4, 0xe2dcf2],
-    page: 0xf6f3fb,
-    side: 0xefeaf8,
-    card: 0xffffff,
-    card_alpha: 0.94,
-    card_hi: 0xffffff,
-    card_hi_alpha: 0.97,
-    stroke: 0x6940a5,
-    stroke_alpha: 0.22,
-    rule_alpha: 0.12,
-    ink: 0x211b2e,
-    ink_soft: 0x3a3150,
-    muted: 0x5a5170,
-    accent: 0x6940a5,
-    accent_hi: 0x5e3896,
-    on_accent: 0xffffff,
-    success: 0x2c6e2a,
-    warn: 0x7a5200,
-    danger: 0xb0244a,
-    dark: false,
-    art: SkyArt {
-        sun: [0xffffff, 0xf5ecff, 0xe6d8fb],
-        far: 0xe2d8f2,
-        near: 0xcfc2e8,
-        cloud: [0xfbf9ff, 0xf6f1ff, 0xf1eaff],
-        lit: [0xffffff; 3],
-        shade: 0xe0d6f0,
-        star: 0xffffff,
-        mood: Mood::Plain,
+        sun: [0xff4fd8, 0xff7aa8, 0xffb36b],
+        far: 0x0b0618,
+        near: 0x030209,
+        cloud: [0x0b0618, 0x120926, 0x1a0c34],
+        lit: [0x2a0f46, 0x3a125c, 0x1c4a66],
+        shade: 0x06040d,
+        star: 0xbff6ff,
+        mood: Mood::Neon([0xff4fd8, 0x3fe0ff]),
+        land: Land::Neon([0xb04cff, 0x3fe0ff]),
     },
 };
 
@@ -299,19 +212,21 @@ pub const HYPR_LIGHT: Night = Night {
 pub const SUNRISE: Theme = Theme {
     id: "sunrise",
     name: "Sunrise",
+    description: "A warm dawn",
     sky: SUNRISE_DARK.sky,
     accent: ThemeAccent::Colour(0xc2366f),
-    palette: Some((&SUNRISE_DARK, &SUNRISE_LIGHT)),
+    palette: Some(&SUNRISE_DARK),
     look: Look::Glass,
 };
 
-/// Hypr Neon: OLED black with neon lavender, on Horizon's pages with solid plates.
+/// Hypr Neon: OLED black with neon cyan and magenta, on Horizon's pages with solid plates.
 pub const HYPR_NEON: Theme = Theme {
     id: "hypr_neon",
     name: "Hypr Neon",
+    description: "Handcrafted by Xmilon",
     sky: HYPR_DARK.sky,
-    accent: ThemeAccent::Colour(0xcba6f7),
-    palette: Some((&HYPR_DARK, &HYPR_LIGHT)),
+    accent: ThemeAccent::Colour(0x3fe0ff),
+    palette: Some(&HYPR_DARK),
     look: Look::Oled,
 };
 
@@ -346,40 +261,7 @@ pub const OCEAN_DARK: Night = Night {
         shade: 0x06303f,
         star: 0xdffaff,
         mood: Mood::Water([0x8feeff, 0xbff6ff, 0xffffff]),
-    },
-};
-
-/// Deep Ocean's day: shallow, sunlit water.
-pub const OCEAN_LIGHT: Night = Night {
-    sky: [0xe3f6fa, 0xd5f0f6, 0xc6e9f1, 0xb7e1ec, 0xa9d9e7, 0xbfe6ef],
-    page: 0xeaf8fb,
-    side: 0xdff1f5,
-    card: 0xffffff,
-    card_alpha: 0.88,
-    card_hi: 0xffffff,
-    card_hi_alpha: 0.95,
-    stroke: 0x0b4a5c,
-    stroke_alpha: 0.14,
-    rule_alpha: 0.10,
-    ink: 0x08303c,
-    ink_soft: 0x16495a,
-    muted: 0x3f6674,
-    accent: 0x0a7388,
-    accent_hi: 0x085f72,
-    on_accent: 0xffffff,
-    success: 0x1b6b3f,
-    warn: 0x7a4f00,
-    danger: 0xa3262c,
-    dark: false,
-    art: SkyArt {
-        sun: [0xffffff, 0xeafcff, 0xcdf2f8],
-        far: 0xc4e6ee,
-        near: 0xa3d3e0,
-        cloud: [0xf3fcfe, 0xeaf8fb, 0xe0f4f8],
-        lit: [0xffffff; 3],
-        shade: 0xcde8ef,
-        star: 0xffffff,
-        mood: Mood::Water([0xffffff, 0x5db8cc, 0xffffff]),
+        land: Land::Plain,
     },
 };
 
@@ -387,9 +269,10 @@ pub const OCEAN_LIGHT: Night = Night {
 pub const DEEP_OCEAN: Theme = Theme {
     id: "deep_ocean",
     name: "Deep Ocean",
+    description: "Light through deep water",
     sky: OCEAN_DARK.sky,
     accent: ThemeAccent::Colour(0x2cc4d6),
-    palette: Some((&OCEAN_DARK, &OCEAN_LIGHT)),
+    palette: Some(&OCEAN_DARK),
     look: Look::Painted,
 };
 
@@ -424,40 +307,7 @@ pub const AUTUMN_DARK: Night = Night {
         shade: 0x2a1409,
         star: 0xffe9c8,
         mood: Mood::Leaves([0xd9531e, 0xf0a02a, 0x9c3a14]),
-    },
-};
-
-/// Autumn Forest's day: warm paper and a deeper rust.
-pub const AUTUMN_LIGHT: Night = Night {
-    sky: [0xfbf1e1, 0xf9e8d0, 0xf6dcc0, 0xf2d0b0, 0xefc6a0, 0xf6dbbb],
-    page: 0xfdf6ea,
-    side: 0xf8ecdb,
-    card: 0xffffff,
-    card_alpha: 0.88,
-    card_hi: 0xffffff,
-    card_hi_alpha: 0.95,
-    stroke: 0x5a2c10,
-    stroke_alpha: 0.14,
-    rule_alpha: 0.10,
-    ink: 0x2e1708,
-    ink_soft: 0x4d2b14,
-    muted: 0x6c4a33,
-    accent: 0xa8420f,
-    accent_hi: 0x8f3709,
-    on_accent: 0xffffff,
-    success: 0x3d6b1c,
-    warn: 0x7a4a00,
-    danger: 0xa3262c,
-    dark: false,
-    art: SkyArt {
-        sun: [0xfffaf0, 0xffe9c4, 0xffd49b],
-        far: 0xf0d5b8,
-        near: 0xdcb28a,
-        cloud: [0xfff6ea, 0xfdeedd, 0xfbe7d2],
-        lit: [0xffffff; 3],
-        shade: 0xecd2b5,
-        star: 0xffffff,
-        mood: Mood::Leaves([0xc4521a, 0xe08a1e, 0x8f3a12]),
+        land: Land::Plain,
     },
 };
 
@@ -465,9 +315,10 @@ pub const AUTUMN_LIGHT: Night = Night {
 pub const AUTUMN_FOREST: Theme = Theme {
     id: "autumn_forest",
     name: "Autumn Forest",
+    description: "Falling leaves at dusk",
     sky: AUTUMN_DARK.sky,
     accent: ThemeAccent::Colour(0xe0782a),
-    palette: Some((&AUTUMN_DARK, &AUTUMN_LIGHT)),
+    palette: Some(&AUTUMN_DARK),
     look: Look::Painted,
 };
 
@@ -502,40 +353,7 @@ pub const CHERRY_DARK: Night = Night {
         shade: 0x2a1d44,
         star: 0xfff0fa,
         mood: Mood::Petals([0xffc2d9, 0xff8fb8]),
-    },
-};
-
-/// Cherry Blossom's day: blush white with a deep rose.
-pub const CHERRY_LIGHT: Night = Night {
-    sky: [0xfff2f7, 0xffe9f1, 0xffe0ec, 0xffd8e6, 0xf9d0e0, 0xfde0ea],
-    page: 0xfff7fa,
-    side: 0xfdecf2,
-    card: 0xffffff,
-    card_alpha: 0.88,
-    card_hi: 0xffffff,
-    card_hi_alpha: 0.95,
-    stroke: 0x6b2a4a,
-    stroke_alpha: 0.14,
-    rule_alpha: 0.10,
-    ink: 0x3a1426,
-    ink_soft: 0x5a2a42,
-    muted: 0x7a5468,
-    accent: 0xb82f68,
-    accent_hi: 0xa02558,
-    on_accent: 0xffffff,
-    success: 0x1f6a3a,
-    warn: 0x7a4a00,
-    danger: 0xa3262c,
-    dark: false,
-    art: SkyArt {
-        sun: [0xffffff, 0xfff0f5, 0xffdbe8],
-        far: 0xf6d3e0,
-        near: 0xe6b1c8,
-        cloud: [0xfffafc, 0xfff2f7, 0xffeaf1],
-        lit: [0xffffff; 3],
-        shade: 0xf2d0de,
-        star: 0xffffff,
-        mood: Mood::Petals([0xf48fb1, 0xe0608f]),
+        land: Land::Plain,
     },
 };
 
@@ -543,9 +361,10 @@ pub const CHERRY_LIGHT: Night = Night {
 pub const CHERRY_BLOSSOM: Theme = Theme {
     id: "cherry_blossom",
     name: "Cherry Blossom",
+    description: "Petals on a pink evening",
     sky: CHERRY_DARK.sky,
     accent: ThemeAccent::Colour(0xf59ac0),
-    palette: Some((&CHERRY_DARK, &CHERRY_LIGHT)),
+    palette: Some(&CHERRY_DARK),
     look: Look::Painted,
 };
 
@@ -580,40 +399,7 @@ pub const AURORA_DARK: Night = Night {
         shade: 0x07121f,
         star: 0xeefaff,
         mood: Mood::Aurora([0x3dffa0, 0x9b6bff, 0x35d6ff]),
-    },
-};
-
-/// Midnight Aurora's day: cool mist with pale green and violet veils.
-pub const AURORA_LIGHT: Night = Night {
-    sky: [0xeaf5f2, 0xe3f0f2, 0xdeeaf4, 0xdce4f4, 0xdfe0f4, 0xe8e4f6],
-    page: 0xf0f8f6,
-    side: 0xe6f1f0,
-    card: 0xffffff,
-    card_alpha: 0.88,
-    card_hi: 0xffffff,
-    card_hi_alpha: 0.95,
-    stroke: 0x1d3a4a,
-    stroke_alpha: 0.14,
-    rule_alpha: 0.10,
-    ink: 0x0e2630,
-    ink_soft: 0x24434f,
-    muted: 0x4a6670,
-    accent: 0x0d7a56,
-    accent_hi: 0x0a6647,
-    on_accent: 0xffffff,
-    success: 0x1b6b3f,
-    warn: 0x7a4f00,
-    danger: 0xa3262c,
-    dark: false,
-    art: SkyArt {
-        sun: [0xffffff, 0xeefaf6, 0xd5f1ea],
-        far: 0xcfe3e6,
-        near: 0xb2cbd6,
-        cloud: [0xf6fbfa, 0xeef6f6, 0xe7f0f4],
-        lit: [0xffffff; 3],
-        shade: 0xd3e2e8,
-        star: 0xffffff,
-        mood: Mood::Aurora([0x5fe0a8, 0xa88cff, 0x6ad4f0]),
+        land: Land::Plain,
     },
 };
 
@@ -621,20 +407,124 @@ pub const AURORA_LIGHT: Night = Night {
 pub const MIDNIGHT_AURORA: Theme = Theme {
     id: "midnight_aurora",
     name: "Midnight Aurora",
+    description: "Northern lights",
     sky: AURORA_DARK.sky,
     accent: ThemeAccent::Colour(0x4fe0a0),
-    palette: Some((&AURORA_DARK, &AURORA_LIGHT)),
+    palette: Some(&AURORA_DARK),
     look: Look::Painted,
 };
 
+/// Overworld's night: a deep blue sky, stars, a square moon over stepped grassy land.
+pub const OVERWORLD_DARK: Night = Night {
+    sky: [0x060b1e, 0x0a1230, 0x0f1a40, 0x16244f, 0x1f3060, 0x2c4070],
+    page: 0x070c1c,
+    side: 0x050916,
+    card: 0x101a2e,
+    card_alpha: 0.88,
+    card_hi: 0x18243c,
+    card_hi_alpha: 0.92,
+    stroke: 0xb8e08a,
+    stroke_alpha: 0.12,
+    rule_alpha: 0.10,
+    ink: 0xf1f6ea,
+    ink_soft: 0xd3dcc8,
+    muted: 0xa8b4a0,
+    accent: 0x5fae3c,
+    accent_hi: 0x9fdc6e,
+    on_accent: 0x0c1a06,
+    success: 0x9fdc6e,
+    warn: 0xffd27a,
+    danger: 0xff9a8a,
+    dark: true,
+    art: SkyArt {
+        sun: [0xe8ecf4, 0xd6dcea, 0xc2cadc],
+        far: 0x1a2a3c,
+        near: 0x2a1d14,
+        cloud: [0x1a2448, 0x223058, 0x2c3a66],
+        lit: [0x2c3a66, 0x384878, 0x46568a],
+        shade: 0x121a36,
+        star: 0xf1f6ff,
+        mood: Mood::Plain,
+        land: Land::Blocks {
+            grass: [0x24402c, 0x2f5a24],
+            leaves: 0x1f4a1c,
+        },
+    },
+};
+
+/// Overworld: an original blocky day and night over stepped grassy land, square clouds drifting.
+pub const OVERWORLD: Theme = Theme {
+    id: "overworld",
+    name: "Overworld",
+    description: "Blocky hills under square clouds",
+    sky: OVERWORLD_DARK.sky,
+    accent: ThemeAccent::Colour(0x5fae3c),
+    palette: Some(&OVERWORLD_DARK),
+    look: Look::Painted,
+};
+
+/// Taiga: what was the launcher's light appearance, now a theme of its own: a soft, overcast
+/// dusk over snowy spruce woods, muted rather than white, with dark text.
+pub const TAIGA_NIGHT: Night = Night {
+    sky: [0xb4c0cc, 0xbac5d0, 0xc0cad4, 0xc6cfd8, 0xccd4dc, 0xd6dce2],
+    page: 0xc9d1da,
+    side: 0xc0c9d3,
+    card: 0xe4e9ee,
+    card_alpha: 0.86,
+    card_hi: 0xeef1f4,
+    card_hi_alpha: 0.92,
+    stroke: 0x2a3a4a,
+    stroke_alpha: 0.16,
+    rule_alpha: 0.10,
+    ink: 0x17202a,
+    ink_soft: 0x26323e,
+    muted: 0x36424f,
+    accent: 0x2f6f86,
+    accent_hi: 0x1e4a5c,
+    on_accent: 0xffffff,
+    success: 0x1f5f34,
+    warn: 0x6a4500,
+    danger: 0x962028,
+    dark: false,
+    art: SkyArt {
+        sun: [0xf4f1ea, 0xe8e4dc, 0xd8d4cc],
+        far: 0x6f8090,
+        near: 0x34424f,
+        cloud: [0xd0d7de, 0xc4ccd5, 0xb8c1cb],
+        lit: [0xe2e7ec; 3],
+        shade: 0xa7b1bc,
+        star: 0xffffff,
+        mood: Mood::Snow([0xffffff, 0x5c6c7e]),
+        land: Land::Taiga {
+            snow: [0xdfe5eb, 0xf2f5f8],
+        },
+    },
+};
+
+/// Taiga: snow on the spruce woods. Where an old light appearance opens (`Settings::parse`).
+pub const TAIGA: Theme = Theme {
+    id: "taiga",
+    name: "Taiga",
+    description: "Snow on the spruce woods",
+    sky: TAIGA_NIGHT.sky,
+    accent: ThemeAccent::Colour(0x2f6f86),
+    palette: Some(&TAIGA_NIGHT),
+    look: Look::Painted,
+};
+
+/// Horizon's own theme's line in Settings.
+pub const HORIZON_DESCRIPTION: &str = "The pixel sunset";
+
 /// The launcher themes past Horizon's own sky: the featured families first, then the older ones.
-pub const THEMES: [Theme; 8] = [
+pub const THEMES: [Theme; 10] = [
     SUNRISE,
     HYPR_NEON,
     DEEP_OCEAN,
     AUTUMN_FOREST,
     CHERRY_BLOSSOM,
     MIDNIGHT_AURORA,
+    OVERWORLD,
+    TAIGA,
     FIRST_LIGHT,
     NORD,
 ];

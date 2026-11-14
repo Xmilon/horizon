@@ -15,7 +15,7 @@ fn every_accent_reads_as_well_as_the_violet() {
         NIGHT.blocks(),
         DAWN.blocks(),
         NORD_DARK.blocks(),
-        NORD_LIGHT.blocks(),
+        TAIGA_NIGHT.blocks(),
     ] {
         for accent in Accent::ALL
             .into_iter()
@@ -72,8 +72,7 @@ fn every_theme_palette_reads_over_its_sky() {
 
     let palettes = THEMES
         .iter()
-        .filter_map(|t| t.palette.map(|(d, l)| (t.id, d, l)))
-        .flat_map(|(id, d, l)| [(id, *d), (id, *l)]);
+        .filter_map(|t| t.palette.map(|p| (t.id, *p)));
     for (id, p) in palettes {
         let look = format!("{id} {}", if p.dark { "dark" } else { "light" });
         let texts = [

@@ -62,6 +62,18 @@ fn thumb_centre(f: f32, width: f32) -> f32 {
     THUMB / 2. + f.clamp(0., 1.) * (width - THUMB).max(0.)
 }
 
+/// Why Glass and Blur change nothing in `theme`'s look, if they don't: performance mode's plates
+/// and an OLED night's are a solid colour. The sunset's and a painted sky's are frosted glass.
+fn look_unused(theme: &crate::theme::Theme, performance: bool) -> Option<&'static str> {
+    if performance {
+        Some("Performance mode draws solid panels, without glass or blur.")
+    } else if !theme.look.own_sky && (!theme.scene || !theme.dark) {
+        Some("This theme's night draws solid panels, without glass or blur.")
+    } else {
+        None
+    }
+}
+
 /// Each accent's swatch, in points.
 const SWATCH: f32 = 26.;
 /// The hue strip beside the swatches, in points: 0 to 360 degrees across it.
@@ -92,22 +104,21 @@ impl Launcher {
     pub(super) fn launcher_theme_row(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let current = themes::theme(self.settings.theme.as_deref()).map(|th| th.id);
-        let mut options: Vec<(Option<&'static str>, &'static str, Night, Night)> =
-            vec![(None, "Horizon", theme::night::NIGHT, theme::night::DAWN)];
+        let mut options: Vec<(Option<&'static str>, &'static str, &'static str, Night)> = vec![(
+            None,
+            "Horizon",
+            themes::HORIZON_DESCRIPTION,
+            theme::night::NIGHT,
+        )];
         options.extend(themes::THEMES.iter().map(|th| {
-            let (dark, light) = th.palette.map_or_else(
-                || {
-                    let mut dark = theme::night::NIGHT;
-                    dark.sky = th.sky;
-                    (dark, theme::night::DAWN)
-                },
-                |(d, l)| (*d, *l),
-            );
-            (Some(th.id), th.name, dark, light)
+            let night = th.palette.copied().unwrap_or(Night {
+                sky: th.sky,
+                ..theme::night::NIGHT
+            });
+            (Some(th.id), th.name, th.description, night)
         }));
         let mut cards = div().flex().flex_wrap().gap(px(10.));
-        for (id, name, dark, light) in options {
-            let p = if t.dark { dark } else { light };
+        for (id, name, about, p) in options {
             let accent = themes::starting_accent(id, &self.settings.theme_accents).rgb();
             let label = horizon_theme::glass::Glass::new(accent, 0., 0.).on_accent;
             let chosen = current == id;
@@ -184,6 +195,15 @@ impl Launcher {
                         .child(tr(name))
                         .when(chosen, |d| d.child(ui::icon("tick-02", 14., t.accent))),
                 )
+                .child(
+                    div()
+                        .px(px(4.))
+                        .pb(px(2.))
+                        .text_size(px(11.))
+                        .line_height(px(14.))
+                        .text_color(t.muted)
+                        .child(tr(about)),
+                )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     if themes::theme(this.settings.theme.as_deref()).map(|th| th.id) != id {
                         this.pick_theme(id);
@@ -195,7 +215,7 @@ impl Launcher {
         let note = Some(
             div()
                 .child(tr(
-                    "Free for everyone. Each theme has a light and a dark look and remembers the accent you pick under it.",
+                    "Free for everyone. Each theme remembers the accent you pick under it.",
                 ))
                 .into_any_element(),
         );
@@ -248,11 +268,7 @@ impl Launcher {
         let mut swatches = div().flex().gap(px(6.));
         for accent in Accent::ALL {
             let face = Theme::for_appearance(
-                if t.dark {
-                    backend::Appearance::Dark
-                } else {
-                    backend::Appearance::Light
-                },
+                backend::Appearance::Dark,
                 accent,
                 gpui::WindowAppearance::Dark,
             )
@@ -427,7 +443,7 @@ impl Launcher {
         let base = if unused.is_none() {
             keyboard(base, &t).cursor_pointer()
         } else {
-            base.opacity(0.4)
+            base.cursor_default()
         };
         let track = base
             .relative()
@@ -512,12 +528,19 @@ impl Launcher {
                 MouseButton::Left,
                 cx.listener(|this, _: &MouseUpEvent, _, cx| this.finish_look(cx)),
             );
-        let control = div().flex().items_center().gap(px(16.)).child(track).child(
-            ui::text(13., FontWeight::NORMAL, 0.6)
-                .w(px(48.))
-                .text_right()
-                .child(shown),
-        );
+        let control = div()
+            .flex()
+            .items_center()
+            .gap(px(16.))
+            // Dimmed whole, value too, so it reads as off rather than as a slider at rest.
+            .when(unused.is_some(), |d| d.opacity(0.4))
+            .child(track)
+            .child(
+                ui::text(13., FontWeight::NORMAL, 0.6)
+                    .w(px(48.))
+                    .text_right()
+                    .child(shown),
+            );
         ui::setting_row(
             tr(title),
             Some(div().child(tr(about)).into_any_element()),
@@ -571,15 +594,7 @@ impl Launcher {
 
     /// Why Glass and Blur change nothing in the look on screen, if they don't.
     fn look_unused(&self) -> Option<&'static str> {
-        if !self.theme.dark {
-            Some("Glass and Blur shape the dark appearance's frosted panels; the light one draws solid white panels.")
-        } else if self.settings.performance() {
-            Some("Performance mode draws solid panels, without glass or blur.")
-        } else if !self.theme.scene {
-            Some("This theme's night draws solid panels, without glass or blur.")
-        } else {
-            None
-        }
+        look_unused(&self.theme, self.settings.performance())
     }
 
     /// The knob's value as the slider shows it (Glass in percent, Blur in px).
@@ -627,7 +642,7 @@ impl Launcher {
         }
     }
 
-    /// Reset the look: the appearance, theme, accent, glass, blur and Home's background go back
+    /// Reset the look: the theme, accent, glass, blur and Home's background go back
     /// to how Horizon ships. Language, while playing and the opening are not the look and stay.
     pub(super) fn reset_look_row(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
@@ -636,7 +651,7 @@ impl Launcher {
             Some(
                 div()
                     .child(tr(
-                        "Light or dark, theme, accent colour, glass, blur and Home's background go back to how Horizon ships.",
+                        "Theme, accent colour, glass, blur and Home's background go back to how Horizon ships.",
                     ))
                     .into_any_element(),
             ),
@@ -908,6 +923,35 @@ mod tests {
             assert!((back - f).abs() < 1e-5, "{f} -> {back}");
         }
         assert_eq!(fraction_at(5., THUMB), 0.);
+    }
+
+    /// The sliders are live wherever the plates are glass (the sunset's and a painted sky's),
+    /// and off in performance mode and over an OLED night.
+    #[test]
+    fn sliders_are_live_only_over_glass() {
+        let unused = |theme: &str, performance: bool| {
+            let settings = Settings {
+                theme: Some(theme.into()),
+                performance: Some(performance),
+                ..Default::default()
+            };
+            let t = crate::theme::from_settings(&settings, gpui::WindowAppearance::Dark);
+            look_unused(&t, performance).is_some()
+        };
+        for painted in [
+            "deep_ocean",
+            "autumn_forest",
+            "cherry_blossom",
+            "midnight_aurora",
+            "overworld",
+            "taiga",
+            "first_light",
+        ] {
+            assert!(!unused(painted, false), "{painted}");
+            assert!(unused(painted, true), "{painted} performance");
+        }
+        assert!(!unused("sunrise", false));
+        assert!(unused("hypr_neon", false));
     }
 
     #[test]

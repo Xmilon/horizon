@@ -21,6 +21,11 @@ thread_local! {
     static FLAT: Cell<bool> = const { Cell::new(false) };
     /// The light appearance: the glass look's white ink and fills turn to [`INK`].
     static LIGHT: Cell<bool> = const { Cell::new(false) };
+    /// How many [`hover_back`] layers this frame has built so far: the next one's name.
+    static BACKS: Cell<usize> = const { Cell::new(0) };
+    /// Each [`hover_back`] layer's pointer: on or off, and since when.
+    static BACK_HOVER: RefCell<HashMap<SharedString, (bool, std::time::Instant)>> =
+        RefCell::new(HashMap::new());
 }
 
 /// The light appearance's ink: the mockup's text on white (`#100a1f`), at the opacities the dark
@@ -115,7 +120,8 @@ pub fn setting_row(
         .rounded(px(12.))
         .border_1()
         .border_color(gpui::transparent_black())
-        .hover(|s| s.bg(white(0.03)).border_color(white(0.18)))
+        .relative()
+        .child(back_edge(12., 0.03, true))
         .child(
             div()
                 .flex()
@@ -154,7 +160,8 @@ pub fn setting_row_stacked(
         .rounded(px(12.))
         .border_1()
         .border_color(gpui::transparent_black())
-        .hover(|s| s.bg(white(0.03)).border_color(white(0.18)))
+        .relative()
+        .child(back_edge(12., 0.03, true))
         .child(
             div()
                 .flex()
@@ -214,6 +221,7 @@ pub fn on() -> bool {
 /// Set as each frame's pages start being built.
 pub fn set_on(on: bool) {
     ON.set(on);
+    BACKS.set(0);
 }
 
 /// Set as each frame's pages start being built: the colours for the player's accent.
@@ -300,6 +308,80 @@ pub(crate) fn hover_edge(id: &SharedString, r: f32, fill: f32, bordered: bool) -
                 .border_color(white(edge::HOVER * t))
         },
     )
+}
+
+/// A hover layer that hears the pointer itself, for an element with no id, or with hoverable
+/// parts in it ([`track_hover`] lights one element at a time, so a row would go dark under its own
+/// button): `paint` draws it at 0 (rest) to 1 (hovered), eased in and out on QUICK, at once under
+/// reduced motion. Put it first in a `relative` element, so the content is drawn over it. At rest
+/// it draws nothing and plays nothing.
+fn hover_back(inset: f32, r: f32, paint: impl Fn(Div, f32) -> Div + 'static) -> AnyElement {
+    let n = BACKS.get();
+    BACKS.set(n + 1);
+    // Named by its place in the frame's build: the pages are built in the same order each frame.
+    // shortcut: a row hovered as its page is swapped by the keyboard may stay lit until the
+    // pointer moves over it; give the callers ids if that shows.
+    let id = SharedString::from(format!("hover-back-{n}"));
+    let state = BACK_HOVER.with_borrow(|all| all.get(&id).copied());
+    let shown = back_phase(state, horizon_theme::QUICK.duration()).map(|(on, at)| {
+        static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+        let start = *START.get_or_init(std::time::Instant::now);
+        let key = ElementId::named_usize(
+            format!("{id}-{on}"),
+            at.saturating_duration_since(start).as_micros() as usize,
+        );
+        div()
+            .absolute()
+            .top(px(inset))
+            .left(px(inset))
+            .right(px(inset))
+            .bottom(px(inset))
+            .rounded(px(r))
+            .with_animation(
+                key,
+                crate::motion::eased(horizon_theme::QUICK),
+                move |d, t| paint(d, if on { t } else { 1. - t }),
+            )
+    });
+    let key = id.clone();
+    div()
+        .id(id)
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .on_hover(move |hovered, window, _| {
+            BACK_HOVER.with_borrow_mut(|all| {
+                all.insert(key.clone(), (*hovered, std::time::Instant::now()));
+            });
+            window.refresh();
+        })
+        .children(shown)
+        .into_any_element()
+}
+
+/// What a [`hover_back`] layer plays from its last pointer change (`state`): easing in while on,
+/// out for `len` after the pointer left, nothing at rest.
+fn back_phase(
+    state: Option<(bool, std::time::Instant)>,
+    len: std::time::Duration,
+) -> Option<(bool, std::time::Instant)> {
+    state.filter(|&(on, at)| on || at.elapsed() < len)
+}
+
+/// [`hover_back`] as [`hover_edge`]: white at `fill` and the hover outline. `bordered`: the
+/// element has its own 1 px outline, which the layer's covers.
+pub fn back_edge(r: f32, fill: f32, bordered: bool) -> AnyElement {
+    hover_back(if bordered { -1. } else { 0. }, r, move |d, t| {
+        d.bg(white(fill * t))
+            .border_1()
+            .border_color(white(edge::HOVER * t))
+    })
+}
+
+/// [`hover_back`] in one colour (white at a few %, a dark tint, the danger red), no outline.
+pub fn back_tint(r: f32, c: Hsla) -> AnyElement {
+    hover_back(0., r, move |d, t| d.bg(c.opacity(c.a * t)))
 }
 
 /// `a` towards `b` by `t`, for hover-eased colours.
@@ -642,7 +724,8 @@ pub fn nav_tab(
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(white(if open { ink::FULL } else { ink::MUTED }))
                 .when(!open, |d| {
-                    d.hover(|s| s.text_color(white(ink::FULL)).bg(white(0.04)))
+                    d.hover(|s| s.text_color(white(ink::FULL)))
+                        .child(back_tint(radius::CONTROL, white(0.04)))
                 })
                 .child(div().relative().child(label))
                 .child(bar),
@@ -833,6 +916,7 @@ pub fn big_icon(id: impl Into<SharedString>, name: &'static str, t: &Theme) -> S
         div()
             .id(id)
             .group(group)
+            .relative()
             .flex()
             .flex_none()
             .items_center()
@@ -842,10 +926,10 @@ pub fn big_icon(id: impl Into<SharedString>, name: &'static str, t: &Theme) -> S
             .bg(white(fill::BUTTON))
             .border_1()
             .border_color(white(edge::REST))
-            .hover(|s| s.bg(white(0.13)).border_color(white(edge::HOVER)))
             .active(|s| s.bg(white(0.18)))
             .cursor_pointer()
-            .child(glyph),
+            .child(back_edge(radius::LARGE, 0.05, true))
+            .child(glyph.relative()),
         t,
     )
 }
@@ -1107,7 +1191,7 @@ pub fn field(focused: bool, invalid: bool) -> Div {
         } else {
             white(edge::REST)
         })
-        .hover(|s| s.border_color(white(edge::HOVER)))
+        .child(back_edge(radius::ROW, 0., true))
         .font_family(horizon_theme::glass::FONT)
         .text_size(px(14.))
 }
@@ -1573,4 +1657,22 @@ impl Render for Tip {
 pub fn tip(label: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) -> gpui::AnyView {
     let label: SharedString = label.into();
     move |_, cx| cx.new(|_| Tip(label.clone())).into()
+}
+
+#[cfg(test)]
+mod hover_back_tests {
+    use super::back_phase;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn plays_while_on_and_briefly_after() {
+        let len = Duration::from_millis(150);
+        assert_eq!(back_phase(None, len), None);
+        let now = Instant::now();
+        assert!(back_phase(Some((true, now)), len).is_some());
+        assert!(back_phase(Some((false, now)), len).is_some());
+        let old = now - Duration::from_secs(1);
+        assert!(back_phase(Some((true, old)), len).is_some());
+        assert_eq!(back_phase(Some((false, old)), len), None);
+    }
 }

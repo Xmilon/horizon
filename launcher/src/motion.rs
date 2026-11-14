@@ -53,8 +53,12 @@ pub fn still() -> bool {
 /// `motion` as GPUI plays it: its length on its own curve; at its end from the first frame under
 /// reduced motion.
 pub fn eased(motion: tokens::Motion) -> Animation {
+    eased_as(motion, still())
+}
+
+fn eased_as(motion: tokens::Motion, still: bool) -> Animation {
     let animation = Animation::new(motion.duration());
-    if still() {
+    if still {
         return animation.with_easing(|_| 1.);
     }
     animation.with_easing(move |t| motion.ease(t))
@@ -108,21 +112,20 @@ const STAGGER_MAX: usize = 8;
 /// once per key, so put what should replay it (the page switch count, the tab) in the key. Under
 /// reduced motion it is simply there.
 pub fn enter(key: impl Into<ElementId>, order: usize, el: Div) -> AnyElement {
+    if still() {
+        return el.relative().into_any_element();
+    }
     let delay = STAGGER_MS * order.min(STAGGER_MAX) as u64;
     let total = PAGE.ms + delay;
     let start = delay as f32 / total as f32;
-    let animation = Animation::new(std::time::Duration::from_millis(total));
-    let animation = if still() {
-        animation.with_easing(|_| 1.)
-    } else {
-        animation.with_easing(move |t| {
+    let animation =
+        Animation::new(std::time::Duration::from_millis(total)).with_easing(move |t| {
             if t <= start {
                 0.
             } else {
                 PAGE.ease((t - start) / (1. - start))
             }
-        })
-    };
+        });
     el.relative()
         .with_animation(key, animation, |d, p| {
             d.opacity(p).top(px(PAGE_RISE * (1. - p)))
@@ -134,6 +137,15 @@ pub fn enter(key: impl Into<ElementId>, order: usize, el: Div) -> AnyElement {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn reduced_motion_draws_the_end_from_the_first_frame() {
+        let still = eased_as(PAGE, true);
+        assert_eq!((still.easing)(0.), 1.);
+        let moving = eased_as(PAGE, false);
+        assert_eq!((moving.easing)(0.), 0.);
+        assert!(((moving.easing)(1.) - 1.).abs() < 1e-3);
+    }
 
     #[test]
     fn a_switch_slides_only_after_it_changed() {

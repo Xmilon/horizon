@@ -36,11 +36,12 @@ pub(super) fn choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Statef
     keyboard(
         div()
             .id(id.into())
+            .relative()
             .flex()
             .rounded(px(radius::POPOVER))
             .cursor_pointer()
             .bg(white(if on { fill::ACTIVE } else { 0.04 }))
-            .when(!on, |d| d.hover(|s| s.bg(white(0.07)))),
+            .when(!on, |d| d.child(ui::back_tint(radius::POPOVER, white(0.03)))),
         t,
     )
 }
@@ -87,6 +88,7 @@ pub(super) fn list_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> S
     keyboard(
         div()
             .id(id.into())
+            .relative()
             .flex()
             .flex_none()
             .items_center()
@@ -95,7 +97,7 @@ pub(super) fn list_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> S
             .rounded(px(radius::ROW))
             .cursor_pointer()
             .when(on, |d| d.bg(white(0.11)))
-            .when(!on, |d| d.hover(|s| s.bg(white(fill::HOVER)))),
+            .when(!on, |d| d.child(ui::back_tint(radius::ROW, white(fill::HOVER)))),
         t,
     )
 }
@@ -161,6 +163,7 @@ fn icon_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div
     keyboard(
         div()
             .id(id.into())
+            .relative()
             .flex()
             .flex_none()
             .items_center()
@@ -169,7 +172,7 @@ fn icon_choice(id: impl Into<SharedString>, on: bool, t: &Theme) -> Stateful<Div
             .rounded(px(15.))
             .cursor_pointer()
             .when(on, |d| d.bg(white(0.16)))
-            .when(!on, |d| d.hover(|s| s.bg(white(0.07)))),
+            .when(!on, |d| d.child(ui::back_tint(15., white(0.07)))),
         t,
     )
 }
@@ -486,6 +489,7 @@ impl Launcher {
             keyboard(
                 div()
                     .id("instance-import")
+                    .relative()
                     .flex()
                     .items_center()
                     .gap(px(10.))
@@ -496,9 +500,10 @@ impl Launcher {
                     .font_family(horizon_theme::glass::FONT)
                     .text_size(px(14.))
                     .text_color(white(ink::BODY))
-                    .hover(|s| s.bg(white(fill::ROW_HOVER)).text_color(white(ink::FULL)))
-                    .child(ui::icon("package-01", 18., white(ink::BODY)))
-                    .child(tr("Import a modpack…")),
+                    .hover(|s| s.text_color(white(ink::FULL)))
+                    .child(ui::back_tint(radius::CONTROL, white(fill::ROW_HOVER)))
+                    .child(ui::icon("package-01", 18., white(ink::BODY)).relative())
+                    .child(div().relative().child(tr("Import a modpack…"))),
                 &t,
             )
             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
@@ -657,6 +662,7 @@ impl Launcher {
                         .items_center()
                         .gap(px(12.))
                         .p(px(12.))
+                        .relative()
                         .rounded(px(radius::LARGE))
                         .border_1()
                         .cursor_pointer()
@@ -667,7 +673,7 @@ impl Launcher {
                         .when(!on, |d| {
                             d.bg(white(0.035))
                                 .border_color(white(ui::edge::REST))
-                                .hover(|s| s.bg(white(0.06)).border_color(white(0.18)))
+                                .child(ui::back_edge(radius::LARGE, 0.025, true))
                         })
                         .child(
                             div()
@@ -946,6 +952,7 @@ impl Launcher {
         let cancel = keyboard(
             div()
                 .id("instance-cancel")
+                .relative()
                 .flex()
                 .items_center()
                 .h(px(48.))
@@ -956,8 +963,9 @@ impl Launcher {
                 .text_size(px(15.))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(white(ink::BODY))
-                .hover(|s| s.bg(white(fill::ROW_HOVER)).text_color(white(ink::FULL)))
-                .child(tr("Cancel")),
+                .hover(|s| s.text_color(white(ink::FULL)))
+                .child(ui::back_tint(radius::ROW, white(fill::ROW_HOVER)))
+                .child(div().relative().child(tr("Cancel"))),
             &t,
         );
         let label = match (editing.is_some(), busy) {
@@ -970,6 +978,7 @@ impl Launcher {
         let save = keyboard(
             div()
                 .id("instance-save")
+                .relative()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -978,12 +987,12 @@ impl Launcher {
                 .rounded(px(radius::LARGE))
                 .bg(accent)
                 .cursor_pointer()
-                .hover(move |s| s.bg(lit))
+                .child(ui::back_tint(radius::LARGE, lit))
                 .font_family(horizon_theme::glass::FONT)
                 .text_size(px(15.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .text_color(ui::color(self.look.on_accent))
-                .child(label),
+                .child(div().relative().child(label)),
             &t,
         );
         let buttons = if busy {
@@ -1107,7 +1116,8 @@ impl Launcher {
                 .border_color(white(ui::edge::REST))
                 .bg(white(if open { fill::ACTIVE } else { 0.06 }))
                 .cursor_pointer()
-                .hover(|s| s.bg(white(fill::HOVER)))
+                .relative()
+                .when(!open, |d| d.child(ui::back_edge(radius::CONTROL, 0.06, true)))
                 .child(
                     ui::text(14., FontWeight::MEDIUM, ink::FULL)
                         .min_w_0()

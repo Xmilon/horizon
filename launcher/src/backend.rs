@@ -4149,7 +4149,8 @@ pub fn spawn(job: Job, cmd: Command, tx: Sender<Msg>) -> Result<Running, String>
     Ok(Running { child, stdin })
 }
 
-/// The launcher's appearance, as the player picks it in Settings.
+/// The launcher's appearance, as older launchers saved it: a theme is one look now, and a saved
+/// `light` opens on the Taiga theme (`Settings::parse`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Appearance {
@@ -4243,7 +4244,8 @@ pub struct Settings {
     /// Unset means none: the environment's `HTTPS_PROXY` and `HTTP_PROXY` apply instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proxy: Option<String>,
-    /// Dark, Light, or the system's: the launcher's look. Dark by default.
+    /// Only read to move an old light appearance to the Taiga theme (`parse`): always dark now,
+    /// a theme being one look.
     #[serde(default)]
     pub appearance: Appearance,
     /// The player has read what the "I'm playing" ping holds (`telemetry::PING`): on the
@@ -4324,7 +4326,12 @@ impl Settings {
     }
 
     pub fn load() -> Self {
-        Self::parse(&fs::read_to_string(data_dir().join("settings.json")).unwrap_or_default())
+        let mut settings =
+            Self::parse(&fs::read_to_string(data_dir().join("settings.json")).unwrap_or_default());
+        // The fork's launcher shows no ads: every partner banner and card reads this, hidden
+        // from the start (upstream's partner code stays as it is, for syncing).
+        settings.partner_hidden = cfg!(horizon_fork_launcher) || settings.partner_hidden;
+        settings
     }
     pub fn parse(text: &str) -> Self {
         let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) else {
@@ -4384,7 +4391,14 @@ impl Settings {
                 fields.remove("language");
             }
         }
-        serde_json::from_value(value).unwrap_or_default()
+        let mut settings: Self = serde_json::from_value(value).unwrap_or_default();
+        // A theme is one look now: the light appearance became the Taiga theme, and dark or the
+        // system's opens on the saved theme. Saved back as dark, so this runs once.
+        if settings.appearance == Appearance::Light {
+            settings.theme = Some(crate::themes::TAIGA.id.to_string());
+        }
+        settings.appearance = Appearance::Dark;
+        settings
     }
     /// Whether the launcher keeps its entry in the applications menu (Linux).
     pub fn desktop_entry(&self) -> bool {
@@ -5596,21 +5610,39 @@ pub fn {f}("
     }
 
     #[test]
-    fn the_appearance_is_dark_unless_picked_and_an_unknown_one_keeps_the_rest() {
+    fn an_old_appearance_moves_to_a_theme_and_an_unknown_one_keeps_the_rest() {
         assert_eq!(Settings::parse("{}").appearance, Appearance::Dark);
-        let light = Settings::parse(r#"{"appearance": "light", "game_args": "--x"}"#);
-        assert_eq!(light.appearance, Appearance::Light);
-        let future = Settings::parse(r#"{"appearance": "sepia", "game_args": "--x"}"#);
+        assert_eq!(Settings::parse("{}").theme, None);
+        // Light, alone or under a theme, opens on Taiga and keeps the rest.
+        for text in [
+            r#"{"appearance": "light", "game_args": "--x"}"#,
+            r#"{"appearance": "light", "theme": "deep_ocean", "game_args": "--x"}"#,
+        ] {
+            let light = Settings::parse(text);
+            assert_eq!(
+                (light.appearance, light.theme.as_deref(), light.game_args.as_str()),
+                (Appearance::Dark, Some("taiga"), "--x"),
+                "{text}"
+            );
+        }
+        // Dark and the system's keep the saved theme's look.
+        for appearance in ["dark", "system"] {
+            let text = format!(r#"{{"appearance": "{appearance}", "theme": "nord"}}"#);
+            let kept = Settings::parse(&text);
+            assert_eq!(
+                (kept.appearance, kept.theme.as_deref()),
+                (Appearance::Dark, Some("nord"))
+            );
+        }
+        let future =
+            Settings::parse(r#"{"appearance": "sepia", "theme": "nord", "game_args": "--x"}"#);
         assert_eq!(
-            (future.appearance, future.game_args.as_str()),
-            (Appearance::Dark, "--x")
+            (future.appearance, future.theme.as_deref(), future.game_args.as_str()),
+            (Appearance::Dark, Some("nord"), "--x")
         );
-        let settings = Settings {
-            appearance: Appearance::System,
-            ..Settings::default()
-        };
-        let text = serde_json::to_string(&settings).unwrap();
-        assert!(text.contains(r#""appearance":"system""#), "{text}");
+        // Saved back as dark, so a migrated light stays on Taiga only until the player picks.
+        let text = serde_json::to_string(&Settings::parse(r#"{"appearance": "light"}"#)).unwrap();
+        assert!(text.contains(r#""appearance":"dark""#), "{text}");
     }
 
     #[test]

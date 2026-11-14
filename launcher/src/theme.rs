@@ -100,12 +100,13 @@ fn light_look(look: tokens::glass::Glass) -> tokens::glass::Glass {
 /// surface and the scene stays decoration around it. Glass (the white tint) still lightens it.
 const STEADY_BASE: f32 = 0.62;
 
-/// The look's plates mixed as `Glass::new` does, at [`STEADY_BASE`] instead of the mockup's.
-fn steady_plates(mut look: tokens::glass::Glass) -> tokens::glass::Glass {
+/// The look's plates mixed as `Glass::new` does, from `base` at [`STEADY_BASE`] instead of the
+/// mockup's.
+fn steady_plates(mut look: tokens::glass::Glass, base: u32) -> tokens::glass::Glass {
     let tint = look.tint;
     let alpha = tint + (1. - tint) * STEADY_BASE;
     look.plate = [16u32, 8, 0].iter().fold(0, |out, s| {
-        let base = ((look.base >> s) & 255) as f32 / 255.;
+        let base = ((base >> s) & 255) as f32 / 255.;
         let premul = tint + (1. - tint) * STEADY_BASE * base;
         out | (((premul / alpha) * 255.).round().clamp(0., 255.) as u32) << s
     });
@@ -143,16 +144,19 @@ pub fn pinned_dark(choice: Appearance) -> Option<bool> {
     }
 }
 
-/// The look Settings ask for: the appearance, accent and launcher theme, at the player's Glass
-/// and Blur.
+/// The look Settings ask for: the accent and launcher theme, at the player's Glass and Blur. A
+/// theme is one look: Horizon's own is the night (an old light appearance became Taiga when the
+/// settings were read).
 pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
-    let mut theme = Theme::for_appearance(settings.appearance, settings.accent, system);
+    let mut theme = Theme::for_appearance(Appearance::Dark, settings.accent, system);
     if let Some(picked) = themes::theme(settings.theme.as_deref()) {
         theme = theme.with_launcher_theme(picked);
     }
     // Performance mode keeps a painted sky's colours and drops what drifts over it.
+    // Its plates go solid too: no blurred copy of the sky to sample.
     if settings.performance() {
         theme.night.art.mood = night::Mood::Plain;
+        theme.look.own_sky = false;
     }
     theme.with_glass(settings.glass_tint(), settings.glass_blur())
 }
@@ -160,14 +164,15 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
 impl Theme {
     /// The pinned look (`pinned_dark`: dark unless the player picked another), the system's when
     /// they asked to follow it, in the player's accent.
-    /// A launcher theme from Settings: its sky, or its whole palette (dark and light) when it
-    /// brings one, keeping the player's Glass and Blur.
+    /// A launcher theme from Settings: its sky, or its whole palette when it brings one (dark,
+    /// or light as Taiga's is, whatever the look it was asked on), keeping the player's Glass and
+    /// Blur.
     pub fn with_launcher_theme(mut self, picked: &themes::Theme) -> Self {
-        let Some((dark, light)) = picked.palette else {
+        let Some(night) = picked.palette else {
             self.night.sky = picked.sky;
             return self;
         };
-        let night = if self.dark { *dark } else { *light };
+        let night = *night;
         let accent = self.accent_choice;
         if picked.look != themes::Look::Solid {
             // The same glass pages as Horizon's own: only the skies, the plates and the accent
@@ -177,9 +182,10 @@ impl Theme {
                 themed.scene = false;
                 themed.edge = Some(night::over(night.stroke, night.stroke_alpha, night.card));
             }
-            // The painted skies replace the sunset too, on solid plates without an edge.
-            if themed.dark && picked.look == themes::Look::Painted {
+            // The painted skies replace the sunset too; the plates frost them as they would it.
+            if picked.look == themes::Look::Painted {
                 themed.scene = false;
+                themed.look.own_sky = true;
             }
             return themed;
         }
@@ -196,15 +202,25 @@ impl Theme {
     /// The glass look with the player's Glass (how much white the plates take, 0 to 1) and Blur
     /// (px).
     pub fn with_glass(mut self, tint: f32, blur: f32) -> Self {
+        let own_sky = self.look.own_sky;
         self.look = tokens::glass::Glass::new(self.look.accent, tint, blur);
-        if !self.dark {
+        if own_sky {
+            // A painted sky's frosted plates take the theme's own card where the sunset's take
+            // the accent's dark violet; a light one's accent reads on white, as the light look's.
+            if !self.dark {
+                self.look = light_look(self.look);
+            }
+            self.look = steady_plates(self.look, self.night.card);
+            self.look.own_sky = true;
+        } else if !self.dark {
             self.look = light_look(self.look);
         } else if !self.scene {
             // No sunset to frost: the plates are the theme's own solid card.
             self.look.plate = self.night.card;
             self.look.plate_alpha = 1.;
         } else {
-            self.look = steady_plates(self.look);
+            let base = self.look.base;
+            self.look = steady_plates(self.look, base);
         }
         self
     }
@@ -335,37 +351,47 @@ mod tests {
         assert_eq!(theme.accent_choice.rgb(), 0x88c0d0);
     }
 
-    /// Sunrise and Hypr Neon keep Horizon's glass pages in both appearances (so no page changes
-    /// how it works), with their own skies; Hypr's night is solid black plates with an edge.
+    /// Every theme keeps Horizon's glass pages (so no page changes how it works) in its one
+    /// look: Hypr's is solid black plates with an edge, the painted ones frost their own sky,
+    /// Taiga's light with dark text.
     #[test]
     fn the_new_families_keep_the_glass_pages() {
-        for (id, oled) in [("sunrise", false), ("hypr_neon", true)] {
-            for (appearance, dark) in [(Appearance::Dark, true), (Appearance::Light, false)] {
-                let settings = Settings {
-                    appearance,
-                    accent: horizon_launcher::themes::starting_accent(
-                        Some(id),
-                        &Default::default(),
-                    ),
-                    theme: Some(id.into()),
-                    ..Settings::default()
-                };
-                let theme = from_settings(&settings, WindowAppearance::Dark);
-                assert!(theme.glass, "{id} {dark}: glass pages");
-                assert_eq!(theme.dark, dark);
-                assert_eq!(theme.scene, !(oled && dark), "{id} {dark}: scene");
-                assert_eq!(theme.edge.is_some(), oled && dark);
-                if oled && dark {
-                    assert_eq!(theme.look.plate, theme.night.card);
-                    assert_eq!(theme.night.page, 0x000000);
-                }
-                // Text on the main action, and the light look's accent on white.
-                let label = tokens::contrast(theme.look.on_accent, theme.look.accent);
-                assert!(label >= 4.5, "{id} {dark}: label {label:.2}");
-                if !dark {
-                    let soft = tokens::contrast(theme.look.accent_soft, 0xffffff);
-                    assert!(soft >= 4.5, "{id}: accent on white {soft:.2}");
-                }
+        for (id, oled, dark) in [
+            ("sunrise", false, true),
+            ("hypr_neon", true, true),
+            ("overworld", false, true),
+            ("taiga", false, false),
+        ] {
+            let settings = Settings {
+                accent: horizon_launcher::themes::starting_accent(Some(id), &Default::default()),
+                theme: Some(id.into()),
+                ..Settings::default()
+            };
+            let theme = from_settings(&settings, WindowAppearance::Light);
+            assert!(theme.glass, "{id}: glass pages");
+            assert_eq!(theme.dark, dark, "{id}: one look");
+            assert_eq!(theme.edge.is_some(), oled);
+            let painted = matches!(id, "overworld" | "taiga");
+            assert_eq!(theme.look.own_sky, painted, "{id}: frosts its own sky");
+            assert_eq!(theme.scene, !oled && !painted, "{id}: scene");
+            if oled {
+                assert_eq!(theme.look.plate, theme.night.card);
+                assert_eq!(theme.night.page, 0x000000);
+            }
+            // Text on the main action, and the light look's accent on white.
+            let label = tokens::contrast(theme.look.on_accent, theme.look.accent);
+            assert!(label >= 4.5, "{id}: label {label:.2}");
+            if !dark {
+                let soft = tokens::contrast(theme.look.accent_soft, 0xffffff);
+                assert!(soft >= 4.5, "{id}: accent on white {soft:.2}");
+                // Dark text on a frosted plate over the sky's brightest band.
+                let worst = tokens::night::over(
+                    theme.look.plate,
+                    theme.look.plate_alpha,
+                    theme.night.sky[5],
+                );
+                let ratio = tokens::contrast(theme.night.ink, worst);
+                assert!(ratio >= 4.5, "{id}: ink on a plate {ratio:.2}");
             }
         }
     }

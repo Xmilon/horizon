@@ -415,8 +415,10 @@ impl Launcher {
             .rounded(px(radius::CONTROL))
             .cursor_pointer()
             .when(open, |d| d.bg(gpui::black().opacity(0.2)))
-            .hover(|s| s.bg(gpui::black().opacity(0.2)))
-            .child(ui::icon("more-horizontal", 20., glyph))
+            .when(!open, |d| {
+                d.child(ui::back_tint(radius::CONTROL, gpui::black().opacity(0.2)))
+            })
+            .child(ui::icon("more-horizontal", 20., glyph).relative())
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 cx.stop_propagation();
                 if !this.closed_by_this_press(event) {
@@ -440,8 +442,8 @@ impl Launcher {
                 .size(px(40.))
                 .rounded(px(radius::CONTROL))
                 .cursor_pointer()
-                .hover(|s| s.bg(gpui::black().opacity(0.2)))
-                .child(ui::icon("stop", 18., glyph))
+                .child(ui::back_tint(radius::CONTROL, gpui::black().opacity(0.2)))
+                .child(ui::icon("stop", 18., glyph).relative())
                 .tooltip(ui::tip(tr("Cancel the build")))
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     cx.stop_propagation();
@@ -829,6 +831,7 @@ impl Launcher {
         let opener = home.clone();
         let more = div()
             .id("folder-more")
+            .relative()
             .flex()
             .flex_none()
             .items_center()
@@ -845,8 +848,8 @@ impl Launcher {
                     .bg(white(fill::SELECTED))
             })
             .group_hover("folder-group", |s| s.w(px(36.)).mr(px(8.)).opacity(1.))
-            .hover(|s| s.bg(white(fill::SELECTED)))
-            .child(ui::icon("more-horizontal", 20., white(ink::STRONG)))
+            .when(!open, |d| d.child(ui::back_tint(radius::CONTROL, white(fill::SELECTED))))
+            .child(ui::icon("more-horizontal", 20., white(ink::STRONG)).relative())
             .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
                 if !this.closed_by_this_press(event) {
                     this.home_menu = match this.home_menu {
@@ -858,6 +861,7 @@ impl Launcher {
             }));
         let group = div()
             .id("folder-group")
+            .relative()
             .flex()
             .items_center()
             .h(px(TALL))
@@ -869,10 +873,11 @@ impl Launcher {
             } else {
                 ui::edge::REST
             }))
-            .hover(|s| s.bg(white(0.13)).border_color(white(ui::edge::HOVER)))
+            .child(ui::back_edge(radius::LARGE, 0.05, true))
             .child(
                 div()
                     .id("home-folder")
+                    .relative()
                     .flex()
                     .items_center()
                     .justify_center()
@@ -992,7 +997,8 @@ impl Launcher {
             } else {
                 white(ui::edge::REST)
             })
-            .hover(|s| s.border_color(white(ui::edge::HOVER)))
+            .relative()
+            .child(ui::back_edge(radius::LARGE, 0., true))
             .font_family(horizon_theme::glass::FONT)
             .text_size(px(14.))
             .text_color(white(ink::FULL))
