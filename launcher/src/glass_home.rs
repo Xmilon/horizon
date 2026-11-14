@@ -113,18 +113,6 @@ impl Launcher {
             .min_w_0()
             .pt(px(64. - crate::glass::CONTENT_INSET))
             .child(motion::enter(
-                ElementId::named_usize("home-edition", self.switches),
-                0,
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(self.edition_tabs(java.is_some(), cx))
-                    .children(self.version_chip(cx))
-                    .children(self.whats_new_link(cx)),
-            ))
-            .child(motion::enter(
                 ElementId::named_usize("home-title", self.switches),
                 1,
                 self.home_title(cx),
@@ -141,65 +129,79 @@ impl Launcher {
             ))
     }
 
-    /// The edition tabs (`Tabs`, size `sm`): the instance's own lit. An instance's edition is
-    /// chosen when it is made, so the other tab goes to an instance of that edition
-    /// ([`Self::switch_edition`]).
-    fn edition_tabs(&mut self, java: bool, cx: &mut Context<Self>) -> Div {
-        let grass = self.grass_mark(18.);
-        let horizon = self.horizon_mark(18.);
-        let tab = |label: &'static str, icon: AnyElement, open: bool| {
-            let id = SharedString::from(format!("edition-{label}"));
-            let d = div()
-                .id(id.clone())
-                .relative()
-                .border_1()
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap(px(6.))
-                .h(px(32.))
-                .px(px(12.))
-                .rounded(px(radius::CONTROL))
-                .font_family(horizon_theme::glass::FONT)
-                .text_size(px(13.))
-                .line_height(px(18.))
-                .child(div().relative().child(icon))
-                .child(div().relative().child(tr(label)));
-            if open {
-                d.bg(ui::color(ui::look().accent).opacity(0.16))
-                    .border_color(ui::color(ui::look().accent_soft).opacity(0.5))
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(white(ink::FULL))
-            } else {
-                track_hover(
-                    d.border_color(white(ui::edge::REST))
-                        .text_color(white(ink::OFF))
-                        .cursor_pointer()
-                        .hover(|s| s.text_color(white(ink::FULL)))
-                        .active(|s| s.bg(white(0.12)))
-                        .child(ui::hover_edge(&id, radius::CONTROL, fill::ROW_HOVER, true)),
-                    id.clone(),
-                )
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.switch_edition(label == "Java Edition", cx);
-                    cx.notify();
-                }))
-            }
-        };
-        let java_icon = match grass {
+    /// The edition switch over the rail, in the top bar where Horizon's mark was: Horizon's mark
+    /// and the grass block on a segmented control whose lit pill slides to the selected
+    /// instance's edition. An instance's edition is chosen when it is made, so the other side
+    /// goes to an instance of that edition ([`Self::switch_edition`]).
+    pub(super) fn edition_switch(&mut self, cx: &mut Context<Self>) -> Stateful<Div> {
+        const ID: &str = "edition-switch";
+        let java = self
+            .selected_instance()
+            .is_some_and(|i| i.java.is_some());
+        let horizon = self.horizon_mark(20.);
+        let grass = match self.grass_mark(20.) {
             Some(image) => gpui::img(image)
                 .flex_none()
-                .size(px(18.))
+                .size(px(20.))
                 .rounded(px(5.))
                 .into_any_element(),
             None => div().into_any_element(),
         };
-        div()
+        let origin = ui::PillOrigin::default();
+        let mut seg = div()
+            .id(ID)
+            .relative()
             .flex()
-            .items_center()
-            .gap(px(4.))
-            .child(tab("Rust Edition", horizon, !java))
-            .child(tab("Java Edition", java_icon, java))
+            .flex_none()
+            .gap(px(2.))
+            .p(px(3.))
+            .rounded(px(radius::LARGE))
+            .bg(white(0.04))
+            .border_1()
+            .border_color(white(ui::edge::REST))
+            .child(ui::pill_origin(&origin));
+        for (i, (label, mark)) in [("Rust Edition", horizon), ("Java Edition", grass)]
+            .into_iter()
+            .enumerate()
+        {
+            let on = (i == 1) == java;
+            let d = div()
+                .id(SharedString::from(format!("{ID}-{i}")))
+                .relative()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(30.))
+                .rounded(px(radius::CONTROL - 1.))
+                .child(div().relative().opacity(if on { 1. } else { 0.5 }).child(mark))
+                .child(ui::pill_probe(ID, i, origin.clone()))
+                .tooltip(ui::tip(tr(label)));
+            let d = if on {
+                d
+            } else {
+                d.cursor_pointer()
+                    .hover(|s| s.bg(white(fill::ROW_HOVER)))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.switch_edition(i == 1, cx);
+                        this.go(Page::Play);
+                        cx.notify();
+                    }))
+            };
+            seg = seg.child(crate::keyboard(d, &self.theme));
+        }
+        let pill = ui::sliding_pill(ID, usize::from(java), || {
+            div()
+                .absolute()
+                .top(px(3.))
+                .bottom(px(3.))
+                .rounded(px(radius::CONTROL - 1.))
+                .border_1()
+                .border_color(ui::color(ui::look().accent).opacity(0.6))
+                .bg(ui::color(ui::look().accent).opacity(0.2))
+        });
+        // The pill first, so the marks are drawn over it.
+        seg.children(pill)
     }
 
     /// An edition tab's click: the instance of that edition (`java`) played last, or, with none,
@@ -227,8 +229,10 @@ impl Launcher {
             return div();
         };
         let edit = instance.clone();
+        let version = self.version_chip(cx);
+        let whats_new = self.whats_new_link(cx);
         div()
-            .mt(px(20.))
+            .mt(px(16.))
             .flex()
             .items_center()
             .gap(px(16.))
@@ -254,6 +258,16 @@ impl Launcher {
                     .line_height(px(48.))
                     .text_color(white(ink::FULL))
                     .child(instance.name),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap(px(8.))
+                    .children(version)
+                    .children(whats_new),
             )
     }
 
@@ -764,16 +778,12 @@ impl Launcher {
         wrap
     }
 
-    /// A quiet "What's new" after the version chip: the Versions page with the played build's
-    /// notes open.
+    /// "What's new" beside the version button: the Versions page with the played build's notes
+    /// open.
     fn whats_new_link(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let tag = self.whats_new_tag()?;
         Some(
-            ui::text(13., FontWeight::NORMAL, ink::NOTE)
-                .id("home-whats-new")
-                .cursor_pointer()
-                .hover(|s| s.text_color(white(ink::FULL)))
-                .child(tr("What's new"))
+            hero_button("home-whats-new", "sparkles", tr("What's new").into())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.whats_new_open = Some(std::iter::once(tag.clone()).collect());
                     this.go(Page::Versions);
@@ -782,38 +792,15 @@ impl Launcher {
         )
     }
 
-    /// What the instance plays, as a chip beside the edition tabs (the mockup's tags): "Latest
-    /// version", "Nov 11 update", "26.3 · Fabric 0.17". Its versions are in instance settings,
-    /// which a click opens on Installation.
+    /// What the instance plays, at the title's right: "Latest version", "Nov 11 update",
+    /// "26.3 · Fabric 0.17". Its versions are in instance settings, which a click opens on
+    /// Installation.
     fn version_chip(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let instance = self.selected_instance()?.clone();
         let label = self.sheet_version(&instance);
-        let id = SharedString::from("home-version");
         Some(
-            track_hover(
-                div()
-                    .id(id.clone())
-                    .relative()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(6.))
-                    .h(px(32.))
-                    .px(px(12.))
-                    .rounded(px(radius::CONTROL))
-                    .border_1()
-                    .border_color(white(ui::edge::REST))
-                    .cursor_pointer()
-                    .font_family(horizon_theme::glass::FONT)
-                    .text_size(px(13.))
-                    .text_color(white(ink::BODY))
-                    .hover(|s| s.text_color(white(ink::FULL)))
-                    .child(ui::hover_edge(&id, radius::CONTROL, fill::ROW_HOVER, true))
-                    .child(ui::icon("download-04", 15., white(ink::QUIET)).relative())
-                    .child(div().relative().child(label)),
-                id,
-            )
-            .tooltip(ui::tip(tr("Change the version in instance settings")))
+            hero_button("home-version", "package-01", label.into())
+                .tooltip(ui::tip(tr("Change the version in instance settings")))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                 this.open_instance_sheet(instance.clone(), glass_sheet::SheetTab::Installation);
                 cx.notify();
@@ -1079,6 +1066,46 @@ fn friend_code_padding_right(join_label: &str) -> f32 {
 
 /// The instance of one edition (`java`) an edition tab goes to: of those the player can select,
 /// the one played last; among never played ones, the first listed.
+/// One of the two buttons at the hero title's right: 40 px glass with an 18 px icon and its
+/// label, the icons in one stroke and ink so the pair reads as one.
+fn hero_button(id: &'static str, icon: &'static str, label: SharedString) -> Stateful<Div> {
+    let id = SharedString::from(id);
+    let group = SharedString::from(format!("{id}-group"));
+    track_hover(
+        div()
+            .id(id.clone())
+            .group(group.clone())
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(8.))
+            .h(px(40.))
+            .pl(px(14.))
+            .pr(px(16.))
+            .rounded(px(radius::CONTROL))
+            .bg(white(fill::BUTTON))
+            .border_1()
+            .border_color(white(ui::edge::REST))
+            .cursor_pointer()
+            .font_family(horizon_theme::glass::FONT)
+            .text_size(px(14.))
+            .line_height(px(20.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(white(ink::BODY))
+            .hover(|s| s.text_color(white(ink::FULL)))
+            .active(|s| s.bg(white(0.18)))
+            .child(ui::hover_edge(&id, radius::CONTROL, 0.06, true))
+            .child(
+                ui::icon(icon, 18., white(ink::STRONG))
+                    .group_hover(group, |s| s.text_color(white(ink::FULL)))
+                    .relative(),
+            )
+            .child(div().relative().child(label)),
+        id,
+    )
+}
+
 fn edition_pick(
     list: &[horizon_launcher::instances::Instance],
     java: bool,

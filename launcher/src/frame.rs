@@ -777,8 +777,8 @@ impl Launcher {
         }
     }
 
-    /// The glass top bar, across the window above the rail and the page: Horizon's mark over the
-    /// rail, the pages, then search (the palette), the last native build's log and the player.
+    /// The glass top bar, across the window above the rail and the page: the edition switch over
+    /// the rail, the pages, then search (the palette), the last native build's log and the player.
     /// Launcher settings live in the rail.
     pub(super) fn glass_topbar(&mut self, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
@@ -790,7 +790,7 @@ impl Launcher {
             .items_center()
             .justify_center()
             .w(px(RAIL))
-            .child(self.horizon_mark(30.));
+            .child(self.edition_switch(cx));
         let mut tabs = div()
             .flex()
             .items_center()
