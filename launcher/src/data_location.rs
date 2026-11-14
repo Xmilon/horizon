@@ -37,8 +37,12 @@ pub fn bootstrap_path() -> Result<PathBuf> {
     }
     dirs::config_dir()
         .map(|p| {
-            p.join(crate::identity::LOCATION_FOLDER)
-                .join("location.json")
+            crate::identity::folder_in(
+                &p,
+                crate::identity::LOCATION_FOLDER,
+                crate::identity::LEGACY_LOCATION_FOLDER,
+            )
+            .join("location.json")
         })
         .ok_or_else(|| "Cannot locate the platform configuration folder for location.json".into())
 }

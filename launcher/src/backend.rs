@@ -906,9 +906,11 @@ pub fn data_dir() -> PathBuf {
     if let Ok(Some(roots)) = crate::data_location::configured_roots() {
         return roots.launcher;
     }
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join(crate::identity::LAUNCHER_FOLDER)
+    crate::identity::folder_in(
+        &dirs::data_dir().unwrap_or_else(std::env::temp_dir),
+        crate::identity::LAUNCHER_FOLDER,
+        crate::identity::LEGACY_LAUNCHER_FOLDER,
+    )
 }
 
 /// A canonical path without Windows' verbatim prefix: `canonicalize` gives `\\?\C:\...` there,
@@ -2533,9 +2535,11 @@ pub fn game_home() -> PathBuf {
     if let Ok(Some(roots)) = crate::data_location::configured_roots() {
         return roots.game;
     }
-    dirs::data_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join(crate::identity::GAME_FOLDER)
+    crate::identity::folder_in(
+        &dirs::data_dir().unwrap_or_else(std::env::temp_dir),
+        crate::identity::GAME_FOLDER,
+        crate::identity::LEGACY_GAME_FOLDER,
+    )
 }
 
 /// Whether No AI is on: every AI feature hidden and off (`horizon_platform::no_ai`, kept in the
@@ -2797,6 +2801,10 @@ pub fn client_command(tag: &str) -> Command {
     }
     crate::run_leases::mark(&mut cmd, &version_dir(tag));
     strip_launcher_render_env(&mut cmd);
+    // The "I'm playing" ping only when the player turned it on.
+    if !Settings::load().playing_ping {
+        cmd.env("HORIZON_NO_HEARTBEAT", "1");
+    }
     cmd.current_dir(&home)
         .env("HORIZON_HOME", &home)
         .env_remove("HORIZON_ACCOUNT_SESSIONS")
@@ -4252,6 +4260,10 @@ pub struct Settings {
     /// first-run question, or on the Play page once if they answered that before it existed.
     #[serde(default)]
     pub ping_notice_seen: bool,
+    /// The game sends the anonymous "I'm playing" ping (`telemetry::PING`). Off until the
+    /// player turns it on: the game is started with `HORIZON_NO_HEARTBEAT` otherwise.
+    #[serde(default)]
+    pub playing_ping: bool,
     /// The player without an account that owns the game has read, once, why the launcher needs
     /// one now (the owner gate's screen).
     #[serde(default)]

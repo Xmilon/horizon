@@ -129,3 +129,8 @@ syn = "2"
 
 [profile.release]
 strip = true
+
+# The scenery's pixel loops (blurring a sky, baking the frosted plates) are optimised in debug
+# builds too: unoptimised, one Blur step took 0.7-1 s and one Glass step 70 ms.
+[profile.dev.package.horizon-launcher-scenery]
+opt-level = 3

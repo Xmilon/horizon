@@ -703,7 +703,8 @@ struct Baked {
     tint: Option<u32>,
     /// The cheaper sky (performance mode) this picture was baked with.
     fast: bool,
-    model: Model,
+    /// Shared with a worker blurring the plates' backdrop from it.
+    model: Arc<Model>,
     sky: Smooth,
     halo: (Smooth, Bounds<Pixels>),
     ridges: Vec<(Arc<RenderImage>, i32, i32, i32)>,
@@ -771,7 +772,7 @@ impl Baked {
             key: key(width, height, scale),
             tint,
             fast,
-            model,
+            model: Arc::new(model),
             sky,
             halo: (halo, halo_bounds),
             ridges,
@@ -814,6 +815,8 @@ pub struct Scene {
     backdrop_for: Option<((u32, u32, u32), f32, bool)>,
     /// A bake of a new tint is running on a worker thread (one at a time: the next waits).
     baking: bool,
+    /// The plates' backdrop is being blurred again on a worker (one at a time, as `baking`).
+    blurring: bool,
     /// Performance mode: a quarter-resolution sky, a box blur, resizes baked in the background
     /// and no frame per mouse move.
     fast: bool,
@@ -840,6 +843,7 @@ impl Scene {
             blur: horizon_theme::glass::BLUR,
             backdrop_for: None,
             baking: false,
+            blurring: false,
             fast: false,
         }
     }
@@ -983,8 +987,31 @@ impl Render for Scene {
             let shown = self.baked.as_ref().expect("baked above");
             let backdrop_for = (shown.key, self.blur, false);
             if self.backdrop_for != Some(backdrop_for) {
-                crate::glass::set_backdrop(&shown.model, self.tint, self.blur, false);
-                self.backdrop_for = Some(backdrop_for);
+                if self.backdrop_for.is_none() {
+                    // The first one is made here: the plates have nothing to frost before it.
+                    crate::glass::set_backdrop(&shown.model, self.tint, self.blur, false);
+                    self.backdrop_for = Some(backdrop_for);
+                } else if !self.blurring {
+                    // A new blur or window size: blurred on a worker, the plates keeping the
+                    // last backdrop meanwhile, so dragging Blur never holds a frame. When it
+                    // lands, the next frame sees whether yet another is wanted.
+                    self.blurring = true;
+                    let (model, blur) = (shown.model.clone(), self.blur);
+                    cx.spawn(async move |this, cx| {
+                        let backdrop = cx
+                            .background_executor()
+                            .spawn(async move { crate::glass::blur_backdrop(&model, blur) })
+                            .await;
+                        let _ = this.update(cx, |this, cx| {
+                            this.blurring = false;
+                            crate::glass::put_backdrop(backdrop, this.tint);
+                            this.backdrop_for = Some(backdrop_for);
+                            // The plates are drawn by the launcher's view, not this one.
+                            cx.refresh_windows();
+                        });
+                    })
+                    .detach();
+                }
             }
         }
 

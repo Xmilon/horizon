@@ -40,6 +40,8 @@ struct Pieces {
     backdrop: Option<Backdrop>,
     /// A painted theme's own sky, blurred ([`frost_sky`]): its plates read this, not the scene.
     sky: Option<(SkyKey, Backdrop)>,
+    /// A blur of it being made off the main thread ([`frost_sky_later`]).
+    pending: Option<SkyKey>,
     look: Glass,
     /// Bumped when the backdrop or the look changes: older pieces are thrown away.
     generation: u32,
@@ -71,6 +73,7 @@ thread_local! {
     static PIECES: RefCell<Pieces> = RefCell::new(Pieces {
         backdrop: None,
         sky: None,
+        pending: None,
         look: Glass::default_look(),
         generation: 0,
         build: 0,
@@ -152,13 +155,55 @@ pub fn frost_sky(
         if p.sky.as_ref().is_some_and(|(k, _)| *k == key) {
             return;
         }
-        let (base, cols, rows, unit) = texels();
-        let blur = f64::from(p.look.blur);
-        p.sky = Some((
-            key,
-            Backdrop::from_texels(&base, cols, rows, f64::from(unit), blur, false),
-        ));
+        p.sky = Some((key, blur_sky(key, texels)));
         p.generation += 1;
+    });
+}
+
+fn blur_sky(key: SkyKey, texels: impl FnOnce() -> (Vec<[f64; 3]>, usize, usize, f32)) -> Backdrop {
+    let (base, cols, rows, unit) = texels();
+    Backdrop::from_texels(&base, cols, rows, f64::from(unit), f64::from(key.2), false)
+}
+
+/// A painted sky's blur made off the main thread, to hand to [`frost_done`].
+pub struct Frosted(SkyKey, Backdrop);
+
+/// [`frost_sky`] for a window that keeps drawing meanwhile: the first blur is made here (plates
+/// have nothing to frost before it), a later one (a new blur, size or theme) is returned to run
+/// on a worker while the plates keep the last one. One at a time: asked again while one runs,
+/// it returns nothing, and the next frame after [`frost_done`] asks for the latest.
+pub fn frost_sky_later(
+    night: &Night,
+    (w, h): (f32, f32),
+    texels: impl FnOnce() -> (Vec<[f64; 3]>, usize, usize, f32) + Send + 'static,
+) -> Option<impl FnOnce() -> Frosted + Send + 'static> {
+    PIECES.with_borrow_mut(|p| {
+        if !p.look.own_sky {
+            return None;
+        }
+        let key = (*night, (w.round() as i32, h.round() as i32), p.look.blur);
+        if p.sky.as_ref().is_some_and(|(k, _)| *k == key) || p.pending.is_some() {
+            return None;
+        }
+        if p.sky.is_none() {
+            p.sky = Some((key, blur_sky(key, texels)));
+            p.generation += 1;
+            return None;
+        }
+        p.pending = Some(key);
+        Some(move || Frosted(key, blur_sky(key, texels)))
+    })
+}
+
+/// A blur from [`frost_sky_later`] is ready: the plates take it (unless the look stopped
+/// frosting its own sky meanwhile).
+pub fn frost_done(Frosted(key, backdrop): Frosted) {
+    PIECES.with_borrow_mut(|p| {
+        p.pending = None;
+        if p.look.own_sky {
+            p.sky = Some((key, backdrop));
+            p.generation += 1;
+        }
     });
 }
 
@@ -170,9 +215,19 @@ pub fn frost_sky(
 pub const CONTENT_INSET: f32 = 14.;
 
 pub fn set_backdrop(model: &Model, tint: Option<u32>, blur: f32, fast: bool) {
+    let backdrop = Backdrop::new(model, blur as f64, fast);
+    put_backdrop(backdrop, tint);
+}
+
+/// The plates' backdrop blurred from `model`, made apart (on a worker) for [`put_backdrop`].
+pub fn blur_backdrop(model: &Model, blur: f32) -> Backdrop {
+    Backdrop::new(model, blur as f64, false)
+}
+
+/// Plates take `backdrop` from now on, in the accent's `tint`.
+pub fn put_backdrop(mut backdrop: Backdrop, tint: Option<u32>) {
+    backdrop.set_tint(tint);
     PIECES.with_borrow_mut(|p| {
-        let mut backdrop = Backdrop::new(model, blur as f64, fast);
-        backdrop.set_tint(tint);
         p.backdrop = Some(backdrop);
         p.generation += 1;
     });
@@ -617,6 +672,16 @@ mod tests {
         set_look(look);
         frost_sky(&night, (20., 12.), texels);
         assert_eq!(made.get(), 3, "new blur");
+        // Later: a new blur is made apart and taken when done; one at a time.
+        look.blur = 10.;
+        set_look(look);
+        let job = frost_sky_later(&night, (20., 12.), || (vec![[0.5; 3]; 4 * 3], 4, 3, 4.))
+            .expect("a new blur to make");
+        assert!(frost_sky_later(&night, (20., 12.), || unreachable!()).is_none());
+        let g = generation();
+        frost_done(job());
+        assert!(generation() > g);
+        assert!(frost_sky_later(&night, (20., 12.), || unreachable!()).is_none());
         look.own_sky = false;
         set_look(look);
         frost_sky(&night, (20., 12.), texels);

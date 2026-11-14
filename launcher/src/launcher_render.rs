@@ -97,7 +97,16 @@ impl Render for Launcher {
         glass::begin_build(window);
         let painted = (!sunset).then(|| {
             let (night, size) = (t.night, (size.width.into(), size.height.into()));
-            sky::frost(&night, size);
+            // A new blur, size or theme is blurred on a worker; the plates keep the last one
+            // until it is ready, so dragging Blur never holds a frame.
+            if let Some(job) = sky::frost_later(&night, size) {
+                cx.spawn(async move |this, cx| {
+                    let done = cx.background_spawn(async move { job() }).await;
+                    glass::frost_done(done);
+                    let _ = this.update(cx, |_, cx| cx.notify());
+                })
+                .detach();
+            }
             (night, size, window.scale_factor())
         });
         // What is behind the launcher, handed to its views only when it changed: reading them

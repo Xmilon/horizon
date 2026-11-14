@@ -39,11 +39,12 @@ pub const SWITCHES: [(Kind, &str, &str); 4] = [
 /// Never sent, whatever the switches say.
 pub const NEVER: &str = "Never sent: your account name or UUID, world names, server addresses, chat, or your IP address. Each report is dated to the day, under a random install ID you can delete.";
 
-/// The anonymous "I'm playing" ping the game sends whatever the switches say (Ludovic's
-/// decision, 2026-10-22: count everyone, and tell them). Shown on the first-run question, in
+/// The anonymous "I'm playing" ping the game can send (`Settings::playing_ping`). Upstream sends
+/// it whatever the switches say; this launcher keeps it off until the player turns it on, and
+/// otherwise starts the game with `HORIZON_NO_HEARTBEAT`. Shown on the first-run question, in
 /// Settings, and once on the Play page to players who answered before it existed.
 pub const PING_NAME: &str = "\"I'm playing\" ping";
-pub const PING: &str = "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Horizon right now. It holds: a random number made when the game starts and forgotten when it closes, the Horizon version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is sent whatever the switches say.";
+pub const PING: &str = "While you play, the game sends an anonymous \"I'm playing\" ping once a minute, so the launcher can show how many people play Horizon right now. It holds: a random number made when the game starts and forgotten when it closes, the Horizon version, your OS (Linux, macOS or Windows), and whether you have a world open to LAN or friends. It doesn't hold: your account, your install ID, world or server names, or anything you do in the game, and the server doesn't keep your IP address. It is off until you turn it on.";
 
 /// How many play Horizon now (exact), if the server says.
 pub fn playing_now() -> Option<u64> {

@@ -17,10 +17,13 @@ identity! {
     WINDOWS_EXECUTABLE: "horizon-launcher.exe" => "horizon-fork-launcher.exe",
     WINDOWS_EXECUTABLE_PREFIX: "horizon-launcher.exe." => "horizon-fork-launcher.exe.",
     APP_ID: "horizon-launcher" => "io.github.arismoko.horizonfork.launcher",
-    KEYCHAIN_SERVICE: "dev.playhorizon.launcher" => "io.github.arismoko.horizonfork.launcher",
-    LOCATION_FOLDER: "horizon-launcher-location" => "horizon-fork-arismoko-location",
-    LAUNCHER_FOLDER: "horizon-launcher" => "horizon-fork-arismoko/launcher",
-    GAME_FOLDER: "horizon" => "horizon-fork-arismoko/game",
+    // The fork's launcher is an update of Horizon's own: it opens the same data, game and
+    // location folders and the same saved accounts, so a player's instances, worlds and sign-in
+    // carry over. Only how it is installed (above and below) keeps the fork's own names.
+    KEYCHAIN_SERVICE: "dev.playhorizon.launcher" => "dev.playhorizon.launcher",
+    LOCATION_FOLDER: "horizon-launcher-location" => "horizon-launcher-location",
+    LAUNCHER_FOLDER: "horizon-launcher" => "horizon-launcher",
+    GAME_FOLDER: "horizon" => "horizon",
     PUBLISHER: "Horizon" => "arismoko",
     UNINSTALL_KEY: "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\HorizonLauncher" => "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\ArismokoHorizonForkLauncher",
     INSTALL_KEY: "Software\\Horizon\\Launcher" => "Software\\ArismokoHorizonFork\\Launcher",
@@ -28,6 +31,33 @@ identity! {
     UNINSTALL_PREFIX: "horizon-launcher-uninstall-" => "horizon-fork-launcher-uninstall-",
     SETUP_PREFIX: "horizon-launcher-setup" => "horizon-fork-launcher-setup",
     PROCESS_FILTER: "IMAGENAME eq horizon-launcher.exe" => "IMAGENAME eq horizon-fork-launcher.exe",
+}
+
+/// Where fork builds before this one kept their data, game and location folders: opened when
+/// Horizon's own folder is missing, so a player of an older fork build keeps their instances.
+pub const LEGACY_LAUNCHER_FOLDER: Option<&str> = if cfg!(horizon_fork_launcher) {
+    Some("horizon-fork-arismoko/launcher")
+} else {
+    None
+};
+pub const LEGACY_GAME_FOLDER: Option<&str> = if cfg!(horizon_fork_launcher) {
+    Some("horizon-fork-arismoko/game")
+} else {
+    None
+};
+pub const LEGACY_LOCATION_FOLDER: Option<&str> = if cfg!(horizon_fork_launcher) {
+    Some("horizon-fork-arismoko-location")
+} else {
+    None
+};
+
+/// `base/folder`, or `base/legacy` when only that one exists (an older fork build's data).
+pub fn folder_in(base: &std::path::Path, folder: &str, legacy: Option<&str>) -> std::path::PathBuf {
+    let current = base.join(folder);
+    match legacy.map(|old| base.join(old)) {
+        Some(old) if !current.exists() && old.exists() => old,
+        _ => current,
+    }
 }
 
 /// Product home used by the Windows installer's About link.
@@ -59,19 +89,44 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn horizon_folders_win_and_an_older_fork_folder_is_kept_when_alone() {
+        let base = std::env::temp_dir().join(format!("hz-folder-in-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let old = "old-fork/launcher";
+        // Nothing yet: Horizon's folder.
+        assert_eq!(
+            folder_in(&base, "horizon-launcher", Some(old)),
+            base.join("horizon-launcher")
+        );
+        // Only the older fork's folder: it is kept.
+        std::fs::create_dir_all(base.join(old)).unwrap();
+        assert_eq!(
+            folder_in(&base, "horizon-launcher", Some(old)),
+            base.join(old)
+        );
+        // Both: Horizon's.
+        std::fs::create_dir_all(base.join("horizon-launcher")).unwrap();
+        assert_eq!(
+            folder_in(&base, "horizon-launcher", Some(old)),
+            base.join("horizon-launcher")
+        );
+        assert_eq!(
+            folder_in(&base, "horizon-launcher", None),
+            base.join("horizon-launcher")
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
     fn data_removal_requires_the_complete_owned_namespace() {
         let profile = Path::new("profile");
         assert!(owns_launcher_data_dir(&profile.join(LAUNCHER_FOLDER)));
         assert!(owns_launcher_data_dir(
             &profile.join(LAUNCHER_FOLDER.to_ascii_uppercase())
         ));
-        let other = if cfg!(horizon_fork_launcher) {
-            "horizon-launcher"
-        } else {
-            "horizon-fork-arismoko/launcher"
-        };
+        // An older fork build's folder is never removed as this launcher's own.
         for unowned in [
-            other,
+            "horizon-fork-arismoko/launcher",
             "launcher",
             "unrelated/launcher",
             "not-horizon-fork-arismoko/launcher",

@@ -1034,6 +1034,19 @@ pub fn frost(n: &Night, (w, h): (f32, f32)) {
     });
 }
 
+/// [`frost`] with a later blur made on a worker (`glass::frost_sky_later`): the job to run, if
+/// one is due, whose result goes to `glass::frost_done` on the main thread.
+pub fn frost_later(
+    n: &Night,
+    (w, h): (f32, f32),
+) -> Option<impl FnOnce() -> crate::glass::Frosted + Send + 'static> {
+    let n = *n;
+    crate::glass::frost_sky_later(&n, (w, h), move || {
+        let (texels, cols, rows) = still_texels(&n, w, h);
+        (texels, cols, rows, TEXEL)
+    })
+}
+
 /// The painted sky as a view of its own: its drift wakes only this view, so a sky frame draws
 /// the sky again and the rest of the window from its last frame (GPUI Fast retains views).
 pub struct SkyView {
