@@ -198,6 +198,13 @@ struct Crash {
     /// One line on what went wrong: the report's error, else how the process ended.
     summary: String,
     copied: bool,
+    /// The native mod the crash points at, when exactly one is named.
+    suspect: Option<String>,
+    /// The game build and the native mods on, for the report.
+    game: String,
+    mods: Vec<String>,
+    /// The report's text, or the game log's when there is no report.
+    text: String,
 }
 
 /// The opening: the wordmark holds at least `OPENING_HOLD` (until the release
@@ -305,6 +312,10 @@ struct Launcher {
     /// Mods the last build would have switched off that worlds were saved with: the choice
     /// between staying and backing those worlds up first, shown with `native_error`.
     native_worlds: Option<native_mods::AtStake>,
+    /// The last build stopped on these mods: the card names them and turns them off.
+    native_failed: Option<build_mode::FailedBuild>,
+    /// The mod whose Why? is open in the update card.
+    update_why: Option<String>,
     pending_consent: Option<PendingConsent>,
     /// Why the last Allow or Cancel failed, shown inside the dialog that the page is behind.
     consent_error: Option<String>,
@@ -669,6 +680,8 @@ impl Launcher {
             native_done: None,
             native_error: None,
             native_worlds: None,
+            native_failed: None,
+            update_why: None,
             pending_consent: None,
             consent_error: None,
             native_for: None,
@@ -864,6 +877,11 @@ impl Launcher {
             )
         {
             this.wardrobe_preview();
+        }
+        // `HORIZON_LAUNCHER_PAGE=guard-crash` (or `guard-worlds`, `guard-failed`): what a crash, a
+        // build stopped for worlds or a failed build look like, for screenshots of debug builds.
+        if cfg!(debug_assertions) {
+            this.guard_preview(std::env::var("HORIZON_LAUNCHER_PAGE").as_deref().unwrap_or(""));
         }
         // What the game and the launcher kept, if the player allows it and there is a server.
         telemetry::send_in_background();
@@ -1344,6 +1362,12 @@ impl Launcher {
                         if let native_mods::Failed::Worlds(stake) = &e {
                             self.keep_stop(stake);
                         }
+                        if let native_mods::Failed::Mods { left, .. } = &e {
+                            self.native_failed = Some(build_mode::FailedBuild::new(
+                                left.iter().map(|l| l.id.clone()).collect(),
+                                &self.mods.home(),
+                            ));
+                        }
                         self.native_error = Some(String::from(e));
                     }
                     if play_now {
@@ -1483,10 +1507,34 @@ impl Launcher {
                                         })
                                     })
                                     .unwrap_or_default();
+                                let home = self.mods.home();
+                                let text = report
+                                    .as_ref()
+                                    .and_then(|p| std::fs::read_to_string(p).ok())
+                                    .or_else(|| {
+                                        std::fs::read_to_string(
+                                            home.join("logs").join("latest.log"),
+                                        )
+                                        .ok()
+                                    })
+                                    .unwrap_or_default();
+                                let game = self
+                                    .selected_instance()
+                                    .and_then(|i| self.version_of(i))
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let mods = native_status::enabled(&home)
+                                    .into_iter()
+                                    .map(|(id, version, _)| format!("{id} {version}"))
+                                    .collect();
                                 self.crash = Some(Crash {
                                     report,
                                     summary,
                                     copied: false,
+                                    suspect: build_mode::crash_suspect(&home, &text),
+                                    game,
+                                    mods,
+                                    text,
                                 });
                             }
                         }
@@ -3667,6 +3715,11 @@ impl Launcher {
         if let Some(e) = self.prepare_error.clone() {
             page = page.child(notice(e, &t));
         }
+        // On the instance, before its tabs: what crashed and the way back into the game.
+        if let Some(crash) = self.crash.clone() {
+            page = page.child(self.crash_notice(crash, cx));
+        }
+        page = page.children(self.home_failed_build(cx));
         page = page.child(if t.glass {
             self.glass_home_tabs(rows, cx)
         } else {
@@ -3675,9 +3728,6 @@ impl Launcher {
         if let Some(e) = self.client_error.clone() {
             page = page.child(notice(e, &t));
         }
-        if let Some(crash) = self.crash.clone() {
-            page = page.child(self.crash_notice(crash, cx));
-        }
         page
     }
 
@@ -3685,38 +3735,59 @@ impl Launcher {
     fn crash_notice(&self, crash: Crash, cx: &mut Context<Self>) -> Div {
         let t = self.theme;
         let mut actions = div().flex().flex_wrap().gap(px(8.)).mt(px(8.));
-        if let Some(report) = crash.report.clone() {
-            let open = report.clone();
-            actions = actions
-                .child(
-                    button("crash-open", "Open report", Kind::Secondary, &t)
-                        .bg(t.plate)
-                        .on_click(move |_, _, cx| crate::glass_toast::open(cx, &open)),
+        // The way back first: the mod it points at, off, and the game again.
+        if let Some(suspect) = crash.suspect.clone() {
+            actions = actions.child(
+                button(
+                    "crash-without",
+                    trf("Play without {mod}", &[("mod", &suspect)]),
+                    Kind::Primary,
+                    &t,
                 )
-                .child(
-                    button(
-                        "crash-copy",
-                        if crash.copied {
-                            "Copied"
-                        } else {
-                            "Copy report"
-                        },
-                        Kind::Secondary,
-                        &t,
-                    )
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.crash = None;
+                    this.turn_off_and_play(std::slice::from_ref(&suspect));
+                    cx.notify();
+                })),
+            );
+        }
+        // The report gathers the log, the mods and the game build.
+        let gathered = format!(
+            "Game: {}\nNative mods: {}\n\n{}",
+            crash.game,
+            if crash.mods.is_empty() {
+                "none".to_string()
+            } else {
+                crash.mods.join(", ")
+            },
+            crash.text
+        );
+        actions = actions.child(
+            button(
+                "crash-copy",
+                if crash.copied {
+                    "Copied"
+                } else {
+                    "Copy report"
+                },
+                Kind::Secondary,
+                &t,
+            )
+            .bg(t.plate)
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                copy_to_clipboard(cx, gpui::ClipboardItem::new_string(gathered.clone()));
+                if let Some(c) = &mut this.crash {
+                    c.copied = true;
+                }
+                cx.notify();
+            })),
+        );
+        if let Some(report) = crash.report.clone() {
+            actions = actions.child(
+                button("crash-open", "Open report", Kind::Secondary, &t)
                     .bg(t.plate)
-                    .on_click(cx.listener(
-                        move |this, _: &ClickEvent, _, cx| {
-                            if let Ok(text) = std::fs::read_to_string(&report) {
-                                copy_to_clipboard(cx, gpui::ClipboardItem::new_string(text));
-                                if let Some(c) = &mut this.crash {
-                                    c.copied = true;
-                                }
-                            }
-                            cx.notify();
-                        },
-                    )),
-                );
+                    .on_click(move |_, _, cx| crate::glass_toast::open(cx, &report)),
+            );
         }
         actions = actions.child(
             button("crash-logs", "Open logs folder", Kind::Secondary, &t)
@@ -3744,9 +3815,9 @@ impl Launcher {
             )),
         );
         let help = tr(if crash.report.is_some() {
-            "When you report it on Discord, attach the crash report file (or paste it with Copy report) and say what you were doing."
+            "Copy report gathers the crash report, your mods and the game build: paste it when you report it, and say what you were doing."
         } else {
-            "The game ended without a crash report. When you report it on Discord, attach latest.log from the logs folder and say what you were doing."
+            "The game ended without a crash report. Copy report gathers its log, your mods and the game build: paste it when you report it, and say what you were doing."
         });
         let mut body = div()
             .flex_1()
@@ -3757,7 +3828,10 @@ impl Launcher {
             .child(
                 text(theme::HEADING)
                     .text_color(t.ink)
-                    .child(tr("Horizon crashed")),
+                    .child(match &crash.suspect {
+                        Some(name) => trf("Horizon crashed in {mod}", &[("mod", name)]),
+                        None => tr("Horizon crashed").to_string(),
+                    }),
             );
         if !crash.summary.is_empty() {
             body = body.child(div().text_color(t.ink_soft).child(crash.summary));
@@ -5511,6 +5585,9 @@ impl Render for Launcher {
         }
         if let Some(palette) = self.palette_overlay(window, cx) {
             root = root.child(palette);
+        }
+        if let Some(dialog) = self.worlds_dialog(cx) {
+            root = root.child(dialog);
         }
         if self.pending_consent.is_some() {
             root = root.child(self.native_consent(cx));

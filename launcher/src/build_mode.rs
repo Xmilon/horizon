@@ -7,6 +7,9 @@ use crate::glass_ui as ui;
 use native_mods::{Profile, Route, Stage};
 use native_status::State;
 
+mod guard;
+pub(crate) use guard::{crash_suspect, FailedBuild};
+
 /// The running or finished native snapshot; serialize readers to avoid racing cache leases.
 pub(super) struct RouteMemo {
     key: String,
@@ -207,71 +210,6 @@ impl Launcher {
         None
     }
 
-    /// The update's summary and its two choices.
-    fn update_panel(
-        &self,
-        check: native_mods::UpdateCheck,
-        plays: &str,
-        key: String,
-        pal: Pal,
-        cx: &mut Context<Self>,
-    ) -> Div {
-        let t = self.theme;
-        let current = native_mods::about(plays).map_or_else(|| plays.to_owned(), |a| a.base);
-        let stay = button(
-            "native-update-stay",
-            native_mods::fit::stay(&current),
-            if check.worlds.is_empty() {
-                Kind::Secondary
-            } else {
-                Kind::Primary
-            },
-            &t,
-        )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            *this.mods.update_stayed.borrow_mut() = Some(key.clone());
-            cx.notify();
-        }));
-        let to = check.to.clone();
-        let back_up = !check.worlds.is_empty();
-        let take = button(
-            "native-update-take",
-            if back_up {
-                native_mods::fit::back_up_and_update(check.worlds.len())
-            } else {
-                native_mods::fit::update()
-            },
-            if back_up {
-                Kind::Secondary
-            } else {
-                Kind::Primary
-            },
-            &t,
-        )
-        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-            this.build_native_on(Some(to.clone()), back_up);
-            cx.notify();
-        }));
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(text_in(13., pal.ink).child(check.summary.clone()));
-        if back_up {
-            body = body.child(
-                text_in(13., pal.warn).child(native_mods::fit::update_worlds(&check.worlds)),
-            );
-        }
-        // The default choice first.
-        let choices = div().flex().flex_wrap().gap(px(8.));
-        let choices = if back_up {
-            choices.child(stay).child(take)
-        } else {
-            choices.child(take).child(stay)
-        };
-        self.panel().child(body.child(choices))
-    }
-
     /// Where the instance's native mods stand, read again only when what it depends on changes.
     pub(super) fn native_state_of(&self, instance: &instances::Instance) -> State {
         let version = self.version_of(instance).cloned();
@@ -379,7 +317,15 @@ impl Launcher {
         let t = self.theme;
         let other = self.native_step.is_some() && !mine;
         let mut card = div().flex().flex_col().gap(px(10.));
-        if let Some(e) = error {
+        // Home shows it above its tabs (`home_failed_build`); the Mods page here.
+        let failed = self
+            .native_failed
+            .as_ref()
+            .filter(|_| mine && error.is_some() && self.page != Page::Play);
+        if let Some(failed) = failed {
+            card = card.child(self.failed_card(failed, pal, cx));
+        // Worlds at stake have their own dialog, which says it all.
+        } else if let Some(e) = error.filter(|_| self.worlds_stop(mine).is_none()) {
             card = card.child(
                 div()
                     .flex()
@@ -397,9 +343,6 @@ impl Launcher {
                     ),
             );
         }
-        if let Some(stake) = self.worlds_stop(mine).filter(|_| error.is_some()) {
-            card = card.child(self.worlds_choice(stake, pal, cx));
-        }
         if let Some(done) = self.native_done.as_ref().filter(|_| mine) {
             card = card.child(text_in(13., pal.muted).child(done.clone()));
         }
@@ -415,57 +358,6 @@ impl Launcher {
             )));
         }
         card
-    }
-
-    /// The choice when the build would switch off mods that worlds were saved with (the error
-    /// above names them): staying is the default and changes nothing; the other choice backs
-    /// those worlds up, where it says, then builds without the mods.
-    fn worlds_choice(&self, stake: &native_mods::AtStake, pal: Pal, cx: &mut Context<Self>) -> Div {
-        let t = self.theme;
-        // The same build again: on the base it stopped on, the worlds backed up first.
-        let base = stake.base.clone();
-        let stay = native_mods::fit::dont_build().to_string();
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .child(text_in(13., pal.muted).child(trf(
-                "Backups go to {path}, one zip per world.",
-                &[("path", &stake.backups.display().to_string())],
-            )))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(8.))
-                    .child(
-                        button("native-worlds-stay", stay, Kind::Primary, &t).on_click(
-                            cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.native_worlds = None;
-                                this.native_error = None;
-                                cx.notify();
-                            }),
-                        ),
-                    )
-                    .child(
-                        button(
-                            "native-worlds-back-up",
-                            native_mods::fit::back_up_and_build(
-                                stake.worlds.len(),
-                                stake.mods.len(),
-                                stake.unbuilt.len(),
-                            ),
-                            Kind::Secondary,
-                            &t,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _: &ClickEvent, _, cx| {
-                                this.build_native_on(Some(base.clone()), true);
-                                cx.notify();
-                            },
-                        )),
-                    ),
-            )
     }
 
     /// The card while a build runs: a large percentage, a bar, a pill per stage, and the log and

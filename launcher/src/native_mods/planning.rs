@@ -122,6 +122,11 @@ pub struct UpdateCheck {
     pub to: String,
     /// What the player reads: how many mods fit, and each one switched off and why.
     pub summary: String,
+    /// The new build as people read it, how many native mods are on, and each one it switches
+    /// off with why.
+    pub build: String,
+    pub total: usize,
+    pub off: Vec<(String, String)>,
     /// The worlds saved with a mod the update would switch off: then backing them up is the
     /// other choice to staying.
     pub worlds: Vec<String>,
@@ -199,6 +204,9 @@ pub fn update_check(home: &Path, to: &str) -> Result<UpdateCheck, Failed> {
     Ok(UpdateCheck {
         to: to.to_owned(),
         summary: fit::update_summary(&shown, found.len(), &off),
+        build: shown,
+        total: found.len(),
+        off,
         worlds,
     })
 }

@@ -58,6 +58,7 @@ pub mod glass_icons {
     }
     icons!(
         "ai-chat-02",
+        "alert-02",
         "arrow-down-01",
         "arrow-right-01",
         "book",
