@@ -165,7 +165,7 @@ impl Theme {
     /// The pinned look (`pinned_dark`: dark unless the player picked another), the system's when
     /// they asked to follow it, in the player's accent.
     /// A launcher theme from Settings: its sky, or its whole palette when it brings one (dark,
-    /// or light as Taiga's is, whatever the look it was asked on), keeping the player's Glass and
+    /// whatever the look it was asked on), keeping the player's Glass and
     /// Blur.
     pub fn with_launcher_theme(mut self, picked: &themes::Theme) -> Self {
         let Some(night) = picked.palette else {
@@ -353,14 +353,14 @@ mod tests {
 
     /// Every theme keeps Horizon's glass pages (so no page changes how it works) in its one
     /// look: Hypr's is solid black plates with an edge, the painted ones frost their own sky,
-    /// Taiga's light with dark text.
+    /// Taiga a snowy blue hour.
     #[test]
     fn the_new_families_keep_the_glass_pages() {
         for (id, oled, dark) in [
             ("sunrise", false, true),
             ("hypr_neon", true, true),
             ("overworld", false, true),
-            ("taiga", false, false),
+            ("taiga", false, true),
         ] {
             let settings = Settings {
                 accent: horizon_launcher::themes::starting_accent(Some(id), &Default::default()),

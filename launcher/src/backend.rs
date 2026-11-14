@@ -4396,6 +4396,8 @@ impl Settings {
         // system's opens on the saved theme. Saved back as dark, so this runs once.
         if settings.appearance == Appearance::Light {
             settings.theme = Some(crate::themes::TAIGA.id.to_string());
+            settings.accent =
+                crate::themes::starting_accent(settings.theme.as_deref(), &settings.theme_accents);
         }
         settings.appearance = Appearance::Dark;
         settings
