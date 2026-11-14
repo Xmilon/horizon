@@ -616,32 +616,28 @@ impl Launcher {
                     }
                     (None, PlayPress::Nothing) => main.opacity(0.5).cursor_default(),
                 };
-                base.bg(gpui::linear_gradient(
-                    135.,
-                    gpui::linear_color_stop(accent, 0.),
-                    gpui::linear_color_stop(ui::color(ui::accent2()), 1.),
-                ))
-                .border_color(white(0.16))
-                .shadow(vec![
-                    // The site's primary: a light line along the top edge, a glow under it.
-                    gpui::BoxShadow {
-                        color: white(0.22),
-                        offset: gpui::point(px(0.), px(1.)),
-                        blur_radius: px(0.),
-                        spread_radius: px(0.),
-                        inset: true,
-                    },
-                    gpui::BoxShadow {
-                        color: accent.opacity(0.7),
-                        offset: gpui::point(px(0.), px(6.)),
-                        blur_radius: px(22.),
-                        spread_radius: px(-8.),
-                        inset: false,
-                    },
-                ])
-                .text_color(on_accent)
-                .child(main)
-                .child(ui::sheen(&SharedString::from("play")))
+                base.bg(ui::grad(135., accent, ui::color(ui::accent2())))
+                    .border_color(white(0.16))
+                    .shadow(ui::glows(vec![
+                        // The site's primary: a light line along the top edge, a glow under it.
+                        gpui::BoxShadow {
+                            color: white(0.22),
+                            offset: gpui::point(px(0.), px(1.)),
+                            blur_radius: px(0.),
+                            spread_radius: px(0.),
+                            inset: true,
+                        },
+                        gpui::BoxShadow {
+                            color: accent.opacity(0.7),
+                            offset: gpui::point(px(0.), px(6.)),
+                            blur_radius: px(22.),
+                            spread_radius: px(-8.),
+                            inset: false,
+                        },
+                    ]))
+                    .text_color(on_accent)
+                    .child(main)
+                    .child(ui::sheen(&SharedString::from("play")))
             }
         };
         // Ready to play: the accent's glow comes up under the pointer, a press dims it.
@@ -652,7 +648,7 @@ impl Launcher {
             .group("play-glyph")
             .when(primary, |d| {
                 d.hover(move |s| {
-                    s.border_color(white(0.34)).shadow(vec![
+                    s.border_color(white(0.34)).shadow(ui::glows(vec![
                         gpui::BoxShadow {
                             color: white(0.28),
                             offset: gpui::point(px(0.), px(1.)),
@@ -674,7 +670,7 @@ impl Launcher {
                             spread_radius: px(1.),
                             inset: false,
                         },
-                    ])
+                    ]))
                 })
                 .active(|s| s.opacity(0.92).shadow(Vec::new()))
             });

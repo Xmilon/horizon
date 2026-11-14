@@ -1,8 +1,8 @@
-//! Instance settings as a sheet down the window's right side (the glass look), as the mockup
-//! draws it: its icon, "Instance settings", the instance's name and version at the top; a list of
+//! Instance settings as a dialog centred over the page, drawn as Settings is (the glass look):
+//! its icon, "Instance settings", the instance's name and version at the top; Settings' list of
 //! sections on the left (General, Installation, Launch, Hooks, Storage) and the open one on the
 //! right, under its name and what it is for, its rows in groups; the instance's folder, size and
-//! play time along the foot. Home stays in view to its left, under a light scrim.
+//! play time along the foot. The page behind is frosted and dimmed, as under Settings.
 use super::*;
 use crate::glass_instance::section;
 use crate::glass_ui::{self as ui, white};
@@ -71,12 +71,11 @@ impl SheetTab {
     }
 }
 
-/// How wide the sheet is, and its distance from the window's top (under the top bar) and edges.
-const WIDTH: f32 = 660.;
-const TOP: f32 = 88.;
-const EDGE: f32 = 16.;
+/// The dialog's largest size: Settings' own.
+const WIDTH: f32 = 960.;
+const HEIGHT: f32 = 660.;
 /// The section list's width.
-const CATS: f32 = 158.;
+const CATS: f32 = 200.;
 
 /// A group of rows (the mockup's `grp`): its name over a faint rounded box.
 fn group(title: Option<SharedString>, rows: Div) -> Div {
@@ -218,56 +217,23 @@ impl Launcher {
                 }),
             );
 
-        let accent = ui::look().accent;
-        let cats = div()
+        // The settings list's entries, on a plate of their own as Settings draws them.
+        let cats = crate::glass::plate(radius::PANEL)
             .flex()
             .flex_col()
             .flex_none()
             .w(px(CATS))
-            .gap(px(2.))
-            .pt(px(10.))
-            .pb(px(10.))
-            .pl(px(10.))
-            .pr(px(6.))
-            .border_r_1()
-            .border_color(white(0.1))
+            .gap(px(4.))
+            .p(px(6.))
             .children(SheetTab::ALL.into_iter().map(|each| {
                 let (label, icon, _) = each.about();
-                let on = each == tab;
-                let id = SharedString::from(format!("sheet-cat-{label}"));
-                keyboard(
-                    track_hover(
-                        div()
-                            .id(id.clone())
-                            .relative()
-                            .flex()
-                            .items_center()
-                            .gap(px(9.))
-                            .px(px(9.))
-                            .py(px(7.))
-                            .rounded(px(10.))
-                            .cursor_pointer()
-                            .font_family(horizon_theme::glass::FONT)
-                            .text_size(px(13.5))
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(white(if on { ink::FULL } else { ink::QUIET }))
-                            .when(on, |d| d.bg(ui::color(accent).opacity(0.13)))
-                            .when(!on, |d| {
-                                d.hover(|s| s.text_color(white(ink::FULL)))
-                                    .child(ui::back_tint(10., white(0.04)))
-                            })
-                            .child(ui::icon(
-                                icon,
-                                16.,
-                                if on {
-                                    ui::color(accent)
-                                } else {
-                                    white(ink::QUIET)
-                                },
-                            ))
-                            .child(tr(label).to_string()),
-                        id,
-                    ),
+                crate::glass_settings::nav_item(
+                    format!("sheet-cat-{label}"),
+                    icon,
+                    tr(label).to_string(),
+                    None,
+                    each == tab,
+                    true,
                     &t,
                 )
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
@@ -430,25 +396,33 @@ impl Launcher {
                 )
         };
 
+        // Centred over the page, as Settings is: the same plate, size and frosted dimming.
         let sheet = ui::dialog_plate(radius::MODAL)
             .id("instance-sheet")
-            // Opaque under its glass: Home, not the sky, is behind it.
-            .bg(t.side)
             .occlude()
-            .absolute()
-            .top(px(TOP))
-            .right(px(EDGE))
-            .bottom(px(EDGE))
-            .w(px(WIDTH))
+            .relative()
             .flex()
             .flex_col()
+            .w_full()
+            .max_w(px(WIDTH))
+            .h_full()
+            .max_h(px(HEIGHT))
             .child(head)
-            .child(div().flex().flex_1().min_h_0().child(cats).child(pane))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_h_0()
+                    .gap(px(12.))
+                    .p(px(12.))
+                    .child(cats)
+                    .child(pane),
+            )
             .child(foot.border_t_1().border_color(white(0.1)))
             .with_animation(
                 ElementId::named_usize("sheet-in", 0),
                 motion::eased(motion::POP),
-                |d, p| d.opacity(p).right(px(EDGE - 24. * (1. - p))),
+                |d, p| d.opacity(p),
             );
         Some(
             div()
@@ -457,16 +431,30 @@ impl Launcher {
                 .top_0()
                 .left_0()
                 .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .p(px(24.))
                 .occlude()
                 .on_scroll(|_, _, cx| cx.stop_propagation())
-                // A light dimming only: Home stays in view beside the sheet.
+                .when(!self.settings.performance(), |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .opacity(0.62)
+                            .child(ui::scrim_backdrop()),
+                    )
+                })
                 .child(
                     div()
                         .absolute()
                         .top_0()
                         .left_0()
                         .size_full()
-                        .bg(ui::scrim().opacity(0.35))
+                        .bg(ui::scrim().opacity(if ui::light() { 0.2 } else { 0.4 }))
                         .on_mouse_down(gpui::MouseButton::Left, close),
                 )
                 .child(sheet),

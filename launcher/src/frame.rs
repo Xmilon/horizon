@@ -510,7 +510,23 @@ impl Launcher {
         }
         let list = list.child(server_rows);
 
-        let mut foot = div().flex().flex_col().flex_none().gap(px(2.)).pt(px(10.));
+        // A hairline set in from the rail's sides: between the instances and the buttons, and
+        // between Settings and the version.
+        let rule = || {
+            div()
+                .flex_none()
+                .h(px(1.))
+                .mx(px(10.))
+                .my(px(4.))
+                .bg(white(0.1))
+        };
+        let mut foot = div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .gap(px(2.))
+            .pt(px(4.))
+            .child(rule());
         // The launcher's own update: the card while open; a dot on Settings while narrow.
         let updating = match self.self_update {
             SelfUpdate::Downloading(..) | SelfUpdate::Ready(_) => true,
@@ -563,7 +579,7 @@ impl Launcher {
                         .px(px(17.5))
                         .rounded(px(radius::ROW))
                         .bg(ui::color(if hovered { DISCORD_HOVER } else { DISCORD }))
-                        .shadow(vec![
+                        .shadow(ui::glows(vec![
                             gpui::BoxShadow {
                                 color: gpui::white().opacity(if hovered { 0.2 } else { 0.12 }),
                                 offset: point(px(0.), px(0.)),
@@ -578,7 +594,7 @@ impl Launcher {
                                 spread_radius: px(-6.),
                                 inset: false,
                             },
-                        ])
+                        ]))
                         .cursor_pointer()
                         .child(ui::icon("discord", 19., gpui::white()))
                         .child(
@@ -641,13 +657,26 @@ impl Launcher {
                 cx.notify();
             })),
         );
-        foot = foot.child(
-            div().h(px(20.)).px(px(12.)).child(
-                fade(ui::text(11.5, FontWeight::NORMAL, ink::DIM))
-                    .id("launcher-version")
-                    .whitespace_nowrap()
-                    .child(trf("Launcher {version}", &[("version", backend::VERSION)])),
-            ),
+        // The launcher's version under it: "Launcher 0.2.0" open, the number alone while narrow.
+        let version: SharedString = if open {
+            trf("Launcher {version}", &[("version", backend::VERSION)]).into()
+        } else {
+            backend::VERSION.into()
+        };
+        foot = foot.child(rule()).child(
+            div()
+                .flex()
+                .items_center()
+                .h(px(20.))
+                .px(px(if open { 12. } else { 0. }))
+                .when(!open, |d| d.justify_center())
+                .child(
+                    ui::text(11.5, FontWeight::NORMAL, ink::DIM)
+                        .id("launcher-version")
+                        .whitespace_nowrap()
+                        .truncate()
+                        .child(version),
+                ),
         );
 
         let width = RAIL + (RAIL_OPEN - RAIL) * p;

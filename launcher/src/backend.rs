@@ -4264,6 +4264,12 @@ pub struct Settings {
     /// player turns it on: the game is started with `HORIZON_NO_HEARTBEAT` otherwise.
     #[serde(default)]
     pub playing_ping: bool,
+    /// The look's flourishes, each on or off (`effects`): glow, gradients, the hover shine.
+    #[serde(default)]
+    pub effects: crate::effects::Effects,
+    /// The player has been through the first-run welcome (theme, accent, effects).
+    #[serde(default)]
+    pub welcomed: bool,
     /// The player without an account that owns the game has read, once, why the launcher needs
     /// one now (the owner gate's screen).
     #[serde(default)]
@@ -4387,6 +4393,14 @@ impl Settings {
                 }),
                 Some(_) => {
                     fields.remove("theme_accents");
+                }
+                None => {}
+            }
+            // Effects keep their flags that are true or false; one that isn't stays on.
+            match fields.get_mut("effects") {
+                Some(serde_json::Value::Object(flags)) => flags.retain(|_, v| v.is_boolean()),
+                Some(_) => {
+                    fields.remove("effects");
                 }
                 None => {}
             }
@@ -5525,6 +5539,19 @@ pub fn {f}("
         assert_eq!(s.reduce_motion, Some(true));
         let saved = serde_json::to_string(&Settings::default()).unwrap();
         assert!(!saved.contains("theme_accents") && !saved.contains("reduce_motion"));
+    }
+
+    #[test]
+    fn effects_keep_their_good_flags_and_a_bad_effects_loses_nothing_else() {
+        let s =
+            Settings::parse(r#"{"effects": {"glow": false, "sheen": "no"}, "game_args": "--x"}"#);
+        assert_eq!(s.game_args, "--x");
+        assert!(!s.effects.glow && s.effects.gradients && s.effects.sheen);
+        let s = Settings::parse(r#"{"effects": 3, "game_args": "--x"}"#);
+        assert_eq!(
+            (s.game_args.as_str(), s.effects),
+            ("--x", crate::effects::Effects::ALL)
+        );
     }
 
     #[test]

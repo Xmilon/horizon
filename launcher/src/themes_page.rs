@@ -258,6 +258,32 @@ impl Launcher {
         )
     }
 
+    /// A switch per flourish (`effects::Effects`): glow, gradients, the hover shine, each on or
+    /// off alone. Settings' Appearance and the first-run welcome show them.
+    pub(super) fn effects_rows(&mut self, cx: &mut Context<Self>) -> Vec<Div> {
+        let t = self.theme;
+        horizon_launcher::effects::Effects::LIST
+            .into_iter()
+            .map(|(flag, name, what)| {
+                let on = self.settings.effects.get(flag);
+                let toggle = crate::switch(format!("effect-{name}"), on, &t).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        this.settings.effects.set(flag, !on);
+                        this.save_settings();
+                        cx.notify();
+                    },
+                ));
+                index_row(
+                    0,
+                    tr(name),
+                    Some(div().child(tr(what)).into_any_element()),
+                    Some(toggle.into_any_element()),
+                    &t,
+                )
+            })
+            .collect()
+    }
+
     /// The picture behind Home, if the player keeps one.
     pub(super) fn home_background(&self) -> Option<PathBuf> {
         themes::background(&backend::data_dir(), self.settings.background.as_deref())

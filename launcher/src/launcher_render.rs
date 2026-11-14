@@ -21,6 +21,7 @@ impl Render for Launcher {
         glass::set_light(!self.theme.dark);
         self.look = self.theme.look;
         glass_ui::set_look(self.look);
+        glass_ui::set_effects(self.settings.effects);
         glass::set_look(self.look);
         // The mockup tints the scene with any accent but its violet.
         let tint = (self.theme.dark && self.look.accent != horizon_theme::glass::ACCENT)
@@ -329,7 +330,9 @@ impl Render for Launcher {
         if self.pending_consent.is_some() {
             root = root.child(self.native_consent(cx));
         }
-        if self.asking_consent() {
+        if self.welcoming() {
+            root = root.child(self.welcome_screen(cx));
+        } else if self.asking_consent() {
             root = root.child(self.consent_screen(cx));
         }
         if self.asking_owner() {

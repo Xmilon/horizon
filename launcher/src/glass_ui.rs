@@ -6,6 +6,7 @@ use gpui::{
     canvas, div, prelude::*, px, rgb, rgba, svg, AnimationExt, AnyElement, App, ClickEvent, Div,
     ElementId, FontWeight, Hsla, Pixels, SharedString, Stateful, Svg, TextRun, Window,
 };
+use horizon_launcher::effects::Effects;
 use horizon_theme::glass::{fill, ink, radius, Glass};
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -21,6 +22,8 @@ thread_local! {
     static FLAT: Cell<bool> = const { Cell::new(false) };
     /// The light appearance: the glass look's white ink and fills turn to [`INK`].
     static LIGHT: Cell<bool> = const { Cell::new(false) };
+    /// The player's flourishes ([`effects`]).
+    static EFFECTS: Cell<Effects> = const { Cell::new(Effects::ALL) };
     /// How many [`hover_back`] layers this frame has built so far: the next one's name.
     static BACKS: Cell<usize> = const { Cell::new(0) };
     /// Each [`hover_back`] layer's pointer: on or off, and since when.
@@ -234,6 +237,38 @@ pub fn look() -> Glass {
     LOOK.get()
 }
 
+/// Set as each frame's pages start being built: the flourishes the player keeps.
+pub fn set_effects(effects: Effects) {
+    EFFECTS.set(effects);
+}
+
+/// The flourishes the player keeps (Settings > Appearance).
+pub fn effects() -> Effects {
+    EFFECTS.get()
+}
+
+/// A two-colour fill from `from` to `to` at `angle`, or `from` alone with Gradients off.
+pub fn grad(angle: f32, from: Hsla, to: Hsla) -> gpui::Background {
+    if effects().gradients {
+        gpui::linear_gradient(
+            angle,
+            gpui::linear_color_stop(from, 0.),
+            gpui::linear_color_stop(to, 1.),
+        )
+    } else {
+        from.into()
+    }
+}
+
+/// `shadows` with Glow on; with it off only the inset ones (a control's edge light, not a halo).
+pub fn glows(shadows: Vec<gpui::BoxShadow>) -> Vec<gpui::BoxShadow> {
+    if effects().glow {
+        shadows
+    } else {
+        shadows.into_iter().filter(|s| s.inset).collect()
+    }
+}
+
 /// White at `a`: the dark look's ink and fills. In light, the ink at `a`, so every part keeps
 /// its weight on the light plates.
 pub fn white(a: f32) -> Hsla {
@@ -396,13 +431,13 @@ pub fn towards(a: Hsla, b: Hsla, t: f32) -> Hsla {
 
 /// A lifting card's glow under it, at `t` of its strength (the site's `0 14px 36px -12px`).
 fn lift_glow(t: f32) -> Vec<gpui::BoxShadow> {
-    vec![gpui::BoxShadow {
+    glows(vec![gpui::BoxShadow {
         color: color(look().accent).opacity(0.6 * t),
         offset: gpui::point(px(0.), px(14.)),
         blur_radius: px(36.),
         spread_radius: px(-12.),
         inset: false,
-    }]
+    }])
 }
 
 /// The accent's lighter end, for the primary button's gradient (the mockup's `--accent2`).
@@ -454,7 +489,7 @@ pub fn sheen(id: &SharedString) -> AnyElement {
     // Out of the flow in every state: an in-flow rest div would sit in the button's gap and
     // widen it, so the button would narrow the moment the pointer arrives.
     let nothing = || div().absolute().into_any_element();
-    if crate::motion::still() {
+    if crate::motion::still() || !effects().sheen {
         return nothing();
     }
     let hovered = crate::hover_is(id);
@@ -665,21 +700,17 @@ pub fn nav_tab(
         .bottom(px(1.))
         .h(px(2.))
         .rounded(px(2.))
-        .bg(gpui::linear_gradient(
-            90.,
-            gpui::linear_color_stop(color(look.accent_soft), 0.),
-            gpui::linear_color_stop(color(look.accent), 1.),
-        ));
+        .bg(grad(90., color(look.accent_soft), color(look.accent)));
     let bar = if open {
         bar.left(px(12.))
             .right(px(12.))
-            .shadow(vec![gpui::BoxShadow {
+            .shadow(glows(vec![gpui::BoxShadow {
                 color: color(look.accent).opacity(0.9),
                 offset: gpui::point(px(0.), px(0.)),
                 blur_radius: px(10.),
                 spread_radius: px(0.),
                 inset: false,
-            }])
+            }]))
             .into_any_element()
     } else {
         // Grows from the middle out to 80 % of the tab, at 70 % strength, on the spring.
@@ -691,11 +722,7 @@ pub fn nav_tab(
                     .bottom(px(1.))
                     .h(px(2.))
                     .rounded(px(2.))
-                    .bg(gpui::linear_gradient(
-                        90.,
-                        gpui::linear_color_stop(color(look.accent_soft), 0.),
-                        gpui::linear_color_stop(color(look.accent), 1.),
-                    ))
+                    .bg(grad(90., color(look.accent_soft), color(look.accent)))
             },
             move |d, t| {
                 d.left(gpui::relative(0.5 - 0.4 * t))
@@ -1258,16 +1285,12 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
             let id2 = id.clone();
             let accent2 = self::accent2();
             d.overflow_hidden()
-                .bg(gpui::linear_gradient(
-                    135.,
-                    gpui::linear_color_stop(color(look.accent), 0.),
-                    gpui::linear_color_stop(color(accent2), 1.),
-                ))
+                .bg(grad(135., color(look.accent), color(accent2)))
                 .border_1()
                 .border_color(white(0.16))
                 .text_color(color(look.on_accent))
                 .font_weight(FontWeight::SEMIBOLD)
-                .shadow(vec![
+                .shadow(glows(vec![
                     // The site's primary: a light line along the top edge, a glow under it.
                     gpui::BoxShadow {
                         color: gpui::white().opacity(0.22),
@@ -1283,9 +1306,9 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
                         spread_radius: px(-8.),
                         inset: false,
                     },
-                ])
+                ]))
                 .hover(move |s| {
-                    s.border_color(white(0.34)).shadow(vec![
+                    s.border_color(white(0.34)).shadow(glows(vec![
                         gpui::BoxShadow {
                             color: gpui::white().opacity(0.28),
                             offset: gpui::point(px(0.), px(1.)),
@@ -1307,7 +1330,7 @@ pub fn button(id: SharedString, label: SharedString, kind: Kind, t: &Theme) -> S
                             spread_radius: px(1.),
                             inset: false,
                         },
-                    ])
+                    ]))
                 })
                 .active(|s| s.opacity(0.92).shadow(Vec::new()))
                 .child(sheen(&id2))
@@ -1487,14 +1510,10 @@ pub fn pill_strip(
             .top(px(top))
             .h(px(h))
             .rounded(px(radius::CONTROL))
-            .bg(gpui::linear_gradient(
-                180.,
-                gpui::linear_color_stop(white(0.16), 0.),
-                gpui::linear_color_stop(white(0.07), 1.),
-            ))
+            .bg(grad(180., white(0.16), white(0.07)))
             .border_1()
             .border_color(white(edge::STRONG))
-            .shadow(vec![
+            .shadow(glows(vec![
                 gpui::BoxShadow {
                     color: gpui::white().opacity(0.18),
                     offset: gpui::point(px(0.), px(1.)),
@@ -1509,7 +1528,7 @@ pub fn pill_strip(
                     spread_radius: px(-8.),
                     inset: false,
                 },
-            ])
+            ]))
     });
     // The pill first, so the names are drawn over it.
     div().relative().children(pill).child(row)
@@ -1578,13 +1597,13 @@ pub fn segments<T: Copy + PartialEq + 'static>(
             .border_1()
             .border_color(color(look().accent).opacity(0.6))
             .bg(color(look().accent).opacity(0.2))
-            .shadow(vec![gpui::BoxShadow {
+            .shadow(glows(vec![gpui::BoxShadow {
                 color: color(look().accent).opacity(0.8),
                 offset: gpui::point(px(0.), px(4.)),
                 blur_radius: px(14.),
                 spread_radius: px(-6.),
                 inset: false,
-            }])
+            }]))
     });
     seg.children(pill)
 }

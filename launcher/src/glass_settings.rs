@@ -41,6 +41,10 @@ const INDEX: [&[&str]; 10] = [
         "Blur",
         "Performance mode",
         "Motion",
+        "Glow",
+        "Gradients",
+        "Shine on hover",
+        "Effects",
         "Home background",
         "Reset the launcher's look",
         "Dark",
@@ -648,6 +652,7 @@ impl Launcher {
             .child(self.look_slider_row(themes_page::LookKnob::Blur, cx))
             .child(self.performance_row(cx))
             .child(self.motion_row(cx))
+            .children(self.effects_rows(cx))
             .child(self.home_background_row(cx))
             .child(self.reset_look_row(cx));
         let launcher = section(0)
@@ -823,7 +828,7 @@ impl Launcher {
 
 /// An entry of the settings list: a section, or while searching a setting found (its section
 /// under it). The one being read is tinted with the accent, outlined in it and marked by a bar.
-fn nav_item(
+pub(super) fn nav_item(
     id: String,
     icon: &'static str,
     title: String,

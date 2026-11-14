@@ -92,6 +92,7 @@ mod theme;
 mod themes_page;
 mod titlebar;
 mod wardrobe_page;
+mod welcome;
 mod while_playing;
 mod window_root;
 mod worlds_page;
