@@ -33,14 +33,8 @@ impl Launcher {
             self.native_error = Some(error);
             return;
         };
-        let (folder, ids) = match self.native_mods_to_build() {
-            Ok((folder, found)) => (
-                folder,
-                found
-                    .into_iter()
-                    .map(|bundle| bundle.manifest.id)
-                    .collect::<Vec<_>>(),
-            ),
+        let folder = match self.native_mods_to_build() {
+            Ok((folder, _)) => folder,
             Err(e) => {
                 self.native_log_preflight(&e);
                 self.native_error = Some(e);
@@ -58,8 +52,6 @@ impl Launcher {
         self.native_done = None;
         let tx = self.tx.clone();
         std::thread::spawn(move || {
-            // Each mod is its own library: the mods compiled so far, by their place in `ids`.
-            let seen = std::cell::RefCell::new(Vec::<usize>::new());
             let result = native_mods::build(
                 &base,
                 &folder,
@@ -68,25 +60,14 @@ impl Launcher {
                 back_up,
                 |step| {
                     let module = match &step {
-                        native_mods::Step::Compile { name, .. } => {
-                            let krate = name.replace('-', "_");
-                            ids.iter()
-                                .position(|id| id.replace('-', "_") == krate)
-                                .map(|i| {
-                                    let mut seen = seen.borrow_mut();
-                                    if !seen.contains(&i) {
-                                        seen.push(i);
-                                    }
-                                    trf(
-                                        "{mod} · {done} of {total}",
-                                        &[
-                                            ("mod", &ids[i]),
-                                            ("done", &seen.len().to_string()),
-                                            ("total", &ids.len().to_string()),
-                                        ],
-                                    )
-                                })
-                        }
+                        native_mods::Step::Mod { id, done, total } => Some(trf(
+                            "{mod} · {done} of {total}",
+                            &[
+                                ("mod", id),
+                                ("done", &done.to_string()),
+                                ("total", &total.to_string()),
+                            ],
+                        )),
                         _ => None,
                     };
                     let _ = tx.send(Msg::NativeProgress(step.label(), step.progress(), module));

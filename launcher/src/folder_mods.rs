@@ -137,6 +137,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_mod_folder_is_packed_installed_turned_on_refreshed_and_removed() {
+        let home = std::env::temp_dir().join(format!("hz-folder-add-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tools/fixtures/paper-trace-mod");
+        let ids = add(&home, &fixture).unwrap();
+        assert_eq!(ids, ["paper_trace"]);
+        let hmod = home.join(INSTALLED).join("paper_trace.hmod");
+        assert!(hmod.is_file());
+        assert!(java::is_enabled(&home, "paper_trace"));
+        assert_eq!(all(&home).len(), 1);
+        assert_eq!(linked(&home, "paper_trace"), Some(fixture.canonicalize().unwrap()));
+        // Packing the same folder again gives the same file: a refresh changes nothing.
+        let before = fs::read(&hmod).unwrap();
+        refresh(&home).unwrap();
+        assert_eq!(fs::read(&hmod).unwrap(), before);
+        // Added twice is fine (it is linked); a non-linked mod of that id is never replaced.
+        assert_eq!(add(&home, &fixture).unwrap(), ["paper_trace"]);
+        remove(&home, "paper_trace").unwrap();
+        assert!(!hmod.exists());
+        assert!(all(&home).is_empty());
+        assert!(!java::is_enabled(&home, "paper_trace"));
+        fs::write(&hmod, b"x").unwrap();
+        assert!(add(&home, &fixture).unwrap_err().contains("not from a folder"));
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn links_are_read_back_by_id() {
         let home = std::env::temp_dir().join(format!("hz-folder-mods-{}", std::process::id()));
         let dir = home.join(INSTALLED);

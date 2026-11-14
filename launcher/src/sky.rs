@@ -155,8 +155,9 @@ const SUN_RADIUS: usize = 15;
 const SUN_RISE: usize = 8;
 const SUN_X: f32 = 0.72;
 
-/// A theme's [`Mood`] moves in steps of a fifth of a second, like the pixel art it drifts over.
-const MOOD_STEPS: f32 = 5.;
+/// A theme's [`Mood`] moves in twelve steps a second: still stepped like the pixel art it drifts
+/// over, but smooth enough that falling leaves read as falling, not ticking.
+const MOOD_STEPS: f32 = 12.;
 
 /// How much white the light look lays over the dawn's colours.
 const MORNING: f32 = 0.55;
@@ -551,9 +552,9 @@ fn paint_behind(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
             // Shafts from the surface, swaying a few texels and fading with depth.
             for i in 0..6u32 {
                 let k = i as f32;
-                let x = (k + 0.5) / 6. * w + (t * 0.2 + k * 1.9).sin() * 6. * TEXEL;
+                let x = (k + 0.5) / 6. * w + (t * 0.4 + k * 1.9).sin() * 6. * TEXEL;
                 let width = (5. + 4. * hash(i * 7 + 1)) * TEXEL;
-                let a = 0.10 + 0.05 * (t * 0.35 + k).sin();
+                let a = 0.10 + 0.05 * (t * 0.7 + k).sin();
                 window.paint_quad(fill(cell(b, x, 0., width, h * 0.8), fade(light, a, 0.)));
             }
         }
@@ -566,9 +567,9 @@ fn paint_behind(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
                 let mut x = 0.;
                 while x < w {
                     let top =
-                        h * (0.08 + 0.07 * k) + (x * 0.006 + t * 0.12 + k * 2.1).sin() * h * 0.07;
-                    let tall = h * (0.2 + 0.1 * (x * 0.011 - t * 0.09 + k).sin().abs());
-                    let a = 0.2 + 0.1 * (x * 0.004 + t * 0.2 + k * 1.3).sin();
+                        h * (0.08 + 0.07 * k) + (x * 0.006 + t * 0.25 + k * 2.1).sin() * h * 0.07;
+                    let tall = h * (0.2 + 0.1 * (x * 0.011 - t * 0.18 + k).sin().abs());
+                    let a = 0.2 + 0.1 * (x * 0.004 + t * 0.4 + k * 1.3).sin();
                     window.paint_quad(fill(cell(b, x, top, COLUMN, tall * 0.4), fade(c, 0., a)));
                     window.paint_quad(fill(
                         cell(b, x, top + tall * 0.4, COLUMN, tall * 0.6),
@@ -598,11 +599,11 @@ fn paint_drift(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
         let x = place * w;
         match mood {
             Mood::Leaves(tones) => {
-                let y = (t * (14. + 16. * pace) + phase * run) % run - 20.;
-                let x = x + (t * 0.8 + sway * std::f32::consts::TAU).sin() * 5. * TEXEL;
+                let y = (t * (45. + 45. * pace) + phase * run) % run - 20.;
+                let x = x + (t * 1.6 + sway * std::f32::consts::TAU).sin() * 5. * TEXEL;
                 let c = tone(tones[i as usize % 3]);
                 // A diagonal leaf of two bars, turning over now and then.
-                let (a, z) = if (t * 0.5 + sway * 4.).floor() as i32 % 2 == 0 {
+                let (a, z) = if (t * 1.5 + sway * 4.).floor() as i32 % 2 == 0 {
                     (TEXEL, 0.)
                 } else {
                     (0., TEXEL)
@@ -611,8 +612,8 @@ fn paint_drift(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
                 window.paint_quad(fill(cell(b, x + z, y + TEXEL, TEXEL * 2., TEXEL), c));
             }
             Mood::Petals(tones) => {
-                let y = (t * (10. + 12. * pace) + phase * run) % run - 20.;
-                let x = x + (t * 0.6 + sway * std::f32::consts::TAU).sin() * 8. * TEXEL;
+                let y = (t * (32. + 32. * pace) + phase * run) % run - 20.;
+                let x = x + (t * 1.2 + sway * std::f32::consts::TAU).sin() * 8. * TEXEL;
                 let c = tone(tones[i as usize % 2]).opacity(0.9);
                 window.paint_quad(fill(cell(b, x, y, TEXEL * 2., TEXEL), c));
                 window.paint_quad(fill(
@@ -621,8 +622,8 @@ fn paint_drift(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
                 ));
             }
             Mood::Water([_, rim, shine]) => {
-                let y = h + 20. - (t * (16. + 20. * pace) + phase * run) % run;
-                let x = x + (t * 0.7 + sway * std::f32::consts::TAU).sin() * 2. * TEXEL;
+                let y = h + 20. - (t * (40. + 40. * pace) + phase * run) % run;
+                let x = x + (t * 1.4 + sway * std::f32::consts::TAU).sin() * 2. * TEXEL;
                 let big = i % 3 == 0;
                 let side = if big { TEXEL * 2. } else { TEXEL };
                 window.paint_quad(fill(cell(b, x, y, side, side), tone(rim).opacity(0.55)));
