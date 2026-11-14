@@ -360,15 +360,17 @@ impl Launcher {
                 pane = pane.children(self.glass_hooks(cx));
             }
             SheetTab::Storage if selected => {
+                pane = pane.child(self.sheet_space(&editing, cx));
                 if self.export.is_none() {
                     self.toggle_export();
                 }
-                pane = pane.children(
-                    self.export_panel(cx)
-                        .map(|panel| group(Some(tr("Export").into()), panel.p(px(12.)))),
-                );
+                // The export panel is its own plate, set beside a list elsewhere: flush here.
+                pane = pane.children(self.export_panel(cx).map(|panel| panel.ml(px(0.))));
             }
-            SheetTab::Launch | SheetTab::Hooks | SheetTab::Storage => {
+            SheetTab::Storage => {
+                pane = pane.child(self.sheet_space(&editing, cx)).child(not_selected());
+            }
+            SheetTab::Launch | SheetTab::Hooks => {
                 pane = pane.child(not_selected());
             }
         }
@@ -597,6 +599,56 @@ impl Launcher {
                             .into_any_element(),
                     ),
                 )),
+        )
+    }
+
+    /// Storage's first row: the space the instance's folder takes (measured on a thread, once
+    /// per opening) and its folder.
+    fn sheet_space(&mut self, editing: &Instance, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        if self.sheet_size.as_ref().map(|s| &s.0) != Some(&editing.id) {
+            self.sheet_size = Some((editing.id.clone(), None));
+            let (id, home) = (editing.id.clone(), editing.home.clone());
+            let size = cx.background_spawn(async move {
+                horizon_launcher::storage::allocated_bytes(&home).unwrap_or(0)
+            });
+            cx.spawn(async move |this, cx| {
+                let bytes = size.await;
+                let _ = this.update(cx, |this, cx| {
+                    if this.sheet_size.as_ref().map(|s| &s.0) == Some(&id) {
+                        this.sheet_size = Some((id, Some(bytes)));
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        let size = match self.sheet_size.as_ref().and_then(|s| s.1) {
+            Some(bytes) => storage::format_bytes(bytes),
+            None => tr("Calculating…").to_string(),
+        };
+        let home = editing.home.clone();
+        group(
+            None,
+            div().child(ui::setting_row(
+                tr("Space used"),
+                Some(
+                    div()
+                        .child(trf(
+                            "{size}: its worlds, mods, packs and settings",
+                            &[("size", &size)],
+                        ))
+                        .into_any_element(),
+                ),
+                Some(
+                    button("sheet-space-folder", "Open folder", Kind::Secondary, &t)
+                        .on_click(move |_, _, cx| {
+                            let _ = std::fs::create_dir_all(&home);
+                            crate::glass_toast::open(cx, &home);
+                        })
+                        .into_any_element(),
+                ),
+            )),
         )
     }
 

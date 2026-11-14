@@ -247,6 +247,8 @@ struct Launcher {
     /// About's credit picture was asked for, and what came back.
     credit_asked: bool,
     credit_picture: Option<std::sync::Arc<gpui::Image>>,
+    /// The instance sheet's Storage: which instance was measured, and its size once known.
+    sheet_size: Option<(String, Option<u64>)>,
     /// The Mods page's project card, kept in view beside its list.
     mods_sticky: sticky::Sticky,
     /// The rows of the page's long list (Versions) last drawn.
@@ -616,6 +618,7 @@ impl Launcher {
             settings_marked: 0,
             credit_asked: false,
             credit_picture: None,
+            sheet_size: None,
             mods_sticky: sticky::Sticky::default(),
             long_list: cull::Cull::default(),
             opening: (!settings.skip_opening).then(|| {

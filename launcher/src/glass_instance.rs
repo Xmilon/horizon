@@ -569,6 +569,120 @@ pub(super) fn horizon_choices(releases: &[Release], installed: &[String]) -> Vec
     out
 }
 
+impl Launcher {
+    /// The mockup's three ways to a new instance, over the form: make one here (this dialog),
+    /// install a modpack (the Mods page's Modpacks) or import one (a file, or another
+    /// launcher's instances, which the Modpacks tab lists).
+    fn new_entry(&mut self, cx: &mut Context<Self>) -> Div {
+        let t = self.theme;
+        let accent = ui::look().accent;
+        let card = |id: &'static str, icon: &'static str, title: &str, note: &str, on: bool| {
+            let id = SharedString::from(id);
+            keyboard(
+                track_hover(
+                    div()
+                        .id(id.clone())
+                        .relative()
+                        .flex()
+                        .flex_1()
+                        .min_w_0()
+                        .items_center()
+                        .gap(px(12.))
+                        .p(px(12.))
+                        .rounded(px(radius::LARGE))
+                        .border_1()
+                        .cursor_pointer()
+                        .when(on, |d| {
+                            d.bg(ui::color(accent).opacity(0.14))
+                                .border_color(ui::color(accent).opacity(0.6))
+                        })
+                        .when(!on, |d| {
+                            d.bg(white(0.035))
+                                .border_color(white(ui::edge::REST))
+                                .hover(|s| s.bg(white(0.06)).border_color(white(0.18)))
+                        })
+                        .child(
+                            div()
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .justify_center()
+                                .size(px(36.))
+                                .rounded(px(10.))
+                                .bg(white(0.07))
+                                .child(ui::icon(
+                                    icon,
+                                    18.,
+                                    if on {
+                                        ui::color(accent)
+                                    } else {
+                                        white(ink::BODY)
+                                    },
+                                )),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .min_w_0()
+                                .child(
+                                    ui::text(14., FontWeight::SEMIBOLD, ink::FULL)
+                                        .truncate()
+                                        .child(tr(title).to_string()),
+                                )
+                                .child(
+                                    ui::text(12.5, FontWeight::NORMAL, ink::NOTE)
+                                        .truncate()
+                                        .child(tr(note).to_string()),
+                                ),
+                        ),
+                    id,
+                ),
+                &t,
+            )
+        };
+        div()
+            .flex()
+            .gap(px(10.))
+            .child(card(
+                "entry-custom",
+                "plus-sign",
+                "Create custom",
+                "Pick the game and version",
+                true,
+            ))
+            .child(
+                card(
+                    "entry-pack",
+                    "package-01",
+                    "Install a modpack",
+                    "Browse Modrinth and Horizon packs",
+                    false,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.instances.dialog = None;
+                    this.show_modpack(None);
+                    cx.notify();
+                })),
+            )
+            .child(
+                card(
+                    "entry-import",
+                    "download-04",
+                    "Import an instance",
+                    "A file, or another launcher",
+                    false,
+                )
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.instances.dialog = None;
+                    this.show_modpack(None);
+                    this.choose_pack(false, cx);
+                    cx.notify();
+                })),
+            )
+    }
+}
+
 /// "Nightly · c9d474d", "Imported · 2026-10-30", or the tag.
 fn version_label(tag: &str) -> String {
     horizon_launcher::nightly::label(tag)
@@ -661,6 +775,8 @@ impl Launcher {
             .overflow_y_scroll();
         if let Some(i) = editing {
             body = body.children(self.switch_notice(i));
+        } else {
+            body = body.child(self.new_entry(cx));
         }
         // The name first, where focus starts: the version lists below are bounded, so it and
         // the foot's Create are on screen at laptop size without scrolling.
