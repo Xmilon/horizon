@@ -6,7 +6,7 @@
 //! accent and the main action's face, bevel and lip) to it, keeping their saturation and
 //! lightness, then darkens or lightens each just enough to read as well as the violet does: white
 //! on the face at 4.5:1, the accent at 3:1 on every background.
-use horizon_theme::night::{Night, SkyArt};
+use horizon_theme::night::{Mood, Night, SkyArt};
 use horizon_theme::{contrast, Blocks};
 use std::path::{Path, PathBuf};
 
@@ -46,6 +46,10 @@ pub enum Look {
     /// The glass pages with solid plates and a thin edge over the theme's own dark sky (true black
     /// for OLED screens) instead of the sunset; the light appearance as [`Look::Glass`].
     Oled,
+    /// The glass pages over the theme's own painted sky (`sky.rs`, with its drifting
+    /// [`Mood`](horizon_theme::night::Mood)) instead of the sunset, on solid plates; the light
+    /// appearance as [`Look::Glass`].
+    Painted,
     /// The square, solid Blocks look (Nord, kept as it was).
     Solid,
 }
@@ -97,6 +101,7 @@ pub const NORD_DARK: Night = Night {
         lit: [0x4c566a, 0x5e6a7d, 0x81a1c1],
         shade: 0x272c36,
         star: 0xeceff4,
+        mood: Mood::Plain,
     },
 };
 
@@ -129,6 +134,7 @@ pub const NORD_LIGHT: Night = Night {
         lit: [0xffffff; 3],
         shade: 0xd8dee9,
         star: 0xffffff,
+        mood: Mood::Plain,
     },
 };
 
@@ -182,6 +188,7 @@ pub const SUNRISE_DARK: Night = Night {
         lit: [0x6a2c5a, 0xb4507a, 0xffb08f],
         shade: 0x2a1228,
         star: 0xfff1f6,
+        mood: Mood::Plain,
     },
 };
 
@@ -215,6 +222,7 @@ pub const SUNRISE_LIGHT: Night = Night {
         lit: [0xffffff; 3],
         shade: 0xecd3df,
         star: 0xffffff,
+        mood: Mood::Plain,
     },
 };
 
@@ -249,6 +257,7 @@ pub const HYPR_DARK: Night = Night {
         lit: [0x1a1a2e, 0x22223a, 0x2c2c4a],
         shade: 0x08080f,
         star: 0xcdd6f4,
+        mood: Mood::Plain,
     },
 };
 
@@ -282,6 +291,7 @@ pub const HYPR_LIGHT: Night = Night {
         lit: [0xffffff; 3],
         shade: 0xe0d6f0,
         star: 0xffffff,
+        mood: Mood::Plain,
     },
 };
 
@@ -305,8 +315,329 @@ pub const HYPR_NEON: Theme = Theme {
     look: Look::Oled,
 };
 
+/// Deep Ocean's night: teal water under light shafts and rising bubbles.
+pub const OCEAN_DARK: Night = Night {
+    sky: [0x031a24, 0x052a38, 0x083c4e, 0x0b5468, 0x10708a, 0x2a9bb0],
+    page: 0x041c26,
+    side: 0x03141c,
+    card: 0x07242f,
+    card_alpha: 0.88,
+    card_hi: 0x0d3342,
+    card_hi_alpha: 0.92,
+    stroke: 0x9fe8f2,
+    stroke_alpha: 0.12,
+    rule_alpha: 0.10,
+    ink: 0xeafcff,
+    ink_soft: 0xc4e6ec,
+    muted: 0x93bcc6,
+    accent: 0x2cc4d6,
+    accent_hi: 0x7fe3ee,
+    on_accent: 0x03212b,
+    success: 0x6fe3a8,
+    warn: 0xffd37a,
+    danger: 0xff9a9a,
+    dark: true,
+    art: SkyArt {
+        sun: [0xd8fbff, 0xa6eef7, 0x62d4e6],
+        far: 0x0a4458,
+        near: 0x04202b,
+        cloud: [0x0b4a5c, 0x11677c, 0x2a8fa3],
+        lit: [0x13607a, 0x2288a0, 0x5cc0d0],
+        shade: 0x06303f,
+        star: 0xdffaff,
+        mood: Mood::Water([0x8feeff, 0xbff6ff, 0xffffff]),
+    },
+};
+
+/// Deep Ocean's day: shallow, sunlit water.
+pub const OCEAN_LIGHT: Night = Night {
+    sky: [0xe3f6fa, 0xd5f0f6, 0xc6e9f1, 0xb7e1ec, 0xa9d9e7, 0xbfe6ef],
+    page: 0xeaf8fb,
+    side: 0xdff1f5,
+    card: 0xffffff,
+    card_alpha: 0.88,
+    card_hi: 0xffffff,
+    card_hi_alpha: 0.95,
+    stroke: 0x0b4a5c,
+    stroke_alpha: 0.14,
+    rule_alpha: 0.10,
+    ink: 0x08303c,
+    ink_soft: 0x16495a,
+    muted: 0x3f6674,
+    accent: 0x0a7388,
+    accent_hi: 0x085f72,
+    on_accent: 0xffffff,
+    success: 0x1b6b3f,
+    warn: 0x7a4f00,
+    danger: 0xa3262c,
+    dark: false,
+    art: SkyArt {
+        sun: [0xffffff, 0xeafcff, 0xcdf2f8],
+        far: 0xc4e6ee,
+        near: 0xa3d3e0,
+        cloud: [0xf3fcfe, 0xeaf8fb, 0xe0f4f8],
+        lit: [0xffffff; 3],
+        shade: 0xcde8ef,
+        star: 0xffffff,
+        mood: Mood::Water([0xffffff, 0x5db8cc, 0xffffff]),
+    },
+};
+
+/// Deep Ocean: teal water, light shafts and bubbles, on Horizon's glass pages.
+pub const DEEP_OCEAN: Theme = Theme {
+    id: "deep_ocean",
+    name: "Deep Ocean",
+    sky: OCEAN_DARK.sky,
+    accent: ThemeAccent::Colour(0x2cc4d6),
+    palette: Some((&OCEAN_DARK, &OCEAN_LIGHT)),
+    look: Look::Painted,
+};
+
+/// Autumn Forest's night: embers of amber and rust, leaves falling.
+pub const AUTUMN_DARK: Night = Night {
+    sky: [0x140b07, 0x24120a, 0x3a1b0d, 0x5e2a10, 0x9a4a14, 0xe08a2e],
+    page: 0x160c07,
+    side: 0x120907,
+    card: 0x2a1509,
+    card_alpha: 0.88,
+    card_hi: 0x3b1f10,
+    card_hi_alpha: 0.92,
+    stroke: 0xffc58a,
+    stroke_alpha: 0.12,
+    rule_alpha: 0.10,
+    ink: 0xfff4e6,
+    ink_soft: 0xf0d8bd,
+    muted: 0xc8a78a,
+    accent: 0xe0782a,
+    accent_hi: 0xffb26b,
+    on_accent: 0x1e0e05,
+    success: 0xb5d96b,
+    warn: 0xffcf6b,
+    danger: 0xff9a8a,
+    dark: true,
+    art: SkyArt {
+        sun: [0xffe3a0, 0xffbf5c, 0xf0892a],
+        far: 0x3a1c0e,
+        near: 0x160a05,
+        cloud: [0x3d1d0f, 0x6e3414, 0xb8621f],
+        lit: [0x5a2c14, 0x9a4d1a, 0xe89a4a],
+        shade: 0x2a1409,
+        star: 0xffe9c8,
+        mood: Mood::Leaves([0xd9531e, 0xf0a02a, 0x9c3a14]),
+    },
+};
+
+/// Autumn Forest's day: warm paper and a deeper rust.
+pub const AUTUMN_LIGHT: Night = Night {
+    sky: [0xfbf1e1, 0xf9e8d0, 0xf6dcc0, 0xf2d0b0, 0xefc6a0, 0xf6dbbb],
+    page: 0xfdf6ea,
+    side: 0xf8ecdb,
+    card: 0xffffff,
+    card_alpha: 0.88,
+    card_hi: 0xffffff,
+    card_hi_alpha: 0.95,
+    stroke: 0x5a2c10,
+    stroke_alpha: 0.14,
+    rule_alpha: 0.10,
+    ink: 0x2e1708,
+    ink_soft: 0x4d2b14,
+    muted: 0x6c4a33,
+    accent: 0xa8420f,
+    accent_hi: 0x8f3709,
+    on_accent: 0xffffff,
+    success: 0x3d6b1c,
+    warn: 0x7a4a00,
+    danger: 0xa3262c,
+    dark: false,
+    art: SkyArt {
+        sun: [0xfffaf0, 0xffe9c4, 0xffd49b],
+        far: 0xf0d5b8,
+        near: 0xdcb28a,
+        cloud: [0xfff6ea, 0xfdeedd, 0xfbe7d2],
+        lit: [0xffffff; 3],
+        shade: 0xecd2b5,
+        star: 0xffffff,
+        mood: Mood::Leaves([0xc4521a, 0xe08a1e, 0x8f3a12]),
+    },
+};
+
+/// Autumn Forest: amber and rust under falling leaves, on Horizon's glass pages.
+pub const AUTUMN_FOREST: Theme = Theme {
+    id: "autumn_forest",
+    name: "Autumn Forest",
+    sky: AUTUMN_DARK.sky,
+    accent: ThemeAccent::Colour(0xe0782a),
+    palette: Some((&AUTUMN_DARK, &AUTUMN_LIGHT)),
+    look: Look::Painted,
+};
+
+/// Cherry Blossom's night: a lavender twilight with pink petals drifting.
+pub const CHERRY_DARK: Night = Night {
+    sky: [0x120d1f, 0x1f1633, 0x32214d, 0x4f3166, 0x7d4a80, 0xc98bb0],
+    page: 0x140e22,
+    side: 0x0f0a1b,
+    card: 0x251a3a,
+    card_alpha: 0.88,
+    card_hi: 0x32244d,
+    card_hi_alpha: 0.92,
+    stroke: 0xffd0e4,
+    stroke_alpha: 0.12,
+    rule_alpha: 0.10,
+    ink: 0xfff4fa,
+    ink_soft: 0xead8ef,
+    muted: 0xb9a6cc,
+    accent: 0xf59ac0,
+    accent_hi: 0xffc2da,
+    on_accent: 0x2a0f1f,
+    success: 0x8fe3b0,
+    warn: 0xffd59a,
+    danger: 0xff9aa8,
+    dark: true,
+    art: SkyArt {
+        sun: [0xfff0f6, 0xffd0e2, 0xf5a0c0],
+        far: 0x3a2655,
+        near: 0x160f28,
+        cloud: [0x3a2a5c, 0x6a4a86, 0xb87ca8],
+        lit: [0x4f3a74, 0x8b64a0, 0xe8a8c8],
+        shade: 0x2a1d44,
+        star: 0xfff0fa,
+        mood: Mood::Petals([0xffc2d9, 0xff8fb8]),
+    },
+};
+
+/// Cherry Blossom's day: blush white with a deep rose.
+pub const CHERRY_LIGHT: Night = Night {
+    sky: [0xfff2f7, 0xffe9f1, 0xffe0ec, 0xffd8e6, 0xf9d0e0, 0xfde0ea],
+    page: 0xfff7fa,
+    side: 0xfdecf2,
+    card: 0xffffff,
+    card_alpha: 0.88,
+    card_hi: 0xffffff,
+    card_hi_alpha: 0.95,
+    stroke: 0x6b2a4a,
+    stroke_alpha: 0.14,
+    rule_alpha: 0.10,
+    ink: 0x3a1426,
+    ink_soft: 0x5a2a42,
+    muted: 0x7a5468,
+    accent: 0xb82f68,
+    accent_hi: 0xa02558,
+    on_accent: 0xffffff,
+    success: 0x1f6a3a,
+    warn: 0x7a4a00,
+    danger: 0xa3262c,
+    dark: false,
+    art: SkyArt {
+        sun: [0xffffff, 0xfff0f5, 0xffdbe8],
+        far: 0xf6d3e0,
+        near: 0xe6b1c8,
+        cloud: [0xfffafc, 0xfff2f7, 0xffeaf1],
+        lit: [0xffffff; 3],
+        shade: 0xf2d0de,
+        star: 0xffffff,
+        mood: Mood::Petals([0xf48fb1, 0xe0608f]),
+    },
+};
+
+/// Cherry Blossom: a pink twilight with drifting petals, on Horizon's glass pages.
+pub const CHERRY_BLOSSOM: Theme = Theme {
+    id: "cherry_blossom",
+    name: "Cherry Blossom",
+    sky: CHERRY_DARK.sky,
+    accent: ThemeAccent::Colour(0xf59ac0),
+    palette: Some((&CHERRY_DARK, &CHERRY_LIGHT)),
+    look: Look::Painted,
+};
+
+/// Midnight Aurora's night: deep blue with curtains of green and violet light.
+pub const AURORA_DARK: Night = Night {
+    sky: [0x02060f, 0x040c1c, 0x071428, 0x0b1e34, 0x10304a, 0x1a4a5c],
+    page: 0x030812,
+    side: 0x02050d,
+    card: 0x0a1426,
+    card_alpha: 0.88,
+    card_hi: 0x122238,
+    card_hi_alpha: 0.92,
+    stroke: 0xa8f0d0,
+    stroke_alpha: 0.12,
+    rule_alpha: 0.10,
+    ink: 0xeefff8,
+    ink_soft: 0xcce8e0,
+    muted: 0x92b8b0,
+    accent: 0x4fe0a0,
+    accent_hi: 0x9af5cc,
+    on_accent: 0x03140e,
+    success: 0x7ff0a8,
+    warn: 0xffd98a,
+    danger: 0xff9aa0,
+    dark: true,
+    art: SkyArt {
+        sun: [0xeafff5, 0xbdf5dd, 0x7fe0b8],
+        far: 0x0d2236,
+        near: 0x040a14,
+        cloud: [0x0a1a2e, 0x10304a, 0x1d4a60],
+        lit: [0x14304a, 0x1f5068, 0x3c8a90],
+        shade: 0x07121f,
+        star: 0xeefaff,
+        mood: Mood::Aurora([0x3dffa0, 0x9b6bff, 0x35d6ff]),
+    },
+};
+
+/// Midnight Aurora's day: cool mist with pale green and violet veils.
+pub const AURORA_LIGHT: Night = Night {
+    sky: [0xeaf5f2, 0xe3f0f2, 0xdeeaf4, 0xdce4f4, 0xdfe0f4, 0xe8e4f6],
+    page: 0xf0f8f6,
+    side: 0xe6f1f0,
+    card: 0xffffff,
+    card_alpha: 0.88,
+    card_hi: 0xffffff,
+    card_hi_alpha: 0.95,
+    stroke: 0x1d3a4a,
+    stroke_alpha: 0.14,
+    rule_alpha: 0.10,
+    ink: 0x0e2630,
+    ink_soft: 0x24434f,
+    muted: 0x4a6670,
+    accent: 0x0d7a56,
+    accent_hi: 0x0a6647,
+    on_accent: 0xffffff,
+    success: 0x1b6b3f,
+    warn: 0x7a4f00,
+    danger: 0xa3262c,
+    dark: false,
+    art: SkyArt {
+        sun: [0xffffff, 0xeefaf6, 0xd5f1ea],
+        far: 0xcfe3e6,
+        near: 0xb2cbd6,
+        cloud: [0xf6fbfa, 0xeef6f6, 0xe7f0f4],
+        lit: [0xffffff; 3],
+        shade: 0xd3e2e8,
+        star: 0xffffff,
+        mood: Mood::Aurora([0x5fe0a8, 0xa88cff, 0x6ad4f0]),
+    },
+};
+
+/// Midnight Aurora: green and violet curtains over a deep blue night, on Horizon's glass pages.
+pub const MIDNIGHT_AURORA: Theme = Theme {
+    id: "midnight_aurora",
+    name: "Midnight Aurora",
+    sky: AURORA_DARK.sky,
+    accent: ThemeAccent::Colour(0x4fe0a0),
+    palette: Some((&AURORA_DARK, &AURORA_LIGHT)),
+    look: Look::Painted,
+};
+
 /// The launcher themes past Horizon's own sky: the featured families first, then the older ones.
-pub const THEMES: [Theme; 4] = [SUNRISE, HYPR_NEON, FIRST_LIGHT, NORD];
+pub const THEMES: [Theme; 8] = [
+    SUNRISE,
+    HYPR_NEON,
+    DEEP_OCEAN,
+    AUTUMN_FOREST,
+    CHERRY_BLOSSOM,
+    MIDNIGHT_AURORA,
+    FIRST_LIGHT,
+    NORD,
+];
 
 /// Horizon's own theme's key in `Settings::theme_accents`.
 pub const HORIZON: &str = "horizon";

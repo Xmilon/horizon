@@ -40,6 +40,22 @@ pub const PLAY: f32 = 56.;
 /// lower stops (the sunset) are too bright for light text, so text there always has a plate.
 pub const UNCARDED_STOPS: usize = 3;
 
+/// What drifts or glows over a theme's sky besides the clouds, in the colours the theme gives it
+/// (`launcher/src/sky.rs` draws it, a few steps a second; nothing under reduced motion or in
+/// performance mode).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Mood {
+    Plain,
+    /// Light shafts from the surface (colour) and rising bubbles (rim, shine).
+    Water([u32; 3]),
+    /// Falling leaves in three tones.
+    Leaves([u32; 3]),
+    /// Falling petals in two tones.
+    Petals([u32; 2]),
+    /// Curtains of light in three tones.
+    Aurora([u32; 3]),
+}
+
 /// The sky's hand-drawn art (the clouds, the sun and the two skylines): the colours a launcher
 /// theme paints them with, beside the sky's own bands.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,6 +70,7 @@ pub struct SkyArt {
     pub lit: [u32; 3],
     pub shade: u32,
     pub star: u32,
+    pub mood: Mood,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,6 +135,7 @@ pub const NIGHT: Night = Night {
         lit: [0x5a3f8a, 0x9c5a92, 0xf7a98a],
         shade: 0x2a1a4c,
         star: 0xf4f2ff,
+        mood: Mood::Plain,
     },
 };
 
@@ -151,6 +169,7 @@ pub const DAWN: Night = Night {
         lit: [0xffffff; 3],
         shade: 0xd9cbe8,
         star: 0xffffff,
+        mood: Mood::Plain,
     },
 };
 

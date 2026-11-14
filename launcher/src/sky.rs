@@ -8,8 +8,11 @@
 //! stars steps to its next brightness): a few frames a second. The sky stands still under reduced
 //! motion, and stops 10 s after the window loses focus ([`motion`]).
 use crate::art::bake;
-use gpui::{div, img, prelude::*, px, rgb, Div, RenderImage};
-use horizon_theme::night::{Night, SkyArt};
+use gpui::{
+    canvas, div, fill, img, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
+    Bounds, Div, Hsla, Pixels, RenderImage, Window,
+};
+use horizon_theme::night::{Mood, Night, SkyArt};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -151,6 +154,9 @@ const NEAR: Skyline = Skyline {
 const SUN_RADIUS: usize = 15;
 const SUN_RISE: usize = 8;
 const SUN_X: f32 = 0.72;
+
+/// A theme's [`Mood`] moves in steps of a fifth of a second, like the pixel art it drifts over.
+const MOOD_STEPS: f32 = 5.;
 
 /// How much white the light look lays over the dawn's colours.
 const MORNING: f32 = 0.55;
@@ -378,6 +384,20 @@ impl Sky {
             }
             sky = sky.child(group);
         }
+        let mood = art.mood;
+        let moved = (t * MOOD_STEPS).floor() / MOOD_STEPS;
+        if mood != Mood::Plain {
+            sky = sky.child(
+                canvas(
+                    |_, _, _| {},
+                    move |b, _, window, _| paint_behind(mood, moved, b, window),
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            );
+        }
         // The light look keeps a restrained dawn: its pale clouds read as stray lines across the
         // white panels' gutters, so only the dark skies draw them.
         let cloud_layers = if n.dark { &layers.clouds[..] } else { &[] };
@@ -437,6 +457,19 @@ impl Sky {
             }
         }
 
+        if mood != Mood::Plain {
+            sky = sky.child(
+                canvas(
+                    |_, _, _| {},
+                    move |b, _, window, _| paint_drift(mood, moved, b, window),
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            );
+        }
+
         let next = self.clock.running.is_some().then(|| {
             let clouds = CLOUDS.iter().map(|l| until_next(t * l.speed) / l.speed);
             let stars = STAR_PERIODS.iter().enumerate().map(|(g, p)| {
@@ -444,6 +477,9 @@ impl Sky {
                 until_next(t / quarter + g as f32) * quarter
             });
             let mut soonest = clouds.chain(stars).fold(f32::MAX, f32::min);
+            if mood != Mood::Plain {
+                soonest = soonest.min(until_next(t * MOOD_STEPS) / MOOD_STEPS);
+            }
             if let (Some(since), Motion::InFront) = (self.unfocused, motion()) {
                 soonest = soonest.min((UNFOCUSED - (now - since)).as_secs_f32());
             }
@@ -479,6 +515,122 @@ impl Sky {
     pub fn free_replaced(&mut self, window: &mut gpui::Window) {
         for image in self.replaced.drain(..) {
             let _ = window.drop_image(image);
+        }
+    }
+}
+
+fn tone(c: u32) -> Hsla {
+    rgb(c).into()
+}
+
+/// A rectangle of `w` by `h` at `(x, y)` from the layer's corner, its corner on a whole texel.
+fn cell(b: Bounds<Pixels>, x: f32, y: f32, w: f32, h: f32) -> Bounds<Pixels> {
+    let on = |v: f32| (v / TEXEL).round() * TEXEL;
+    Bounds::new(
+        point(b.origin.x + px(on(x)), b.origin.y + px(on(y))),
+        size(px(w), px(h)),
+    )
+}
+
+/// A strip fading from `c` at `from` to `c` at `to` opacity, top to bottom.
+fn fade(c: u32, from: f32, to: f32) -> gpui::Background {
+    linear_gradient(
+        180.,
+        linear_color_stop(tone(c).opacity(from), 0.),
+        linear_color_stop(tone(c).opacity(to), 1.),
+    )
+}
+
+/// What a [`Mood`] paints behind the clouds and skylines: the water's light shafts and the
+/// aurora's curtains. `t` is the mood's own time in seconds, in whole steps.
+fn paint_behind(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
+    use crate::rain::hash;
+    let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+    match mood {
+        Mood::Water([light, ..]) => {
+            // Shafts from the surface, swaying a few texels and fading with depth.
+            for i in 0..6u32 {
+                let k = i as f32;
+                let x = (k + 0.5) / 6. * w + (t * 0.2 + k * 1.9).sin() * 6. * TEXEL;
+                let width = (5. + 4. * hash(i * 7 + 1)) * TEXEL;
+                let a = 0.10 + 0.05 * (t * 0.35 + k).sin();
+                window.paint_quad(fill(cell(b, x, 0., width, h * 0.8), fade(light, a, 0.)));
+            }
+        }
+        Mood::Aurora(tones) => {
+            // Three curtains of 16 px strips: each strip's height and place ride slow waves, and
+            // its light fades in from the top and out toward the bottom.
+            const COLUMN: f32 = 16.;
+            for (k, &c) in tones.iter().enumerate() {
+                let k = k as f32;
+                let mut x = 0.;
+                while x < w {
+                    let top =
+                        h * (0.08 + 0.07 * k) + (x * 0.006 + t * 0.12 + k * 2.1).sin() * h * 0.07;
+                    let tall = h * (0.2 + 0.1 * (x * 0.011 - t * 0.09 + k).sin().abs());
+                    let a = 0.2 + 0.1 * (x * 0.004 + t * 0.2 + k * 1.3).sin();
+                    window.paint_quad(fill(cell(b, x, top, COLUMN, tall * 0.4), fade(c, 0., a)));
+                    window.paint_quad(fill(
+                        cell(b, x, top + tall * 0.4, COLUMN, tall * 0.6),
+                        fade(c, a, 0.),
+                    ));
+                    x += COLUMN;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// What a [`Mood`] paints in front of the skylines: bubbles rising, leaves and petals falling,
+/// each from its own place and phase, wrapping just off the window.
+fn paint_drift(mood: Mood, t: f32, b: Bounds<Pixels>, window: &mut Window) {
+    use crate::rain::hash;
+    let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+    let run = h + 40.;
+    for i in 0..28u32 {
+        let (place, pace, phase, sway) = (
+            hash(i * 5 + 1),
+            hash(i * 5 + 2),
+            hash(i * 5 + 3),
+            hash(i * 5 + 4),
+        );
+        let x = place * w;
+        match mood {
+            Mood::Leaves(tones) => {
+                let y = (t * (14. + 16. * pace) + phase * run) % run - 20.;
+                let x = x + (t * 0.8 + sway * std::f32::consts::TAU).sin() * 5. * TEXEL;
+                let c = tone(tones[i as usize % 3]);
+                // A diagonal leaf of two bars, turning over now and then.
+                let (a, z) = if (t * 0.5 + sway * 4.).floor() as i32 % 2 == 0 {
+                    (TEXEL, 0.)
+                } else {
+                    (0., TEXEL)
+                };
+                window.paint_quad(fill(cell(b, x + a, y, TEXEL * 2., TEXEL), c));
+                window.paint_quad(fill(cell(b, x + z, y + TEXEL, TEXEL * 2., TEXEL), c));
+            }
+            Mood::Petals(tones) => {
+                let y = (t * (10. + 12. * pace) + phase * run) % run - 20.;
+                let x = x + (t * 0.6 + sway * std::f32::consts::TAU).sin() * 8. * TEXEL;
+                let c = tone(tones[i as usize % 2]).opacity(0.9);
+                window.paint_quad(fill(cell(b, x, y, TEXEL * 2., TEXEL), c));
+                window.paint_quad(fill(
+                    cell(b, x + TEXEL * (1. + sway.round()), y + TEXEL, TEXEL, TEXEL),
+                    c,
+                ));
+            }
+            Mood::Water([_, rim, shine]) => {
+                let y = h + 20. - (t * (16. + 20. * pace) + phase * run) % run;
+                let x = x + (t * 0.7 + sway * std::f32::consts::TAU).sin() * 2. * TEXEL;
+                let big = i % 3 == 0;
+                let side = if big { TEXEL * 2. } else { TEXEL };
+                window.paint_quad(fill(cell(b, x, y, side, side), tone(rim).opacity(0.55)));
+                if big {
+                    window.paint_quad(fill(cell(b, x, y, TEXEL, TEXEL), tone(shine).opacity(0.8)));
+                }
+            }
+            Mood::Plain | Mood::Aurora(_) => return,
         }
     }
 }

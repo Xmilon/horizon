@@ -543,6 +543,8 @@ impl Launcher {
                 crate::switch("performance", on, &t)
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.settings.performance = Some(!this.settings.performance());
+                        // A painted theme's drifting sky follows it.
+                        this.restyle = true;
                         this.save_settings();
                         cx.notify();
                     }))

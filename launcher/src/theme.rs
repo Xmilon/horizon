@@ -150,6 +150,10 @@ pub fn from_settings(settings: &Settings, system: WindowAppearance) -> Theme {
     if let Some(picked) = themes::theme(settings.theme.as_deref()) {
         theme = theme.with_launcher_theme(picked);
     }
+    // Performance mode keeps a painted sky's colours and drops what drifts over it.
+    if settings.performance() {
+        theme.night.art.mood = night::Mood::Plain;
+    }
     theme.with_glass(settings.glass_tint(), settings.glass_blur())
 }
 
@@ -172,6 +176,10 @@ impl Theme {
             if themed.dark && picked.look == themes::Look::Oled {
                 themed.scene = false;
                 themed.edge = Some(night::over(night.stroke, night.stroke_alpha, night.card));
+            }
+            // The painted skies replace the sunset too, on solid plates without an edge.
+            if themed.dark && picked.look == themes::Look::Painted {
+                themed.scene = false;
             }
             return themed;
         }
